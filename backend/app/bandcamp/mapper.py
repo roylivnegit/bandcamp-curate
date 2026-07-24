@@ -10,8 +10,24 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bandcamp.parse import FanCollection, ParsedBand, ParsedItem
-from app.db.models import Album, Band, Fan, FanItem, Follow, Track
+from app.bandcamp.parse import (
+    AlbumSupporters,
+    FanCollection,
+    ParsedAlbum,
+    ParsedBand,
+    ParsedItem,
+)
+from app.db.models import (
+    Album,
+    AlbumSupporter,
+    AlbumTag,
+    Band,
+    Fan,
+    FanItem,
+    Follow,
+    Tag,
+    Track,
+)
 from app.enums import BandKind, ItemType, TargetType
 
 
@@ -19,6 +35,18 @@ from app.enums import BandKind, ItemType, TargetType
 class IngestCounts:
     fan_items: int = 0  # new ownership edges created this ingest
     follows: int = 0  # new follows created this ingest (is_me only)
+
+
+@dataclass(slots=True)
+class AlbumIngestCounts:
+    tracks: int = 0  # new tracks created this ingest
+    tags: int = 0  # new album↔tag edges created this ingest
+
+
+@dataclass(slots=True)
+class SupporterIngestCounts:
+    supporters: int = 0  # new supporter edges created this ingest
+    fans: int = 0  # new fan rows created this ingest
 
 
 async def get_or_create_band(session: AsyncSession, pb: ParsedBand) -> Band | None:
@@ -203,5 +231,135 @@ async def ingest_fan_collection(
             if band and await upsert_follow(session, band):
                 counts.follows += 1
 
+    await session.commit()
+    return counts
+
+
+# ── Album page ────────────────────────────────────────────────────────────────
+
+
+async def get_or_create_tag(session: AsyncSession, name: str) -> Tag:
+    tag = (
+        await session.execute(select(Tag).where(Tag.name == name))
+    ).scalar_one_or_none()
+    if tag is None:
+        tag = Tag(name=name)
+        session.add(tag)
+        await session.flush()
+    return tag
+
+
+async def _add_album_tag(session: AsyncSession, album: Album, tag: Tag) -> bool:
+    """Link an album to a tag if not already linked. True if a new edge was created."""
+    exists = (
+        await session.execute(
+            select(AlbumTag).where(
+                AlbumTag.album_id == album.id, AlbumTag.tag_id == tag.id
+            )
+        )
+    ).scalar_one_or_none()
+    if exists is not None:
+        return False
+    session.add(AlbumTag(album_id=album.id, tag_id=tag.id))
+    await session.flush()
+    return True
+
+
+async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCounts:
+    """Upsert an album, its band, tracks, and genre tags (idempotent)."""
+    counts = AlbumIngestCounts()
+    band = await get_or_create_band(session, pa.band)
+    album = await get_or_create_album(
+        session, bandcamp_id=pa.album_id, url=pa.url, title=pa.title, band=band
+    )
+
+    for pt in pa.tracks:
+        track = (
+            await session.execute(select(Track).where(Track.bandcamp_id == pt.track_id))
+        ).scalar_one_or_none()
+        if track is None:
+            counts.tracks += 1
+        await get_or_create_track(
+            session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title,
+            band=band, album=album,
+        )
+
+    for name in pa.tags:
+        tag = await get_or_create_tag(session, name)
+        if await _add_album_tag(session, album, tag):
+            counts.tags += 1
+
+    await session.commit()
+    return counts
+
+
+# ── Album supporters ──────────────────────────────────────────────────────────
+
+
+async def get_or_create_supporter_fan(
+    session: AsyncSession, *, username: str, fan_id: int | None, name: str | None
+) -> tuple[Fan, bool]:
+    """Get-or-create a fan seen as an album supporter. Returns (fan, created).
+
+    Keyed by bandcamp_fan_id when known, else by username (fan pages may be
+    discovered by username before their fan_id is). Backfills fan_id/name.
+    """
+    fan: Fan | None = None
+    if fan_id is not None:
+        fan = (
+            await session.execute(select(Fan).where(Fan.bandcamp_fan_id == fan_id))
+        ).scalar_one_or_none()
+    if fan is None:
+        fan = (
+            await session.execute(select(Fan).where(Fan.username == username))
+        ).scalar_one_or_none()
+    if fan is None:
+        fan = Fan(
+            bandcamp_fan_id=fan_id,
+            username=username,
+            url=f"https://bandcamp.com/{username}",
+            name=name,
+        )
+        session.add(fan)
+        await session.flush()
+        return fan, True
+    if fan_id is not None and fan.bandcamp_fan_id is None:
+        fan.bandcamp_fan_id = fan_id
+    if name and not fan.name:
+        fan.name = name
+    return fan, False
+
+
+async def _add_album_supporter(
+    session: AsyncSession, album: Album, fan: Fan
+) -> bool:
+    """Record a fan↔album supporter edge if absent. True if newly created."""
+    exists = (
+        await session.execute(
+            select(AlbumSupporter).where(
+                AlbumSupporter.album_id == album.id, AlbumSupporter.fan_id == fan.id
+            )
+        )
+    ).scalar_one_or_none()
+    if exists is not None:
+        return False
+    session.add(AlbumSupporter(album_id=album.id, fan_id=fan.id))
+    await session.flush()
+    return True
+
+
+async def ingest_album_supporters(
+    session: AsyncSession, album: Album, supporters: AlbumSupporters
+) -> SupporterIngestCounts:
+    """Upsert supporter fans and their support edges for a known album."""
+    counts = SupporterIngestCounts()
+    for ps in supporters.supporters:
+        fan, created = await get_or_create_supporter_fan(
+            session, username=ps.username, fan_id=ps.fan_id, name=ps.name
+        )
+        if created:
+            counts.fans += 1
+        if await _add_album_supporter(session, album, fan):
+            counts.supporters += 1
     await session.commit()
     return counts

@@ -15,6 +15,14 @@ import re
 from dataclasses import dataclass, field
 
 _PAGEDATA_RE = re.compile(r'id="pagedata"[^>]*data-blob="([^"]*)"')
+_TRALBUM_RE = re.compile(r'data-tralbum="([^"]*)"')
+_BAND_RE = re.compile(r'data-band="([^"]*)"')
+_COLLECTORS_RE = re.compile(r'id="collectors-data"[^>]*data-blob="([^"]*)"')
+_TAG_RE = re.compile(r'<a[^>]*class="tag"[^>]*>([^<]+)</a>')
+# Supporter profile links in the album DOM: <a class="fan pic"
+# href="https://bandcamp.com/<user>?from=fanthanks">. Fallback when the
+# structured #collectors-data blob is absent (it carries fan_id too).
+_FAN_PIC_RE = re.compile(r'class="fan pic"\s+href="https://bandcamp\.com/([^"?/]+)')
 
 
 # ── Normalized records ───────────────────────────────────────────────────────
@@ -58,6 +66,43 @@ class FanCollection:
     more_available: bool = False
 
 
+@dataclass(slots=True)
+class ParsedTrack:
+    track_id: int
+    title: str | None = None
+    track_num: int | None = None
+    duration: float | None = None
+    url: str | None = None
+
+
+@dataclass(slots=True)
+class ParsedAlbum:
+    album_id: int
+    band: ParsedBand
+    title: str | None = None
+    url: str | None = None
+    art_id: int | None = None
+    tags: list[str] = field(default_factory=list)
+    tracks: list[ParsedTrack] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ParsedSupporter:
+    username: str
+    fan_id: int | None = None
+    name: str | None = None
+    url: str | None = None
+
+
+@dataclass(slots=True)
+class AlbumSupporters:
+    supporters: list[ParsedSupporter] = field(default_factory=list)
+    album_id: int | None = None
+    album_url: str | None = None
+    more_available: bool = False
+    last_token: str | None = None
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -76,6 +121,21 @@ def extract_pagedata_blob(page_html: str) -> dict:
     if not match:
         raise ValueError("no #pagedata data-blob found in HTML")
     return json.loads(html.unescape(match.group(1)))
+
+
+def _decode_attr(match: re.Match[str] | None) -> dict | None:
+    """Decode an HTML-entity-encoded JSON attribute value, or None if absent."""
+    if not match:
+        return None
+    return json.loads(html.unescape(match.group(1)))
+
+
+def band_url_from_album_url(album_url: str | None) -> str | None:
+    """Derive a band's page URL from an album/track URL (strip the path)."""
+    if not album_url:
+        return None
+    m = re.match(r"(https?://[^/]+)", album_url)
+    return m.group(1) if m else None
 
 
 # ── Parsers ──────────────────────────────────────────────────────────────────
@@ -153,3 +213,108 @@ def parse_collection_items_api(payload: dict) -> tuple[list[ParsedItem], str | N
     """Parse a `collection_items` API response → (items, last_token, more_available)."""
     items = [parse_collection_item(o) for o in payload.get("items", [])]
     return items, payload.get("last_token"), bool(payload.get("more_available"))
+
+
+def parse_album_page(page_html: str) -> ParsedAlbum:
+    """Parse an album (or track) page's `data-tralbum` + `data-band` + tag links.
+
+    Bandcamp embeds the album in `data-tralbum` (id, url, item_type, `current.title`,
+    `trackinfo[]`) and the band in `data-band` (id, name). Genre tags are plain DOM
+    anchors (`<a class="tag">`). The band's page URL is derived from the album URL.
+    """
+    tralbum = _decode_attr(_TRALBUM_RE.search(page_html))
+    if tralbum is None:
+        raise ValueError("no data-tralbum blob found in HTML")
+    band_blob = _decode_attr(_BAND_RE.search(page_html)) or {}
+    current = tralbum.get("current") or {}
+
+    url = tralbum.get("url")
+    band = ParsedBand(
+        bandcamp_id=band_blob.get("id") or current.get("band_id"),
+        name=band_blob.get("name") or tralbum.get("artist"),
+        url=band_url_from_album_url(url),
+    )
+
+    base = band.url
+    tracks: list[ParsedTrack] = []
+    for ti in tralbum.get("trackinfo") or []:
+        track_id = ti.get("track_id") or ti.get("id")
+        if track_id is None:
+            continue
+        link = ti.get("title_link")
+        tracks.append(
+            ParsedTrack(
+                track_id=track_id,
+                title=ti.get("title"),
+                track_num=ti.get("track_num"),
+                duration=ti.get("duration"),
+                url=f"{base}{link}" if base and link else None,
+            )
+        )
+
+    # Genre tags: normalized to lowercase, de-duped, order preserved.
+    seen: set[str] = set()
+    tags: list[str] = []
+    for raw in _TAG_RE.findall(page_html):
+        tag = raw.strip().lower()
+        if tag and tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
+
+    return ParsedAlbum(
+        album_id=tralbum["id"],
+        band=band,
+        title=current.get("title") or tralbum.get("artist"),
+        url=url,
+        art_id=tralbum.get("art_id"),
+        tags=tags,
+        tracks=tracks,
+    )
+
+
+def parse_album_supporters(page_html: str) -> AlbumSupporters:
+    """Parse an album page's supporters ("supported by" collectors).
+
+    Prefers the structured `#collectors-data` blob (`thumbs[]` with `fan_id`,
+    `username`, `name`; `more_thumbs_available`; per-thumb pagination `token`).
+    Falls back to scraping `<a class="fan pic">` profile links (username only)
+    when that blob is absent.
+    """
+    tralbum = _decode_attr(_TRALBUM_RE.search(page_html)) or {}
+    album_id = tralbum.get("id")
+    album_url = tralbum.get("url")
+
+    blob = _decode_attr(_COLLECTORS_RE.search(page_html))
+    if blob is not None:
+        thumbs = blob.get("thumbs") or []
+        supporters = [
+            ParsedSupporter(
+                username=t["username"],
+                fan_id=t.get("fan_id"),
+                name=t.get("name"),
+                url=f"https://bandcamp.com/{t['username']}",
+            )
+            for t in thumbs
+            if t.get("username")
+        ]
+        last_token = thumbs[-1].get("token") if thumbs else None
+        return AlbumSupporters(
+            supporters=supporters,
+            album_id=album_id,
+            album_url=album_url,
+            more_available=bool(blob.get("more_thumbs_available")),
+            last_token=last_token,
+        )
+
+    # Fallback: DOM fan-pic anchors (username only, no fan_id).
+    seen: set[str] = set()
+    supporters = []
+    for user in _FAN_PIC_RE.findall(page_html):
+        if user not in seen:
+            seen.add(user)
+            supporters.append(
+                ParsedSupporter(username=user, url=f"https://bandcamp.com/{user}")
+            )
+    return AlbumSupporters(
+        supporters=supporters, album_id=album_id, album_url=album_url
+    )
