@@ -13,7 +13,7 @@ from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
 from app.crawl.service import crawl_album, crawl_fan_collection
 from app.db.base import Base
-from app.db.models import Album, AlbumSupporter, CrawlFrontier, Fan, FanItem
+from app.db.models import Album, AlbumSupporter, CrawlFrontier, Fan, FanItem, ProviderUsage
 from app.enums import CrawlKind, CrawlStatus
 from app.scraping.base import FetchRequest, FetchResult
 
@@ -317,6 +317,40 @@ async def test_runner_walks_the_graph(
         assert await _count(s, AlbumSupporter) == 3
         # No entries left PENDING (all DONE or ERROR).
         assert await frontier.pending_count(s) == 0
+
+
+async def test_budget_stops_the_run(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    # Pre-log 5 provider requests, then seed. With max_requests=5 the budget is
+    # already spent, so run_until_empty must process nothing.
+    async with sessionmaker_() as s:
+        for _ in range(5):
+            s.add(ProviderUsage(provider="nimble", ok=True))
+        await seed_fan_collection(s, SEED_URL)
+        await s.commit()
+
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    outcomes = await runner.run_until_empty(
+        sessionmaker_, fetcher, seed_url=SEED_URL,
+        collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
+        max_requests=5, max_iterations=25,
+    )
+    assert outcomes == []  # budget exhausted before any work
+    assert fetcher.calls == []
+    async with sessionmaker_() as s:
+        assert await frontier.pending_count(s) == 1  # seed still pending
+
+
+async def test_budget_helpers(session: AsyncSession) -> None:
+    assert await runner.budget_exhausted(session, None) is False  # no cap
+    for _ in range(3):
+        session.add(ProviderUsage(provider="nimble", ok=True))
+    session.add(ProviderUsage(provider="nimble", ok=False))  # failures don't count
+    await session.commit()
+    assert await runner.requests_used(session) == 3
+    assert await runner.budget_exhausted(session, 3) is True
+    assert await runner.budget_exhausted(session, 4) is False
 
 
 async def test_runner_respects_max_depth(

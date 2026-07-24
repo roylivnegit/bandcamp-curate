@@ -34,6 +34,7 @@ from app.enums import BandKind, ItemType, TargetType
 @dataclass(slots=True)
 class IngestCounts:
     fan_items: int = 0  # new ownership edges created this ingest
+    wishlist_items: int = 0  # new wishlist edges created this ingest
     follows: int = 0  # new follows created this ingest (is_me only)
 
 
@@ -156,7 +157,8 @@ async def get_or_create_fan(session: AsyncSession, fan_id: int, username: str, *
 
 
 async def _add_fan_item(session: AsyncSession, fan: Fan, item_type: ItemType,
-                        album: Album | None = None, track: Track | None = None) -> bool:
+                        album: Album | None = None, track: Track | None = None,
+                        is_wishlist: bool = False) -> bool:
     """Insert a fan↔item edge if absent. Returns True if a new row was created."""
     stmt = select(FanItem).where(
         FanItem.fan_id == fan.id,
@@ -172,6 +174,7 @@ async def _add_fan_item(session: AsyncSession, fan: Fan, item_type: ItemType,
             item_type=item_type,
             album_id=album.id if album else None,
             track_id=track.id if track else None,
+            is_wishlist=is_wishlist,
         )
     )
     await session.flush()
@@ -179,13 +182,14 @@ async def _add_fan_item(session: AsyncSession, fan: Fan, item_type: ItemType,
 
 
 async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
-                      counts: IngestCounts) -> None:
+                      counts: IngestCounts, *, is_wishlist: bool = False) -> None:
     band = await get_or_create_band(session, item.band)
     if item.item_type == "album":
         album = await get_or_create_album(
             session, bandcamp_id=item.item_id, url=item.url, title=item.title, band=band
         )
-        if await _add_fan_item(session, fan, ItemType.ALBUM, album=album):
+        if await _add_fan_item(session, fan, ItemType.ALBUM, album=album,
+                               is_wishlist=is_wishlist):
             counts.fan_items += 1
     else:
         album = None
@@ -197,7 +201,8 @@ async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
             session, bandcamp_id=item.item_id, url=item.url, title=item.title,
             band=band, album=album,
         )
-        if await _add_fan_item(session, fan, ItemType.TRACK, track=track):
+        if await _add_fan_item(session, fan, ItemType.TRACK, track=track,
+                               is_wishlist=is_wishlist):
             counts.fan_items += 1
 
 
@@ -225,7 +230,14 @@ async def ingest_fan_collection(
     for item in fc.items:
         await ingest_item(session, fan, item, counts)
 
+    # Wishlist (and follows) are only meaningful for my own account — they drive
+    # curation's exclusions, and we only see them on the seed fan's own page.
     if is_me:
+        wl_counts = IngestCounts()
+        for item in fc.wishlist:
+            await ingest_item(session, fan, item, wl_counts, is_wishlist=True)
+        counts.wishlist_items = wl_counts.fan_items
+
         for pb in fc.follows:
             band = await get_or_create_band(session, pb)
             if band and await upsert_follow(session, band):

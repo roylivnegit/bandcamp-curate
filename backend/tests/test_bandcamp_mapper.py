@@ -81,6 +81,57 @@ async def test_other_fan_does_not_create_follows(session: AsyncSession) -> None:
     assert await _count(session, Follow) == 0  # follows only for is_me
 
 
+def _fan_html_with_wishlist() -> str:
+    import html as _html
+    import json as _json
+
+    def item(iid, title):
+        return {"item_id": iid, "item_type": "album", "band_id": iid * 10,
+                "band_name": f"Band{iid}", "item_title": title,
+                "item_url": f"https://b{iid}.bandcamp.com/album/x",
+                "url_hints": {"subdomain": f"b{iid}"}}
+
+    blob = {
+        "fan_data": {"fan_id": 555, "username": "me", "name": "Me",
+                     "trackpipe_url": "https://bandcamp.com/me"},
+        "item_cache": {
+            "collection": {"a": item(1, "Owned")},
+            "wishlist": {"b": item(2, "Wanted"), "c": item(3, "AlsoWanted")},
+            "following_bands": {},
+        },
+        "collection_data": {"item_count": 1, "last_token": None},
+        "wishlist_data": {"item_count": 2, "last_token": None},
+    }
+    enc = _html.escape(_json.dumps(blob), quote=True)
+    return f'<div id="pagedata" data-blob="{enc}"></div>'
+
+
+async def test_wishlist_ingested_as_flagged_fan_items(session: AsyncSession) -> None:
+    fc = parse_fan_page(_fan_html_with_wishlist())
+    assert len(fc.items) == 1 and len(fc.wishlist) == 2
+
+    counts = await ingest_fan_collection(session, fc, is_me=True)
+    assert counts.fan_items == 1 and counts.wishlist_items == 2
+
+    owned = (await session.execute(
+        select(func.count()).select_from(FanItem).where(FanItem.is_wishlist.is_(False))
+    )).scalar_one()
+    wished = (await session.execute(
+        select(func.count()).select_from(FanItem).where(FanItem.is_wishlist.is_(True))
+    )).scalar_one()
+    assert owned == 1 and wished == 2
+
+
+async def test_wishlist_skipped_for_other_fans(session: AsyncSession) -> None:
+    fc = parse_fan_page(_fan_html_with_wishlist())
+    counts = await ingest_fan_collection(session, fc, is_me=False)
+    assert counts.wishlist_items == 0  # only ingested for is_me
+    wished = (await session.execute(
+        select(func.count()).select_from(FanItem).where(FanItem.is_wishlist.is_(True))
+    )).scalar_one()
+    assert wished == 0
+
+
 async def test_ingest_album_populates_graph(session: AsyncSession) -> None:
     pa = parse_album_page(ALBUM_FIXTURE.read_text())
     counts = await ingest_album(session, pa)

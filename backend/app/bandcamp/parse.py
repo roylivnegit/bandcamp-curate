@@ -60,10 +60,13 @@ class ParsedFan:
 class FanCollection:
     fan: ParsedFan
     items: list[ParsedItem] = field(default_factory=list)
+    wishlist: list[ParsedItem] = field(default_factory=list)
     follows: list[ParsedBand] = field(default_factory=list)
     total_count: int | None = None
     last_token: str | None = None
     more_available: bool = False
+    wishlist_last_token: str | None = None
+    wishlist_more_available: bool = False
 
 
 @dataclass(slots=True)
@@ -190,6 +193,9 @@ def parse_fan_page(page_html: str) -> FanCollection:
     collection = cache.get("collection") or {}
     items = [parse_collection_item(v) for v in collection.values()]
 
+    wishlist_cache = cache.get("wishlist") or {}
+    wishlist = [parse_collection_item(v) for v in wishlist_cache.values()]
+
     following = cache.get("following_bands") or {}
     follows = [
         ParsedBand(
@@ -202,13 +208,18 @@ def parse_fan_page(page_html: str) -> FanCollection:
 
     cd = blob.get("collection_data") or {}
     last_token = cd.get("last_token")
+    wd = blob.get("wishlist_data") or {}
+    wishlist_token = wd.get("last_token")
     return FanCollection(
         fan=fan,
         items=items,
+        wishlist=wishlist,
         follows=follows,
         total_count=blob.get("collection_count") or cd.get("item_count"),
         last_token=last_token,
         more_available=bool(last_token),
+        wishlist_last_token=wishlist_token,
+        wishlist_more_available=bool(wishlist_token),
     )
 
 

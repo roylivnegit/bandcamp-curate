@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # (seed=0 → my albums=1 → their supporters=2 → those supporters' albums=3 …).
     crawl_max_depth: int = 3
 
+    # Safety budget: stop crawling once this many provider (Nimble) page fetches
+    # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
+    crawl_max_requests: int = 100
+
     # Seed
     bandcamp_fan_url: str = ""
 

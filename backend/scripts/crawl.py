@@ -40,7 +40,8 @@ async def cmd_run(max_iters: int) -> int:
     gateway = build_gateway(settings, sessionmaker=sessionmaker)
     outcomes = await runner.run_until_empty(
         sessionmaker, gateway, seed_url=settings.bandcamp_fan_url,
-        max_depth=settings.crawl_max_depth, max_iterations=max_iters,
+        max_depth=settings.crawl_max_depth, max_requests=settings.crawl_max_requests,
+        max_iterations=max_iters,
     )
     for o in outcomes:
         print(f"  {o.kind:16} {o.url}  items={o.items} tracks={o.tracks} "

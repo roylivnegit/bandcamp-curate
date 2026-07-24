@@ -8,16 +8,33 @@ The ARQ worker reuses `process_one` per job for the production, throttled path.
 
 import logging
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bandcamp.collection_api import CollectionApiClient
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier
 from app.crawl.service import CrawlOutcome, Fetcher, crawl_album, crawl_fan_collection
-from app.db.models import CrawlFrontier
+from app.db.models import CrawlFrontier, ProviderUsage
 from app.enums import CrawlKind
 
 logger = logging.getLogger("crate_digger.crawl")
+
+
+async def requests_used(session: AsyncSession) -> int:
+    """Count successful provider (Nimble) page fetches logged so far — the budget metric."""
+    return (
+        await session.execute(
+            select(func.count()).select_from(ProviderUsage).where(ProviderUsage.ok.is_(True))
+        )
+    ).scalar_one()
+
+
+async def budget_exhausted(session: AsyncSession, max_requests: int | None) -> bool:
+    """Whether the cumulative provider-request budget has been reached."""
+    if max_requests is None:
+        return False
+    return await requests_used(session) >= max_requests
 
 
 async def process_entry(
@@ -93,12 +110,17 @@ async def run_until_empty(
     collection_client: CollectionApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
+    max_requests: int | None = None,
     max_iterations: int = 1000,
 ) -> list[CrawlOutcome]:
-    """Process frontier entries until it drains or `max_iterations` is reached."""
+    """Process frontier entries until it drains, the request budget is hit, or
+    `max_iterations` is reached."""
     outcomes: list[CrawlOutcome] = []
     for _ in range(max_iterations):
         async with sessionmaker() as session:
+            if await budget_exhausted(session, max_requests):
+                logger.info("request budget reached (%s); stopping", max_requests)
+                break
             try:
                 outcome = await process_one(
                     session, fetcher, seed_url=seed_url,

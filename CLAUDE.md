@@ -57,8 +57,23 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   transport to route via Nimble if IP-throttled. **Both endpoints live-verified 2026-07-24**
   against `guron`'s collection (40 items/page) + `panchito`'s supporters (results shape captured).
 - **Fan-out is bounded by depth** (`crawl_frontier.depth`, seed=0; `crawl_max_depth` config,
-  default 3): ingest still happens at the boundary, only outward enqueue stops.
-- **M4–M6** pending (curation, API+UI, deploy).
+  default 3) **and by a request budget** (`crawl_max_requests`, default 100 = cumulative successful
+  provider fetches; enforced in `runner.run_until_empty` + the ARQ `crawl_next` chain). Ingest
+  still happens at the boundary, only outward enqueue stops.
+- **M4 Curation** 🔨 POC done (committed + run live): `app/curation/engine.py` scores unowned
+  albums/tracks by **co-ownership among taste-neighbours** (# non-me fans who own it) + a
+  **tag-affinity** nudge from your owned-album genres, after excluding everything already in your
+  world — **owned + wishlisted** (`fan_items`, the wishlist via `is_wishlist`), **followed** bands
+  (`follows`), and active **blacklist**. "You" = the `is_me` fan (from BANDCAMP_FAN_URL). Writes
+  explainable rows to `recommendations` (idempotent clear+insert). `scripts/curate.py [N]` prints
+  the feed. **Wishlist ingestion added**: `fan_items.is_wishlist` (migration `0002`, guarded), parsed
+  from `item_cache.wishlist`, ingested only for `is_me`.
+  - **Live result 2026-07-24**: after crawling ~12 neighbour collections (8k non-me fan_items),
+    curate produced 7,768 recs; top pick was a sibling release on a label guron already buys from;
+    verified 0 recs leak owned/wishlisted/followed items. Tag-affinity is mostly 0 so far because
+    album tags only come from crawled album *pages* (only ~14 crawled) — it strengthens as more
+    album pages are visited.
+- **M5–M6** pending (API+UI, deploy).
 
 ## Local infra — docker-compose (canonical, set up 2026-07-24)
 Postgres 16 + Redis 7 run as containers via `docker-compose.yml` (services: `postgres`, `redis`,

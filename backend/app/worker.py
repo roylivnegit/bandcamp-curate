@@ -38,6 +38,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["supporters_client"] = SupportersApiClient()
     ctx["seed_url"] = settings.bandcamp_fan_url
     ctx["max_depth"] = settings.crawl_max_depth
+    ctx["max_requests"] = settings.crawl_max_requests
 
 
 async def seed_crawl(ctx: dict[str, Any], url: str | None = None) -> str:
@@ -50,8 +51,12 @@ async def seed_crawl(ctx: dict[str, Any], url: str | None = None) -> str:
 
 
 async def crawl_next(ctx: dict[str, Any]) -> bool:
-    """Process one frontier entry; re-enqueue self while work remains."""
+    """Process one frontier entry; re-enqueue self while work + budget remain."""
+    max_requests = ctx.get("max_requests")
     async with ctx["sessionmaker"]() as session:
+        if await runner.budget_exhausted(session, max_requests):
+            logger.info("request budget reached (%s); halting crawl chain", max_requests)
+            return False
         try:
             outcome = await runner.process_one(
                 session, ctx["gateway"], seed_url=ctx.get("seed_url"),
@@ -62,8 +67,9 @@ async def crawl_next(ctx: dict[str, Any]) -> bool:
         except Exception:  # noqa: BLE001 — already recorded on the frontier
             outcome = None
         remaining = await frontier.pending_count(session)
+        over_budget = await runner.budget_exhausted(session, max_requests)
 
-    if remaining > 0:
+    if remaining > 0 and not over_budget:
         await ctx["redis"].enqueue_job("crawl_next")
     return outcome is not None
 

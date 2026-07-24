@@ -1,0 +1,141 @@
+from collections.abc import AsyncIterator
+
+import pytest_asyncio
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.curation.engine import compute_recommendations, curate, get_me
+from app.db.base import Base
+from app.db.models import (
+    Album,
+    AlbumTag,
+    Band,
+    Blacklist,
+    Fan,
+    FanItem,
+    Follow,
+    Recommendation,
+    Tag,
+    Track,
+)
+from app.enums import BandKind, ItemType, TargetType
+
+
+@pytest_asyncio.fixture
+async def session() -> AsyncIterator[AsyncSession]:
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+        yield s
+    await engine.dispose()
+
+
+async def _build_graph(s: AsyncSession) -> None:
+    """A small world:
+      me owns A1(B1, tags rock,jazz) + track T1; wishlists A2; follows B3.
+      F2 owns A1, A2, A3(B3), A4(B4, tag rock), T2.
+      F3 owns A4, A5(B5).
+    Expected recs: A4 (co=2, tag rock matched) > A5 (co=1); T2 (co=1).
+    A1 excluded (owned), A2 (wishlist), A3 (band followed).
+    """
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    f2 = Fan(bandcamp_fan_id=2, username="f2", url="https://bandcamp.com/f2")
+    f3 = Fan(bandcamp_fan_id=3, username="f3", url="https://bandcamp.com/f3")
+    bands = {n: Band(bandcamp_id=n, name=f"B{n}", kind=BandKind.ARTIST) for n in range(1, 6)}
+    s.add_all([me, f2, f3, *bands.values()])
+    await s.flush()
+
+    def album(aid, bandnum):
+        a = Album(bandcamp_id=aid, title=f"A{aid}", band_id=bands[bandnum].id)
+        s.add(a)
+        return a
+
+    a1, a2, a3, a4, a5 = album(1, 1), album(2, 2), album(3, 3), album(4, 4), album(5, 5)
+    t1 = Track(bandcamp_id=101, title="T1", band_id=bands[1].id)
+    t2 = Track(bandcamp_id=102, title="T2", band_id=bands[2].id)
+    s.add_all([t1, t2])
+    await s.flush()
+
+    rock = Tag(name="rock")
+    jazz = Tag(name="jazz")
+    s.add_all([rock, jazz])
+    await s.flush()
+    # my A1 → rock, jazz ; candidate A4 → rock (matches my profile)
+    s.add_all([
+        AlbumTag(album_id=a1.id, tag_id=rock.id),
+        AlbumTag(album_id=a1.id, tag_id=jazz.id),
+        AlbumTag(album_id=a4.id, tag_id=rock.id),
+    ])
+
+    # ownership edges
+    s.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a1.id),
+        FanItem(fan_id=me.id, item_type=ItemType.TRACK, track_id=t1.id),
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a2.id, is_wishlist=True),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a1.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a2.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a3.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a4.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t2.id),
+        FanItem(fan_id=f3.id, item_type=ItemType.ALBUM, album_id=a4.id),
+        FanItem(fan_id=f3.id, item_type=ItemType.ALBUM, album_id=a5.id),
+    ])
+    s.add(Follow(band_id=bands[3].id, target_type=TargetType.ARTIST))  # I follow B3
+    await s.commit()
+
+
+async def test_recommendations_exclude_and_rank(session: AsyncSession) -> None:
+    await _build_graph(session)
+    scored = await compute_recommendations(session)
+
+    albums = [s for s in scored if s.album_id is not None]
+    rec_album_bcids = {}
+    for sc in albums:
+        a = (await session.execute(select(Album).where(Album.id == sc.album_id))).scalar_one()
+        rec_album_bcids[a.bandcamp_id] = sc
+
+    # A1 (owned), A2 (wishlisted), A3 (followed band) are all excluded.
+    assert set(rec_album_bcids) == {4, 5}
+    # A4 has 2 co-owners (F2,F3) + a matched tag; A5 has 1 → A4 ranks first.
+    assert scored[0].album_id == rec_album_bcids[4].album_id
+    assert rec_album_bcids[4].reasons["co_owners"] == 2
+    assert "rock" in rec_album_bcids[4].reasons["matched_tags"]
+    assert rec_album_bcids[4].score > rec_album_bcids[5].score
+
+    # Track T2 (owned by F2) is a candidate; my own T1 is excluded.
+    tracks = [s for s in scored if s.track_id is not None]
+    assert len(tracks) == 1 and tracks[0].reasons["co_owners"] == 1
+
+
+async def test_curate_persists_and_is_idempotent(session: AsyncSession) -> None:
+    await _build_graph(session)
+    scored = await curate(session)
+    assert await _count(session, Recommendation) == len(scored)
+    # Re-running replaces, doesn't duplicate.
+    again = await curate(session)
+    assert await _count(session, Recommendation) == len(again) == len(scored)
+
+
+async def test_blacklist_excludes_candidate(session: AsyncSession) -> None:
+    await _build_graph(session)
+    a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
+    session.add(Blacklist(target_type=str(TargetType.ALBUM), album_id=a4.id, active=True))
+    await session.commit()
+
+    scored = await compute_recommendations(session)
+    rec_album_ids = {s.album_id for s in scored if s.album_id}
+    assert a4.id not in rec_album_ids  # blacklisted → gone
+
+
+async def test_get_me_requires_seed(session: AsyncSession) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="no is_me fan"):
+        await get_me(session)
+
+
+async def _count(session: AsyncSession, model) -> int:
+    from sqlalchemy import func
+
+    return (await session.execute(select(func.count()).select_from(model))).scalar_one()

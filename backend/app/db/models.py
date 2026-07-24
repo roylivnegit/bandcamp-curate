@@ -126,6 +126,8 @@ class FanItem(Base):
     item_type: Mapped[str] = mapped_column(String(16))  # ItemType
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), index=True)
+    # True = wishlisted (not owned). Curation excludes both from recommendations.
+    is_wishlist: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
