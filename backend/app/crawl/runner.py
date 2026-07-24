@@ -26,6 +26,7 @@ async def process_entry(
     *,
     seed_url: str | None = None,
     collection_client: CollectionApiClient | None = None,
+    max_depth: int | None = None,
 ) -> CrawlOutcome:
     """Run one already-claimed frontier entry by kind. Raises on failure."""
     if entry.kind == CrawlKind.FAN_COLLECTION:
@@ -33,9 +34,13 @@ async def process_entry(
             session, fetcher, entry.url,
             is_me=(entry.url == seed_url),
             collection_client=collection_client,
+            depth=entry.depth,
+            max_depth=max_depth,
         )
     if entry.kind == CrawlKind.ALBUM:
-        return await crawl_album(session, fetcher, entry.url)
+        return await crawl_album(
+            session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth
+        )
     raise ValueError(f"unsupported crawl kind: {entry.kind}")
 
 
@@ -45,6 +50,7 @@ async def process_one(
     *,
     seed_url: str | None = None,
     collection_client: CollectionApiClient | None = None,
+    max_depth: int | None = None,
 ) -> CrawlOutcome | None:
     """Claim and process a single frontier entry. Returns None if none pending."""
     entry = await frontier.claim_next(session)
@@ -56,7 +62,7 @@ async def process_one(
     try:
         outcome = await process_entry(
             session, fetcher, entry, seed_url=seed_url,
-            collection_client=collection_client,
+            collection_client=collection_client, max_depth=max_depth,
         )
     except Exception as exc:  # noqa: BLE001 — record and move on; crawl is resumable
         await session.rollback()
@@ -80,6 +86,7 @@ async def run_until_empty(
     *,
     seed_url: str | None = None,
     collection_client: CollectionApiClient | None = None,
+    max_depth: int | None = None,
     max_iterations: int = 1000,
 ) -> list[CrawlOutcome]:
     """Process frontier entries until it drains or `max_iterations` is reached."""
@@ -89,7 +96,7 @@ async def run_until_empty(
             try:
                 outcome = await process_one(
                     session, fetcher, seed_url=seed_url,
-                    collection_client=collection_client,
+                    collection_client=collection_client, max_depth=max_depth,
                 )
             except Exception:  # noqa: BLE001 — already recorded; keep draining
                 continue

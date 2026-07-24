@@ -58,6 +58,11 @@ def album_request(url: str) -> FetchRequest:
     return FetchRequest(url=url, parser_name="album_page", render=True)
 
 
+def _within_depth(depth: int, max_depth: int | None) -> bool:
+    """Whether children of an entry at `depth` should be enqueued."""
+    return max_depth is None or depth < max_depth
+
+
 async def crawl_fan_collection(
     session: AsyncSession,
     fetcher: Fetcher,
@@ -65,11 +70,14 @@ async def crawl_fan_collection(
     *,
     is_me: bool = False,
     collection_client: CollectionApiClient | None = None,
+    depth: int = 0,
+    max_depth: int | None = None,
 ) -> CrawlOutcome:
     """Fetch a fan page, ingest their whole collection, and enqueue each owned album.
 
     The rendered page gives the first page + fan_id + pagination token; the rest is
     pulled by mimicking the `collection_items` XHR (deterministic, no auto-scroll).
+    Owned albums are enqueued at `depth + 1`, capped by `max_depth`.
     """
     result = await fetcher.fetch(fan_collection_request(url))
     if not result.html:
@@ -89,10 +97,11 @@ async def crawl_fan_collection(
     counts = await ingest_fan_collection(session, fc, is_me=is_me)
 
     enqueued = 0
-    for item in fc.items:
-        if item.item_type == "album" and item.url:
-            if await enqueue(session, item.url, CrawlKind.ALBUM):
-                enqueued += 1
+    if _within_depth(depth, max_depth):
+        for item in fc.items:
+            if item.item_type == "album" and item.url:
+                if await enqueue(session, item.url, CrawlKind.ALBUM, depth=depth + 1):
+                    enqueued += 1
     await session.commit()
 
     return CrawlOutcome(
@@ -107,8 +116,14 @@ async def crawl_album(
     session: AsyncSession,
     fetcher: Fetcher,
     url: str,
+    *,
+    depth: int = 0,
+    max_depth: int | None = None,
 ) -> CrawlOutcome:
-    """Fetch an album page, ingest album/tracks/tags/supporters, enqueue supporters."""
+    """Fetch an album page, ingest album/tracks/tags/supporters, enqueue supporters.
+
+    Supporter collections are enqueued at `depth + 1`, capped by `max_depth`.
+    """
     result = await fetcher.fetch(album_request(url))
     if not result.html:
         raise ValueError(f"no HTML returned for album page {url}")
@@ -124,9 +139,12 @@ async def crawl_album(
     scounts = await ingest_album_supporters(session, album, sup)
 
     enqueued = 0
-    for s in sup.supporters:
-        if s.url and await enqueue(session, s.url, CrawlKind.FAN_COLLECTION):
-            enqueued += 1
+    if _within_depth(depth, max_depth):
+        for s in sup.supporters:
+            if s.url and await enqueue(
+                session, s.url, CrawlKind.FAN_COLLECTION, depth=depth + 1
+            ):
+                enqueued += 1
     await session.commit()
 
     return CrawlOutcome(

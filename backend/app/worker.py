@@ -35,6 +35,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["gateway"] = build_gateway(settings, sessionmaker=ctx["sessionmaker"])
     ctx["collection_client"] = CollectionApiClient()
     ctx["seed_url"] = settings.bandcamp_fan_url
+    ctx["max_depth"] = settings.crawl_max_depth
 
 
 async def seed_crawl(ctx: dict[str, Any], url: str | None = None) -> str:
@@ -53,6 +54,7 @@ async def crawl_next(ctx: dict[str, Any]) -> bool:
             outcome = await runner.process_one(
                 session, ctx["gateway"], seed_url=ctx.get("seed_url"),
                 collection_client=ctx.get("collection_client"),
+                max_depth=ctx.get("max_depth"),
             )
         except Exception:  # noqa: BLE001 — already recorded on the frontier
             outcome = None

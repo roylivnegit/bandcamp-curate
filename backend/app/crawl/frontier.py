@@ -21,6 +21,7 @@ async def enqueue(
     kind: CrawlKind | str,
     *,
     priority: int = 0,
+    depth: int = 0,
 ) -> bool:
     """Add a (url, kind) to the frontier if absent. Returns True if newly added."""
     kind = str(kind)
@@ -35,7 +36,7 @@ async def enqueue(
         return False
     session.add(
         CrawlFrontier(
-            url=url, kind=kind, status=CrawlStatus.PENDING, priority=priority
+            url=url, kind=kind, status=CrawlStatus.PENDING, priority=priority, depth=depth
         )
     )
     await session.flush()

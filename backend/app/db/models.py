@@ -215,6 +215,8 @@ class CrawlFrontier(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), default=CrawlStatus.PENDING, index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    # Distance from the seed (seed=0). Bounds the supporter→collection fan-out.
+    depth: Mapped[int] = mapped_column(Integer, default=0, index=True)
     last_error: Mapped[str | None] = mapped_column(Text)
 
 

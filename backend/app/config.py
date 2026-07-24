@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     scraper_max_qps: float = 2.0
     scraper_max_concurrency: int = 4
 
+    # Crawl fan-out bound: max distance from the seed to keep crawling
+    # (seed=0 → my albums=1 → their supporters=2 → those supporters' albums=3 …).
+    crawl_max_depth: int = 3
+
     # Seed
     bandcamp_fan_url: str = ""
 

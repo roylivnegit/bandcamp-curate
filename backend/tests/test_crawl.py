@@ -189,6 +189,26 @@ async def test_crawl_album_ingests_supporters_and_enqueues_them(
     }
 
 
+async def test_crawl_album_propagates_depth(session: AsyncSession) -> None:
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    await crawl_album(session, fetcher, ALBUM_URL, depth=1, max_depth=3)
+    fans = (
+        await session.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
+        )
+    ).scalars().all()
+    assert fans and all(f.depth == 2 for f in fans)  # children at depth+1
+
+
+async def test_crawl_album_at_max_depth_enqueues_nothing(session: AsyncSession) -> None:
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    # Album is ingested, but at depth == max_depth its supporters are NOT enqueued.
+    outcome = await crawl_album(session, fetcher, ALBUM_URL, depth=3, max_depth=3)
+    assert outcome.supporters == 3  # still ingested
+    assert outcome.enqueued == 0
+    assert await _count(session, CrawlFrontier) == 0
+
+
 # ── Runner (end-to-end over the frontier) ───────────────────────────────────────
 
 
@@ -219,4 +239,33 @@ async def test_runner_walks_the_graph(
         assert await _count(s, Album) >= 1
         assert await _count(s, AlbumSupporter) == 3
         # No entries left PENDING (all DONE or ERROR).
+        assert await frontier.pending_count(s) == 0
+
+
+async def test_runner_respects_max_depth(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML, "/album/": ALBUM_HTML})
+    async with sessionmaker_() as s:
+        await seed_fan_collection(s, SEED_URL)  # depth 0
+
+    # max_depth=1: seed (0) → owned albums (1) → album crawl at depth 1 == max,
+    # so supporter fan-collections (depth 2) are never enqueued.
+    await runner.run_until_empty(
+        sessionmaker_, fetcher, seed_url=SEED_URL,
+        collection_client=FakeCollectionClient(), max_depth=1, max_iterations=25,
+    )
+
+    async with sessionmaker_() as s:
+        fans = (
+            await s.execute(
+                select(CrawlFrontier).where(
+                    CrawlFrontier.kind == CrawlKind.FAN_COLLECTION
+                )
+            )
+        ).scalars().all()
+        # Only the seed fan collection — no supporter collections were enqueued.
+        assert {f.url for f in fans} == {SEED_URL}
+        # Supporters were still ingested from the album page.
+        assert await _count(s, AlbumSupporter) == 3
         assert await frontier.pending_count(s) == 0
