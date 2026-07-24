@@ -34,12 +34,15 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     anchors (username only) if the blob is absent.
   - Real fixture `tests/fixtures/album_page.html` (trimmed from a live panchito fetch + 2
     synthetic supporters for multi/dedup coverage).
-- **M3 Crawl workers** 🔨 in progress (committed): `app/crawl/` = frontier repo (`crawl_frontier`,
+- **M3 Crawl workers** ✅ live-validated (committed): `app/crawl/` = frontier repo (`crawl_frontier`,
   idempotent enqueue/claim/complete) + `service` (`crawl_fan_collection`→enqueue owned albums;
   `crawl_album`→ingest supporters, enqueue their collections) + `runner` (Redis-free driver) +
   `seed`. `app/worker.py` = ARQ adaptor (`seed_crawl`/`crawl_next` self-perpetuating chain).
-  `scripts/crawl.py` = in-process CLI (`seed`/`run`/`status`). All crawl logic unit-tested with a
-  fake fetcher over the fixtures (no credits). **Not yet run against live infra** (needs Postgres+Redis).
+  `scripts/crawl.py` = in-process CLI (`seed`/`run`/`status`). Unit-tested with a fake fetcher over
+  the fixtures (no credits), **and run live 2026-07-24** (local brew Postgres+Redis, `run 3`):
+  seed→182 fan_items (collection XHR pagination), 179 bands/119 albums/180 tracks/45 follows,
+  2 albums→17 album_supporters (thumbs XHR pagination), depths 0/1/2 as expected, **3 Nimble
+  credits** (page renders only; all pagination free-direct).
 - **Pagination = mimic the XHR, not render+scroll.** Two clients POST Bandcamp's public JSON APIs
   directly and page via the returned token; the fan/album page is rendered once for the first page + ids.
   - `collection_api.CollectionApiClient` → `api/fancollection/1/collection_items`
@@ -57,17 +60,27 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   default 3): ingest still happens at the boundary, only outward enqueue stops.
 - **M4–M6** pending (curation, API+UI, deploy).
 
+## Local infra (installed 2026-07-24 via brew, not docker)
+`postgresql@16` + `redis` run as `brew services` (auto-start at login). The gitignored `.env`
+uses docker hostnames (`@postgres`, `@redis`) for compose; **for local runs override to
+localhost** — every crawl/alembic command below is prefixed with:
+```bash
+cd backend && . .venv/bin/activate && set -a && . ../.env && set +a && \
+  export DATABASE_URL='postgresql+asyncpg://crate:crate@localhost:5432/crate' \
+         REDIS_URL='redis://localhost:6379/0'
+```
+DB `crate`/role `crate` (pw `crate`) created; schema at `0001_baseline`. Stop services with
+`brew services stop postgresql@16 redis`. Inspect: `PGPASSWORD=crate psql -h localhost -U crate -d crate`.
+
 ## Immediate next steps
-1. Stand up Postgres+Redis, `alembic upgrade head`, then `python -m scripts.crawl seed &&
-   python -m scripts.crawl run 3` for a live end-to-end smoke test through Nimble+DB.
-   **Blocker:** this box has no `docker`/`postgres`/`redis` installed (only `docker-compose.yml`);
-   install Docker Desktop or `brew install postgresql@16 redis` first.
-2. ~~Live-verify the two pagination endpoints~~ ✅ done 2026-07-24 (direct Bandcamp, no Nimble):
-   `collection_items` returns 40 items/page; `tralbumcollectors/2/thumbs` returns `results[]`.
-   Note: the thumbs endpoint also accepts a synthetic "newest" token
-   (`1:9999999999:9999999999:0:0:0`) to fetch supporters from the top without the embedded blob.
-3. Consider a secondary budget cap (max total frontier size / max fetches per run) on top of the
-   depth bound before a very wide run.
+1. ~~Live end-to-end smoke test~~ ✅ done 2026-07-24 — `scripts.crawl seed && run 3` populated the
+   graph (see M3 status above); 3 Nimble credits. To crawl wider: `python -m scripts.crawl run <N>`
+   (each N = one more page render/credit) or run the ARQ worker (`arq app.worker.WorkerSettings`)
+   for the self-perpetuating chain.
+2. Consider a secondary budget cap (max total frontier size / max fetches per run) on top of the
+   depth bound before a very wide run — depth 3 on a popular album still fans out wide.
+3. **M4 (curation)** is now unblocked with real data in the DB: score unowned tracks/albums by
+   supporter overlap + tag affinity + follow signals → `recommendations` table.
 
 ## Open decision — RESOLVED (2026-07-24)
 Earlier flagged: local Python parsing vs Nimble server-side parsing, with the v2 parser def
