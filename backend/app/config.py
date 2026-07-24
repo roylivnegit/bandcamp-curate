@@ -31,8 +31,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Scraper rate limiting (stay well under Nimble's ~83 QPS ceiling)
-    scraper_max_qps: float = 2.0
-    scraper_max_concurrency: int = 4
+    scraper_max_qps: float = 30.0
+    scraper_max_concurrency: int = 40
+    # Per-provider same-request retries on 429/5xx (backoff between each).
+    scraper_max_retries: int = 10
 
     # Crawl fan-out bound: max distance from the seed to keep crawling
     # (seed=0 → my albums=1 → their supporters=2 → those supporters' albums=3 …).
@@ -40,7 +42,7 @@ class Settings(BaseSettings):
 
     # Safety budget: stop crawling once this many provider (Nimble) page fetches
     # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
-    crawl_max_requests: int = 100
+    crawl_max_requests: int = 2000
 
     # Seed
     bandcamp_fan_url: str = ""

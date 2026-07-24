@@ -33,4 +33,10 @@ def build_gateway(
     cache: ResponseCache = RedisCache(redis_client) if redis_client is not None else NullCache()
     usage: UsageSink = DbUsageSink(sessionmaker) if sessionmaker is not None else NullUsageSink()
 
-    return ScraperGateway(providers, rate_limiter=rate_limiter, cache=cache, usage=usage)
+    return ScraperGateway(
+        providers,
+        rate_limiter=rate_limiter,
+        cache=cache,
+        usage=usage,
+        max_retries=settings.scraper_max_retries,
+    )
