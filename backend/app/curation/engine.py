@@ -46,6 +46,7 @@ class ScoredItem:
     album_id: int | None
     track_id: int | None
     score: float
+    band_id: int | None = None
     reasons: dict = field(default_factory=dict)
 
 
@@ -152,9 +153,13 @@ async def _tag_names(session: AsyncSession, tag_ids: set[int]) -> dict[int, str]
 
 
 async def compute_recommendations(
-    session: AsyncSession, *, limit: int | None = None
+    session: AsyncSession, *, limit: int | None = None, one_per_band: bool = True
 ) -> list[ScoredItem]:
-    """Score unowned albums + tracks by neighbour co-ownership (+ tag affinity)."""
+    """Score unowned albums + tracks by neighbour co-ownership (+ tag affinity).
+
+    With `one_per_band` (default), only each band's highest-scoring item is kept —
+    the feed shows one recommendation per artist/label.
+    """
     me = await get_me(session)
     excl = await build_exclusions(session, me)
     tag_profile = await _my_tag_profile(session, me)
@@ -205,6 +210,7 @@ async def compute_recommendations(
                 album_id=album_id,
                 track_id=None,
                 score=score,
+                band_id=band_id,
                 reasons={
                     "co_owners": co_owners,
                     "tag_affinity": tag_affinity,
@@ -243,11 +249,22 @@ async def compute_recommendations(
                 album_id=None,
                 track_id=track_id,
                 score=W_CO_OWNER * co_owners,
+                band_id=band_id,
                 reasons={"co_owners": co_owners},
             )
         )
 
     scored.sort(key=lambda s: s.score, reverse=True)
+    if one_per_band:
+        seen_bands: set[int] = set()
+        deduped: list[ScoredItem] = []
+        for s in scored:
+            if s.band_id is not None:
+                if s.band_id in seen_bands:
+                    continue
+                seen_bands.add(s.band_id)
+            deduped.append(s)
+        scored = deduped
     return scored[:limit] if limit else scored
 
 

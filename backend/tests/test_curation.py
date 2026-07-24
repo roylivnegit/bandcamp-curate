@@ -108,6 +108,32 @@ async def test_recommendations_exclude_and_rank(session: AsyncSession) -> None:
     assert len(tracks) == 1 and tracks[0].reasons["co_owners"] == 1
 
 
+async def test_one_recommendation_per_band(session: AsyncSession) -> None:
+    await _build_graph(session)
+    # Give B4 a second candidate album (a6), owned by two neighbours → higher score.
+    b4 = (await session.execute(select(Band).where(Band.bandcamp_id == 5))).scalar_one()
+    a6 = Album(bandcamp_id=6, title="A6 same band as A5", band_id=b4.id)
+    session.add(a6)
+    await session.flush()
+    f2 = (await session.execute(select(Fan).where(Fan.username == "f2"))).scalar_one()
+    f3 = (await session.execute(select(Fan).where(Fan.username == "f3"))).scalar_one()
+    session.add_all([
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a6.id),
+        FanItem(fan_id=f3.id, item_type=ItemType.ALBUM, album_id=a6.id),
+    ])
+    await session.commit()
+
+    deduped = await compute_recommendations(session, one_per_band=True)
+    band_ids = [s.band_id for s in deduped]
+    assert len(band_ids) == len(set(band_ids))  # no band appears twice
+    # For band 5, the 2-owner album a6 wins over the 1-owner a5.
+    b5_rec = next(s for s in deduped if s.band_id == b4.id)
+    assert b5_rec.album_id == a6.id
+
+    full = await compute_recommendations(session, one_per_band=False)
+    assert len(full) > len(deduped)  # dedup actually removed something
+
+
 async def test_curate_persists_and_is_idempotent(session: AsyncSession) -> None:
     await _build_graph(session)
     scored = await curate(session)

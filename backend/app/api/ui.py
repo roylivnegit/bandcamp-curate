@@ -17,12 +17,14 @@ _PAGE = """<!doctype html>
   :root {
     --bg:#0f1115; --panel:#171a21; --panel2:#1e222c; --line:#282d38;
     --text:#e7e9ee; --muted:#9aa3b2; --accent:#5eead4; --accent2:#f0abfc;
+    --danger:#fb7185;
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
     font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
   a { color:inherit; }
-  header { padding:28px 20px 16px; max-width:900px; margin:0 auto; }
+  .wrap { max-width:900px; margin:0 auto; padding:0 20px; }
+  header { padding:28px 0 12px; }
   h1 { margin:0; font-size:26px; letter-spacing:-.02em; }
   h1 .dot { color:var(--accent); }
   .sub { color:var(--muted); margin-top:4px; font-size:13px; }
@@ -30,16 +32,28 @@ _PAGE = """<!doctype html>
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px;
     padding:8px 12px; font-size:12px; color:var(--muted); }
   .stat b { color:var(--text); font-size:15px; display:block; }
-  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-    max-width:900px; margin:8px auto 0; padding:0 20px; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
   .seg { display:flex; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
   .seg button { background:none; border:0; color:var(--muted); padding:7px 14px; cursor:pointer; font-size:13px; }
   .seg button.on { background:var(--panel2); color:var(--accent); }
   .spacer { flex:1; }
   .btn { background:var(--accent); color:#06231e; border:0; border-radius:10px;
     padding:8px 14px; font-weight:600; cursor:pointer; font-size:13px; }
+  .btn.ghost { background:var(--panel); color:var(--muted); border:1px solid var(--line); }
   .btn:disabled { opacity:.5; cursor:default; }
-  main { max-width:900px; margin:16px auto 60px; padding:0 20px; }
+  .hint { color:var(--muted); font-size:12px; margin:12px 0 4px; }
+  .tagbar { display:flex; gap:6px; overflow-x:auto; padding:6px 0 2px; }
+  .tagbar::-webkit-scrollbar { height:6px; } .tagbar::-webkit-scrollbar-thumb { background:var(--line); border-radius:3px; }
+  .tchip { white-space:nowrap; background:var(--panel); border:1px solid var(--line); color:var(--muted);
+    border-radius:999px; padding:4px 11px; font-size:12px; cursor:pointer; }
+  .tchip.by { border-color:var(--accent); color:var(--accent); }
+  .tchip.out { border-color:var(--danger); color:var(--danger); text-decoration:line-through; }
+  .tchip .n { opacity:.6; margin-left:4px; }
+  .active { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px; min-height:0; }
+  .fpill { font-size:12px; background:var(--panel2); border:1px solid var(--line); border-radius:999px;
+    padding:3px 8px; color:var(--text); cursor:pointer; }
+  .fpill b { color:var(--accent); } .fpill.out b { color:var(--danger); }
+  main { margin:12px 0 60px; }
   .card { display:flex; gap:14px; align-items:flex-start; background:var(--panel);
     border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:10px; }
   .rank { color:var(--muted); font-variant-numeric:tabular-nums; min-width:28px; font-size:13px; padding-top:3px; }
@@ -50,20 +64,29 @@ _PAGE = """<!doctype html>
   .title { font-weight:600; }
   .title .type { font-size:10px; text-transform:uppercase; letter-spacing:.08em;
     color:var(--accent2); border:1px solid var(--line); border-radius:6px; padding:1px 5px; margin-left:8px; }
-  .band { color:var(--muted); font-size:13px; margin-top:2px; }
+  .band { color:var(--muted); font-size:13px; margin-top:2px; cursor:pointer; }
+  .band:hover { color:var(--accent); text-decoration:underline; }
   .meta { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
   .chip { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:2px 9px; color:var(--text); }
-  .chip.tag { color:var(--accent); }
-  .listen { margin-left:auto; color:var(--accent); text-decoration:none; font-weight:600; white-space:nowrap; }
+  .chip.tag { color:var(--accent); cursor:pointer; }
+  .grow { flex:1; }
+  .block { background:none; border:1px solid var(--line); color:var(--muted); border-radius:8px;
+    padding:3px 9px; font-size:12px; cursor:pointer; }
+  .block:hover { border-color:var(--danger); color:var(--danger); }
+  .listen { color:var(--accent); text-decoration:none; font-weight:600; white-space:nowrap; }
   .listen:hover { text-decoration:underline; }
   .empty { color:var(--muted); text-align:center; padding:50px 0; }
   .more { display:block; margin:16px auto 0; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-top:12px; }
+  .brow { display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); }
+  .brow:last-child { border-bottom:0; }
 </style>
 </head>
 <body>
+<div class="wrap">
 <header>
   <h1>crate<span class="dot">·</span>digger</h1>
-  <div class="sub">Music your collection's supporters own that you don't — ranked.</div>
+  <div class="sub">Music your collection's supporters own that you don't — one per artist, ranked.</div>
   <div class="stats" id="stats"></div>
 </header>
 <div class="controls">
@@ -73,42 +96,80 @@ _PAGE = """<!doctype html>
     <button data-t="track">Tracks</button>
   </div>
   <div class="spacer"></div>
+  <button class="btn ghost" id="blockedBtn">Blocked (0)</button>
   <button class="btn" id="recompute">↻ Recompute</button>
 </div>
+<div class="hint">Filter by genre — click once to <b style="color:var(--accent)">include</b>, twice to <b style="color:var(--danger)">exclude</b>:</div>
+<div class="tagbar" id="tagbar"></div>
+<div class="active" id="active"></div>
+<div class="panel" id="blockedPanel" style="display:none"></div>
 <main>
   <div id="feed"></div>
   <button class="btn more" id="more" style="display:none">Load more</button>
-  <div class="empty" id="empty" style="display:none">No recommendations yet — seed &amp; crawl, then Recompute.</div>
+  <div class="empty" id="empty" style="display:none">No recommendations match — clear a filter, or Recompute.</div>
 </main>
+</div>
 <script>
-const feed=document.getElementById('feed'), moreBtn=document.getElementById('more'),
-      emptyEl=document.getElementById('empty');
-let type='', offset=0, loading=false; const LIMIT=50;
+const $=s=>document.querySelector(s);
+const feed=$('#feed'), moreBtn=$('#more'), emptyEl=$('#empty');
+const LIMIT=50;
+let type='', offset=0, loading=false;
+const tagState={};          // tag -> 'by' | 'out'
+let labelFilter=null;       // {id, name}
 
 function esc(s){ return (s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+function query(){
+  const q=new URLSearchParams(); q.set('limit',LIMIT); q.set('offset',offset);
+  if(type) q.set('item_type',type);
+  for(const [t,m] of Object.entries(tagState)){ if(m==='by') q.append('tag',t); else if(m==='out') q.append('exclude_tag',t); }
+  if(labelFilter) q.set('label_id', labelFilter.id);
+  return q;
+}
+
 async function loadStats(){
   const s=await (await fetch('/api/stats')).json();
-  const cell=(v,l)=>`<div class="stat"><b>${v.toLocaleString()}</b>${l}</div>`;
-  document.getElementById('stats').innerHTML =
-    cell(s.recommendations,'recommendations')+cell(s.neighbours,'taste-neighbours')+
+  const cell=(v,l)=>`<div class="stat"><b>${(''+v).replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')}</b>${l}</div>`;
+  $('#stats').innerHTML = cell(s.recommendations,'recommendations')+cell(s.neighbours,'taste-neighbours')+
     cell(s.my_owned,'you own')+cell(s.my_wishlist,'wishlist')+cell(s.follows,'follows')+
     cell(s.requests_used+' / '+s.request_budget,'crawl budget');
 }
 
+async function loadFacets(){
+  const f=await (await fetch('/api/facets')).json();
+  $('#tagbar').innerHTML = f.tags.length
+    ? f.tags.map(t=>`<span class="tchip" data-tag="${esc(t.value)}">${esc(t.label)}<span class="n">${t.count}</span></span>`).join('')
+    : '<span class="hint">No genre tags yet — crawl more album pages to populate them.</span>';
+  renderTagStates();
+}
+function renderTagStates(){
+  document.querySelectorAll('.tchip').forEach(c=>{
+    const m=tagState[c.dataset.tag]; c.classList.toggle('by',m==='by'); c.classList.toggle('out',m==='out');
+  });
+}
+function renderActive(){
+  const bits=[];
+  for(const [t,m] of Object.entries(tagState))
+    bits.push(`<span class="fpill ${m==='out'?'out':''}" data-clear-tag="${esc(t)}">${m==='out'?'exclude':'genre'}: <b>${esc(t)}</b> ✕</span>`);
+  if(labelFilter) bits.push(`<span class="fpill" data-clear-label="1">label: <b>${esc(labelFilter.name)}</b> ✕</span>`);
+  $('#active').innerHTML=bits.join('');
+}
+
 function card(r){
-  const tags=(r.reasons.matched_tags||[]).map(t=>`<span class="chip tag">${esc(t)}</span>`).join('');
+  const tags=(r.reasons.matched_tags||[]).map(t=>`<span class="chip tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
   const co=r.reasons.co_owners||0;
   return `<div class="card">
     <div class="rank">${r.rank}</div>
     <div class="score"><b>${r.score.toFixed(1)}</b><span>score</span></div>
     <div class="body">
       <div class="title">${esc(r.title)||'—'}<span class="type">${r.item_type}</span></div>
-      <div class="band">${esc(r.band_name)||'unknown artist'}</div>
+      <div class="band" data-label="${r.band_id||''}" data-name="${esc(r.band_name)}">${esc(r.band_name)||'unknown artist'}</div>
       <div class="meta">
         <span class="chip">${co} neighbour${co===1?'':'s'} own this</span>
         ${tags}
-        ${r.url?`<a class="listen" href="${esc(r.url)}" target="_blank" rel="noopener">Listen on Bandcamp ↗</a>`:''}
+        <span class="grow"></span>
+        ${r.band_id?`<button class="block" data-block="${r.band_id}" data-bname="${esc(r.band_name)}">⊘ block</button>`:''}
+        ${r.url?`<a class="listen" href="${esc(r.url)}" target="_blank" rel="noopener">Bandcamp ↗</a>`:''}
       </div>
     </div>
   </div>`;
@@ -117,29 +178,52 @@ function card(r){
 async function loadPage(reset){
   if(loading) return; loading=true; moreBtn.disabled=true;
   if(reset){ offset=0; feed.innerHTML=''; }
-  const q=new URLSearchParams({limit:LIMIT, offset}); if(type) q.set('item_type',type);
-  const rows=await (await fetch('/api/recommendations?'+q)).json();
+  const rows=await (await fetch('/api/recommendations?'+query())).json();
   feed.insertAdjacentHTML('beforeend', rows.map(card).join(''));
   offset+=rows.length;
-  emptyEl.style.display = (offset===0)?'block':'none';
-  moreBtn.style.display = (rows.length===LIMIT)?'block':'none';
+  emptyEl.style.display=(offset===0)?'block':'none';
+  moreBtn.style.display=(rows.length===LIMIT)?'block':'none';
   loading=false; moreBtn.disabled=false;
 }
+function refresh(){ renderTagStates(); renderActive(); loadPage(true); }
 
-document.getElementById('filter').addEventListener('click', e=>{
-  const b=e.target.closest('button'); if(!b) return;
-  [...e.currentTarget.children].forEach(x=>x.classList.remove('on')); b.classList.add('on');
-  type=b.dataset.t; loadPage(true);
+// ── events ──
+$('#filter').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
+  [...e.currentTarget.children].forEach(x=>x.classList.remove('on')); b.classList.add('on'); type=b.dataset.t; loadPage(true); });
+$('#tagbar').addEventListener('click',e=>{ const c=e.target.closest('.tchip'); if(!c)return;
+  const t=c.dataset.tag, m=tagState[t]; if(!m) tagState[t]='by'; else if(m==='by') tagState[t]='out'; else delete tagState[t]; refresh(); });
+$('#active').addEventListener('click',e=>{ const p=e.target.closest('[data-clear-tag]'); const l=e.target.closest('[data-clear-label]');
+  if(p){ delete tagState[p.dataset.clearTag]; refresh(); } if(l){ labelFilter=null; refresh(); } });
+feed.addEventListener('click',async e=>{
+  const tag=e.target.closest('.chip.tag'); if(tag){ tagState[tag.dataset.tag]='by'; refresh(); return; }
+  const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
+  const blk=e.target.closest('[data-block]'); if(blk){
+    blk.disabled=true; await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
+    await loadStats(); await loadBlocked(); loadPage(true);
+  }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));
-document.getElementById('recompute').addEventListener('click', async e=>{
-  e.target.disabled=true; e.target.textContent='Recomputing…';
-  await fetch('/api/recommendations/recompute',{method:'POST'});
-  await loadStats(); await loadPage(true);
-  e.target.disabled=false; e.target.textContent='↻ Recompute';
-});
+$('#recompute').addEventListener('click',async e=>{ e.target.disabled=true; e.target.textContent='Recomputing…';
+  await fetch('/api/recommendations/recompute',{method:'POST'}); await loadStats(); await loadFacets(); loadPage(true);
+  e.target.disabled=false; e.target.textContent='↻ Recompute'; });
 
-loadStats(); loadPage(true);
+// ── blocked panel ──
+const panel=$('#blockedPanel'); let panelOpen=false;
+async function loadBlocked(){
+  const rows=await (await fetch('/api/blacklist')).json();
+  $('#blockedBtn').textContent=`Blocked (${rows.length})`;
+  panel.innerHTML = rows.length
+    ? '<div class="hint">Blocked artists / labels — these never appear in the feed:</div>'+rows.map(b=>
+        `<div class="brow"><div class="grow"><b>${esc(b.band_name)||b.band_id}</b>${b.band_url?` <span class="hint">${esc(b.band_url)}</span>`:''}</div>
+         <button class="block" data-unblock="${b.band_id}">unblock</button></div>`).join('')
+    : '<div class="hint">Nothing blocked yet. Use “⊘ block” on a card.</div>';
+}
+$('#blockedBtn').addEventListener('click',async()=>{ panelOpen=!panelOpen; panel.style.display=panelOpen?'block':'none'; if(panelOpen) await loadBlocked(); });
+panel.addEventListener('click',async e=>{ const u=e.target.closest('[data-unblock]'); if(!u)return;
+  u.disabled=true; await fetch('/api/blacklist/'+u.dataset.unblock+'/unblock',{method:'POST'});
+  await loadBlocked(); await loadStats(); });
+
+loadStats(); loadFacets(); loadBlocked(); loadPage(true);
 </script>
 </body>
 </html>"""

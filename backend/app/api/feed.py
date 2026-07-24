@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -15,11 +15,13 @@ from app.crawl.runner import requests_used
 from app.curation.engine import curate
 from app.db.models import (
     Album,
+    AlbumTag,
     Band,
     Fan,
     FanItem,
     Follow,
     Recommendation,
+    Tag,
     Track,
 )
 from app.db.session import get_session
@@ -38,9 +40,21 @@ class RecommendationOut(BaseModel):
     item_type: str
     score: float
     title: str | None
+    band_id: int | None
     band_name: str | None
     url: str | None
     reasons: Reasons
+
+
+class Facet(BaseModel):
+    value: str
+    label: str
+    count: int
+
+
+class FacetsOut(BaseModel):
+    tags: list[Facet]
+    labels: list[Facet]
 
 
 class StatsOut(BaseModel):
@@ -102,15 +116,21 @@ async def recommendations(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     item_type: str | None = Query(None, pattern="^(album|track)$"),
+    tag: list[str] = Query(default=[]),           # filter by: album has ANY of these tags
+    exclude_tag: list[str] = Query(default=[]),   # filter out: album has ANY of these tags
+    label_id: list[int] = Query(default=[]),      # filter by: recommendation's band
+    exclude_label_id: list[int] = Query(default=[]),
 ) -> list[RecommendationOut]:
     ab = aliased(Band)
     tb = aliased(Band)
+    band_id_col = func.coalesce(Album.band_id, Track.band_id)
     stmt = (
         select(
             Recommendation.item_type,
             Recommendation.score,
             Recommendation.reasons,
             func.coalesce(Album.title, Track.title).label("title"),
+            band_id_col.label("band_id"),
             func.coalesce(ab.name, tb.name).label("band_name"),
             func.coalesce(Album.url, Track.url).label("url"),
         )
@@ -123,6 +143,23 @@ async def recommendations(
     )
     if item_type:
         stmt = stmt.where(Recommendation.item_type == item_type)
+    if label_id:
+        stmt = stmt.where(band_id_col.in_(label_id))
+    if exclude_label_id:
+        stmt = stmt.where(band_id_col.notin_(exclude_label_id))
+
+    def _has_tag(names: list[str]):
+        return exists(
+            select(1)
+            .select_from(AlbumTag)
+            .join(Tag, Tag.id == AlbumTag.tag_id)
+            .where(AlbumTag.album_id == Recommendation.album_id, Tag.name.in_(names))
+        )
+
+    if tag:
+        stmt = stmt.where(_has_tag(tag))          # implies albums (tracks have no tags)
+    if exclude_tag:
+        stmt = stmt.where(~_has_tag(exclude_tag))
     stmt = stmt.limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
@@ -132,12 +169,47 @@ async def recommendations(
             item_type=r.item_type,
             score=round(r.score, 2),
             title=r.title,
+            band_id=r.band_id,
             band_name=r.band_name,
             url=r.url,
             reasons=Reasons(**(r.reasons or {})),
         )
         for i, r in enumerate(rows)
     ]
+
+
+@router.get("/facets", response_model=FacetsOut)
+async def facets(session: AsyncSession = Depends(get_session)) -> FacetsOut:
+    """Tags and labels present in the current recommendations, with counts."""
+    tag_rows = (
+        await session.execute(
+            select(Tag.name, func.count().label("n"))
+            .select_from(Recommendation)
+            .join(AlbumTag, AlbumTag.album_id == Recommendation.album_id)
+            .join(Tag, Tag.id == AlbumTag.tag_id)
+            .group_by(Tag.name)
+            .order_by(func.count().desc(), Tag.name)
+        )
+    ).all()
+    label_rows = (
+        await session.execute(
+            select(Band.id, Band.name, func.count().label("n"))
+            .select_from(Recommendation)
+            .outerjoin(Album, Album.id == Recommendation.album_id)
+            .outerjoin(Track, Track.id == Recommendation.track_id)
+            .join(Band, Band.id == func.coalesce(Album.band_id, Track.band_id))
+            .group_by(Band.id, Band.name)
+            .order_by(func.count().desc(), Band.name)
+            .limit(200)
+        )
+    ).all()
+    return FacetsOut(
+        tags=[Facet(value=n, label=n, count=c) for n, c in tag_rows],
+        labels=[
+            Facet(value=str(bid), label=name or "unknown", count=c)
+            for bid, name, c in label_rows
+        ],
+    )
 
 
 @router.post("/recommendations/recompute")

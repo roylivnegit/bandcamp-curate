@@ -83,15 +83,25 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     verified 0 recs leak owned/wishlisted/followed items. Tag-affinity is mostly 0 so far because
     album tags only come from crawled album *pages* (only ~14 crawled) — it strengthens as more
     album pages are visited.
-- **M5 API + UI** 🔨 POC done (committed + run live): FastAPI `app/api/feed.py` serves
-  `GET /api/stats`, `GET /api/recommendations` (limit/offset + `item_type` filter, joined to
-  album/track/band + reasons), `POST /api/recommendations/recompute` (re-runs `curate`).
-  `app/api/ui.py` serves the feed at `GET /` — a self-contained dark HTML page (no build step)
-  that fetches those endpoints: stat tiles, All/Albums/Tracks filter, ranked cards
-  (score, band, "N neighbours own this", matched-tag chips, Bandcamp link), load-more, Recompute.
-  Run it: `uvicorn app.main:app` (host venv + localhost DATABASE_URL/REDIS_URL override) →
-  http://127.0.0.1:8000. Verified live against the POC DB (7,768 recs). `ruff` now ignores B008
-  (FastAPI `Depends()` idiom) and E501 for the UI template.
+- **M5 API + UI** 🔨 POC done (committed + run live): FastAPI serves a self-contained dark feed UI
+  at `GET /` (`app/api/ui.py`, no build step) over these `/api` endpoints (`feed.py`,
+  `blacklist.py`):
+  - `GET /api/stats` — recs / neighbours / owned / wishlist / follows / crawl budget.
+  - `GET /api/recommendations` — ranked, `limit`/`offset`, `item_type` filter, plus **filter
+    by/out**: `tag` / `exclude_tag` (genre) and `label_id` / `exclude_label_id` (band). Each row
+    carries `band_id`.
+  - `GET /api/facets` — tags + labels (bands) present in the current recs, with counts (drives the
+    filter UI).
+  - `POST /api/recommendations/recompute` — re-runs `curate`.
+  - `GET/POST /api/blacklist` (+ `POST /api/blacklist/{band_id}/unblock`) — block a band (also
+    prunes its current recs so the feed updates instantly), list blocked, unblock.
+  UI features: stat tiles, All/Albums/Tracks filter, 3-state genre-tag chips (off→include→exclude),
+  click a band to filter by that label, **⊘ block** per card, a **Blocked (N)** panel to unblock,
+  load-more, Recompute. **Curation now returns one rec per band** (`compute_recommendations(
+  one_per_band=True)` — the band's top-scoring item). Run: `uvicorn app.main:app` (host venv +
+  localhost override) → http://127.0.0.1:8000. Verified live (1,600 recs = 1,600 distinct bands;
+  block/unblock/label-filter all work). `ruff` ignores B008 (FastAPI Depends idiom) + E501 for the
+  UI template. Tag facets are sparse until more album *pages* are crawled (tags live there).
 - **M6** pending (deploy). The compose `api`/`worker` services already build ./backend; wiring a
   real deploy target is what's left.
 

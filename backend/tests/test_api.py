@@ -18,14 +18,15 @@ async def _seed(s: AsyncSession) -> None:
     # follow B3 which f2 also owns (A3) → A3 excluded.
     me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
     f2 = Fan(bandcamp_fan_id=2, username="f2", url="https://bandcamp.com/f2")
-    b1, b2, b3 = (Band(bandcamp_id=n, name=f"Band{n}", kind=BandKind.ARTIST) for n in (1, 2, 3))
-    s.add_all([me, f2, b1, b2, b3])
+    b1, b2, b3, b4 = (Band(bandcamp_id=n, name=f"Band{n}", kind=BandKind.ARTIST)
+                      for n in (1, 2, 3, 4))
+    s.add_all([me, f2, b1, b2, b3, b4])
     await s.flush()
     a1 = Album(bandcamp_id=11, title="Owned", band_id=b1.id)
     a2 = Album(bandcamp_id=12, title="Recommend Me",
                url="https://b2.bandcamp.com/album/x", band_id=b2.id)
     a3 = Album(bandcamp_id=13, title="Followed", band_id=b3.id)
-    t2 = Track(bandcamp_id=22, title="A Track", band_id=b2.id)
+    t2 = Track(bandcamp_id=22, title="A Track", band_id=b4.id)  # own band → survives dedup
     s.add_all([a1, a2, a3, t2])
     await s.flush()
     s.add_all([
@@ -103,3 +104,53 @@ async def test_ui_served(client: AsyncClient) -> None:
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert "crate" in r.text and "/api/recommendations" in r.text
+
+
+async def test_recommendation_has_band_id(client: AsyncClient) -> None:
+    rows = (await client.get("/api/recommendations")).json()
+    assert rows and all(r["band_id"] is not None for r in rows)
+
+
+async def test_block_prunes_and_lists_then_unblock(client: AsyncClient) -> None:
+    rows = (await client.get("/api/recommendations")).json()
+    target = next(r for r in rows if r["title"] == "Recommend Me")
+    band_id = target["band_id"]
+
+    # Block the band → gone from feed, listed in blacklist.
+    r = await client.post("/api/blacklist", json={"band_id": band_id, "reason": "nope"})
+    assert r.status_code == 200 and r.json()["band_id"] == band_id
+    after = (await client.get("/api/recommendations")).json()
+    assert band_id not in {x["band_id"] for x in after}
+    blocked = (await client.get("/api/blacklist")).json()
+    assert band_id in {b["band_id"] for b in blocked}
+
+    # A fresh recompute keeps it excluded.
+    await client.post("/api/recommendations/recompute")
+    assert band_id not in {x["band_id"] for x in (await client.get("/api/recommendations")).json()}
+
+    # Unblock → returns on recompute.
+    assert (await client.post(f"/api/blacklist/{band_id}/unblock")).status_code == 200
+    await client.post("/api/recommendations/recompute")
+    assert band_id in {x["band_id"] for x in (await client.get("/api/recommendations")).json()}
+
+
+async def test_block_unknown_band_404(client: AsyncClient) -> None:
+    assert (await client.post("/api/blacklist", json={"band_id": 999999})).status_code == 404
+
+
+async def test_label_filter(client: AsyncClient) -> None:
+    rows = (await client.get("/api/recommendations")).json()
+    band_id = rows[0]["band_id"]
+    only = (await client.get(f"/api/recommendations?label_id={band_id}")).json()
+    assert only and all(r["band_id"] == band_id for r in only)
+    without = (await client.get(f"/api/recommendations?exclude_label_id={band_id}")).json()
+    assert band_id not in {r["band_id"] for r in without}
+
+
+async def test_facets(client: AsyncClient) -> None:
+    f = (await client.get("/api/facets")).json()
+    assert "tags" in f and "labels" in f
+    # Every recommended band shows up as a label facet.
+    rec_bands = {r["band_id"] for r in (await client.get("/api/recommendations")).json()}
+    facet_bands = {int(x["value"]) for x in f["labels"]}
+    assert rec_bands <= facet_bands
