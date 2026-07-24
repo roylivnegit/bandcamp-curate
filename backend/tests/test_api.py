@@ -160,3 +160,34 @@ async def test_recompute_accepts_seed_tag_exclusion(client: AsyncClient) -> None
     r = await client.post("/api/recommendations/recompute?exclude_seed_tag=psytrance")
     assert r.status_code == 200
     assert r.json()["excluded_seed_tags"] == ["psytrance"]
+
+
+async def test_like_removes_and_excludes_then_unlike(client: AsyncClient) -> None:
+    rows = (await client.get("/api/recommendations")).json()
+    target = next(r for r in rows if r["title"] == "Recommend Me")
+    album_id = target["album_id"]
+    assert album_id is not None
+
+    # Like it → gone from feed now, listed under likes, stats.liked bumps.
+    r = await client.post("/api/likes", json={"album_id": album_id})
+    assert r.status_code == 200 and r.json()["album_id"] == album_id
+    after = (await client.get("/api/recommendations")).json()
+    assert album_id not in {x["album_id"] for x in after}
+    assert (await client.get("/api/stats")).json()["liked"] == 1
+    assert album_id in {x["album_id"] for x in (await client.get("/api/likes")).json()}
+
+    # Stays excluded across a recompute.
+    await client.post("/api/recommendations/recompute")
+    recs = (await client.get("/api/recommendations")).json()
+    assert album_id not in {x["album_id"] for x in recs}
+
+    # Unlike → returns on recompute.
+    assert (await client.post("/api/likes/unlike", json={"album_id": album_id})).status_code == 200
+    await client.post("/api/recommendations/recompute")
+    recs = (await client.get("/api/recommendations")).json()
+    assert album_id in {x["album_id"] for x in recs}
+
+
+async def test_like_requires_exactly_one_id(client: AsyncClient) -> None:
+    assert (await client.post("/api/likes", json={})).status_code == 422
+    assert (await client.post("/api/likes", json={"album_id": 1, "track_id": 2})).status_code == 422

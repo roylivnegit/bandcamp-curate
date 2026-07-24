@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import blacklist, feed, health, ui
+from app.api import blacklist, feed, health, likes, ui
 from app.config import get_settings
 
 settings = get_settings()
@@ -39,6 +39,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(feed.router)  # /api/stats, /api/recommendations, /api/facets, /recompute
 app.include_router(blacklist.router)  # /api/blacklist (list/block/unblock)
+app.include_router(likes.router)  # /api/likes (like/list/unlike)
 app.include_router(ui.router)  # GET / — the feed UI
 # Later milestones: rules, jobs, usage.
 

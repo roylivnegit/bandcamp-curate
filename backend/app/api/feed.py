@@ -21,6 +21,7 @@ from app.db.models import (
     Fan,
     FanItem,
     Follow,
+    Like,
     Recommendation,
     Tag,
     Track,
@@ -41,6 +42,8 @@ class RecommendationOut(BaseModel):
     rank: int
     item_type: str
     score: float
+    album_id: int | None
+    track_id: int | None
     title: str | None
     band_id: int | None
     band_name: str | None
@@ -69,6 +72,7 @@ class StatsOut(BaseModel):
     my_owned: int
     my_wishlist: int
     follows: int
+    liked: int
     requests_used: int
     request_budget: int
 
@@ -108,6 +112,7 @@ async def stats(
         my_owned=owned,
         my_wishlist=wished,
         follows=await _count(session, select(func.count()).select_from(Follow)),
+        liked=await _count(session, select(func.count()).select_from(Like)),
         requests_used=await requests_used(session),
         request_budget=settings.crawl_max_requests,
     )
@@ -131,6 +136,8 @@ async def recommendations(
         select(
             Recommendation.item_type,
             Recommendation.score,
+            Recommendation.album_id,
+            Recommendation.track_id,
             Recommendation.reasons,
             func.coalesce(Album.title, Track.title).label("title"),
             band_id_col.label("band_id"),
@@ -171,6 +178,8 @@ async def recommendations(
             rank=offset + i + 1,
             item_type=r.item_type,
             score=round(r.score, 2),
+            album_id=r.album_id,
+            track_id=r.track_id,
             title=r.title,
             band_id=r.band_id,
             band_name=r.band_name,

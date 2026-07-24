@@ -15,6 +15,7 @@ from app.db.models import (
     Fan,
     FanItem,
     Follow,
+    Like,
     Recommendation,
     Tag,
     Track,
@@ -208,6 +209,16 @@ async def test_seed_tags_lists_my_album_genres(session: AsyncSession) -> None:
     await _build_graph(session)  # my A1 is tagged rock + jazz
     genres = dict(await seed_tags(session))
     assert genres.get("rock") == 1 and genres.get("jazz") == 1
+
+
+async def test_liked_item_excluded(session: AsyncSession) -> None:
+    await _build_graph(session)
+    a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
+    assert a4.id in {s.album_id for s in await compute_recommendations(session)}
+
+    session.add(Like(item_type=str(ItemType.ALBUM), album_id=a4.id))
+    await session.commit()
+    assert a4.id not in {s.album_id for s in await compute_recommendations(session)}
 
 
 async def test_get_me_requires_seed(session: AsyncSession) -> None:

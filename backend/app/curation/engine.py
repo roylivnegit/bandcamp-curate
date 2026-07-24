@@ -29,6 +29,7 @@ from app.db.models import (
     Fan,
     FanItem,
     Follow,
+    Like,
     Recommendation,
     Tag,
     Track,
@@ -108,9 +109,12 @@ async def build_exclusions(session: AsyncSession, me: Fan) -> Exclusions:
     bl_bands = await _scalar_set(
         session, select(Blacklist.band_id).where(Blacklist.active.is_(True))
     )
+    # Liked/acted-on items (positive dismissal).
+    liked_albums = await _scalar_set(session, select(Like.album_id))
+    liked_tracks = await _scalar_set(session, select(Like.track_id))
     return Exclusions(
-        album_ids=my_albums | bl_albums,
-        track_ids=my_tracks | bl_tracks,
+        album_ids=my_albums | bl_albums | liked_albums,
+        track_ids=my_tracks | bl_tracks | liked_tracks,
         band_ids=followed | bl_bands,
         band_hosts=band_hosts,
     )

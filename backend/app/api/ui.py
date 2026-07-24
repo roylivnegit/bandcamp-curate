@@ -73,6 +73,9 @@ _PAGE = """<!doctype html>
   .block { background:none; border:1px solid var(--line); color:var(--muted); border-radius:8px;
     padding:3px 9px; font-size:12px; cursor:pointer; }
   .block:hover { border-color:var(--danger); color:var(--danger); }
+  .like { background:none; border:1px solid var(--line); color:var(--muted); border-radius:8px;
+    padding:3px 9px; font-size:12px; cursor:pointer; }
+  .like:hover { border-color:var(--accent); color:var(--accent); }
   .listen { color:var(--accent); text-decoration:none; font-weight:600; white-space:nowrap; }
   .listen:hover { text-decoration:underline; }
   .empty { color:var(--muted); text-align:center; padding:50px 0; }
@@ -96,6 +99,7 @@ _PAGE = """<!doctype html>
     <button data-t="track">Tracks</button>
   </div>
   <div class="spacer"></div>
+  <button class="btn ghost" id="likedBtn">♥ Liked (0)</button>
   <button class="btn ghost" id="blockedBtn">Blocked (0)</button>
   <button class="btn" id="recompute">↻ Recompute</button>
 </div>
@@ -104,6 +108,7 @@ _PAGE = """<!doctype html>
 <div class="hint" id="seedHint" style="display:none">Hide recs generated from your own <b>seed genres</b> (click to exclude; recomputes):</div>
 <div class="tagbar" id="seedbar"></div>
 <div class="active" id="active"></div>
+<div class="panel" id="likedPanel" style="display:none"></div>
 <div class="panel" id="blockedPanel" style="display:none"></div>
 <main>
   <div id="feed"></div>
@@ -135,7 +140,7 @@ async function loadStats(){
   const cell=(v,l)=>`<div class="stat"><b>${(''+v).replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')}</b>${l}</div>`;
   $('#stats').innerHTML = cell(s.recommendations,'recommendations')+cell(s.neighbours,'taste-neighbours')+
     cell(s.my_owned,'you own')+cell(s.my_wishlist,'wishlist')+cell(s.follows,'follows')+
-    cell(s.requests_used+' / '+s.request_budget,'crawl budget');
+    cell(s.liked,'liked')+cell(s.requests_used+' / '+s.request_budget,'crawl budget');
 }
 
 async function loadFacets(){
@@ -181,6 +186,7 @@ function card(r){
         ${tags}
         ${(r.reasons.seed_tags||[]).length?`<span class="chip" title="genres of your albums that surfaced this">via ${esc((r.reasons.seed_tags||[]).slice(0,3).join(', '))}</span>`:''}
         <span class="grow"></span>
+        <button class="like" data-like-album="${r.album_id||''}" data-like-track="${r.track_id||''}">♥ like</button>
         ${r.band_id?`<button class="block" data-block="${r.band_id}" data-bname="${esc(r.band_name)}">⊘ block</button>`:''}
         ${r.url?`<a class="listen" href="${esc(r.url)}" target="_blank" rel="noopener">Bandcamp ↗</a>`:''}
       </div>
@@ -215,7 +221,13 @@ feed.addEventListener('click',async e=>{
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
   const blk=e.target.closest('[data-block]'); if(blk){
     blk.disabled=true; await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
-    await loadStats(); await loadBlocked(); loadPage(true);
+    await loadStats(); await loadBlocked(); loadPage(true); return;
+  }
+  const lk=e.target.closest('[data-like-album],[data-like-track]'); if(lk){
+    lk.disabled=true;
+    const body=lk.dataset.likeAlbum?{album_id:+lk.dataset.likeAlbum}:{track_id:+lk.dataset.likeTrack};
+    await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    lk.closest('.card').remove(); await loadStats(); await loadLiked();
   }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));
@@ -238,7 +250,26 @@ panel.addEventListener('click',async e=>{ const u=e.target.closest('[data-unbloc
   u.disabled=true; await fetch('/api/blacklist/'+u.dataset.unblock+'/unblock',{method:'POST'});
   await loadBlocked(); await loadStats(); });
 
-loadStats(); loadFacets(); loadBlocked(); loadPage(true);
+// ── liked panel ──
+const lpanel=$('#likedPanel'); let lpanelOpen=false;
+async function loadLiked(){
+  const rows=await (await fetch('/api/likes')).json();
+  $('#likedBtn').textContent=`♥ Liked (${rows.length})`;
+  lpanel.innerHTML = rows.length
+    ? '<div class="hint">Liked — kept out of the feed (your next crawl reflects the real wishlist/purchase/follow):</div>'+rows.map(r=>
+        `<div class="brow"><div class="grow"><b>${esc(r.title)||r.item_type}</b> <span class="hint">${esc(r.band_name)||''}</span></div>
+         ${r.url?`<a class="listen" href="${esc(r.url)}" target="_blank" rel="noopener">↗</a>`:''}
+         <button class="block" data-unlike-album="${r.album_id||''}" data-unlike-track="${r.track_id||''}">unlike</button></div>`).join('')
+    : '<div class="hint">Nothing liked yet. Use “♥ like” on a card once you\\'ve wishlisted/bought/followed it.</div>';
+}
+$('#likedBtn').addEventListener('click',async()=>{ lpanelOpen=!lpanelOpen; lpanel.style.display=lpanelOpen?'block':'none'; if(lpanelOpen) await loadLiked(); });
+lpanel.addEventListener('click',async e=>{ const u=e.target.closest('[data-unlike-album],[data-unlike-track]'); if(!u)return;
+  u.disabled=true;
+  const body=u.dataset.unlikeAlbum?{album_id:+u.dataset.unlikeAlbum}:{track_id:+u.dataset.unlikeTrack};
+  await fetch('/api/likes/unlike',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  await loadLiked(); await loadStats(); });
+
+loadStats(); loadFacets(); loadBlocked(); loadLiked(); loadPage(true);
 </script>
 </body>
 </html>"""

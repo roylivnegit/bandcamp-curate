@@ -176,6 +176,25 @@ class Follow(Base, TimestampMixin):
     band_id: Mapped[int] = mapped_column(ForeignKey("bands.id"), unique=True, index=True)
 
 
+class Like(Base):
+    """A recommendation you liked/acted on (wishlisted, followed, bought…). Positive
+    dismissal — excluded from future recommendations until your next collection crawl
+    reflects the real action."""
+
+    __tablename__ = "likes"
+    __table_args__ = (
+        UniqueConstraint("item_type", "album_id", "track_id", name="uq_like_item"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_type: Mapped[str] = mapped_column(String(16))  # ItemType
+    album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
+    track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Blacklist(Base, TimestampMixin):
     """A hidden target. Toggle `active` to un-blacklist without losing history."""
 
@@ -289,6 +308,7 @@ __all__ = [
     "FanItem",
     "AlbumSupporter",
     "Follow",
+    "Like",
     "Blacklist",
     "CurationRule",
     "Recommendation",
