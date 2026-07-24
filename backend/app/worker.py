@@ -18,12 +18,10 @@ from typing import Any
 
 from arq.connections import RedisSettings
 
-from app.bandcamp.collection_api import CollectionApiClient
-from app.bandcamp.follows_api import FollowsApiClient
-from app.bandcamp.supporters_api import SupportersApiClient
 from app.config import get_settings
 from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
+from app.crawl.service import build_pagination_clients
 from app.db.session import get_sessionmaker
 from app.scraping.factory import build_gateway
 
@@ -35,9 +33,12 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["settings"] = settings
     ctx["sessionmaker"] = get_sessionmaker()
     ctx["gateway"] = build_gateway(settings, sessionmaker=ctx["sessionmaker"])
-    ctx["collection_client"] = CollectionApiClient()
-    ctx["follows_client"] = FollowsApiClient()
-    ctx["supporters_client"] = SupportersApiClient()
+    col, fol, sup = build_pagination_clients(
+        ctx["gateway"], via_nimble=settings.pagination_via_nimble
+    )
+    ctx["collection_client"] = col
+    ctx["follows_client"] = fol
+    ctx["supporters_client"] = sup
     ctx["seed_url"] = settings.bandcamp_fan_url
     ctx["max_depth"] = settings.crawl_max_depth
     ctx["max_requests"] = settings.crawl_max_requests

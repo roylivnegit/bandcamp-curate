@@ -69,8 +69,10 @@ async def test_stats(client: AsyncClient) -> None:
     r = await client.get("/api/stats")
     assert r.status_code == 200
     s = r.json()
+    from app.config import get_settings
+
     assert s["neighbours"] == 1 and s["my_owned"] == 1 and s["follows"] == 1
-    assert s["request_budget"] == 100
+    assert s["request_budget"] == get_settings().crawl_max_requests
     assert s["recommendations"] >= 1
 
 

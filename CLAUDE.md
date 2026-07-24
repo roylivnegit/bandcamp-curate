@@ -61,9 +61,17 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     response uses `results`/`more_available`, **different** from the embedded `#collectors-data`
     blob's `thumbs`/`more_thumbs_available`; `parse_thumbs_api()` handles both. Each result also
     ships a ready `url`.
-  Both are injectable (fakes in tests, `MockTransport` unit tests); direct httpx now, swap the
-  transport to route via Nimble if IP-throttled. **Both endpoints live-verified 2026-07-24**
-  against `guron`'s collection (40 items/page) + `panchito`'s supporters (results shape captured).
+  Both are injectable (fakes in tests, `MockTransport` unit tests). **Both endpoints live-verified
+  2026-07-24** against `guron`'s collection (40 items/page) + `panchito`'s supporters.
+- **Pagination transport — Nimble by default now** (`pagination_via_nimble=True`). Each client takes
+  a `gateway`; when set, the POST is routed through Nimble (`nimble_transport.post_json_via_nimble`:
+  `render:false, method:POST, body:<json>` → JSON in `data.html`) instead of direct httpx. Verified:
+  40 concurrent fan paginations through Nimble → **0 × 429** (Nimble rotates the exit IP), vs the
+  direct path which 429s under load. Cost: **1 credit/page** (direct is free) — and these calls are
+  now rate-limited, retried, and logged to `provider_usage` (parser `bc_api`) / counted in the crawl
+  budget, exactly like renders. `build_pagination_clients(gateway, via_nimble=…)` wires the worker +
+  CLI; flip `PAGINATION_VIA_NIMBLE=false` for the free direct path. `FetchRequest.cache_key` now folds
+  in an `extra` digest so same-URL POSTs don't collide in the cache.
 - **Fan-out is bounded by depth** (`crawl_frontier.depth`, seed=0; `crawl_max_depth` config,
   default 3) **and by a request budget** (`crawl_max_requests`, default 100 = cumulative successful
   provider fetches; enforced in `runner.run_until_empty` + the ARQ `crawl_next` chain). Ingest

@@ -162,6 +162,50 @@ async def test_crawl_fan_collection_ingests_and_enqueues_albums(
     assert "https://paged.bandcamp.com/album/extra" in {a.url for a in albums}
 
 
+class FakeGateway:
+    """Captures FetchRequests and returns a canned JSON body as FetchResult.html."""
+
+    def __init__(self, body: dict) -> None:
+        self.requests: list[FetchRequest] = []
+        self._body = body
+
+    async def fetch(self, request: FetchRequest) -> FetchResult:
+        import json as _json
+        self.requests.append(request)
+        return FetchResult(
+            url=request.url, provider="nimble", status_code=200, ok=True,
+            html=_json.dumps(self._body),
+        )
+
+
+async def test_collection_client_routes_through_gateway() -> None:
+    gw = FakeGateway({
+        "items": [{"item_id": 1, "item_type": "album", "band_id": 10,
+                   "item_title": "A", "item_url": "https://a/album/a"}],
+        "last_token": "t1", "more_available": False,
+    })
+    client = CollectionApiClient(gateway=gw)
+    items, tok, more = await client.fetch_page(9985893, "t0")
+    assert [i.item_id for i in items] == [1] and tok == "t1"
+
+    import json as _json
+    req = gw.requests[0]
+    assert req.render is False and req.extra["method"] == "POST"
+    assert req.url.endswith("/collection_items")
+    body = _json.loads(req.extra["body"])
+    assert body["fan_id"] == 9985893 and body["older_than_token"] == "t0"
+
+
+def test_cache_key_is_body_aware() -> None:
+    # POST pagination shares one URL; different bodies must not collide in the cache.
+    url = "https://bandcamp.com/api/fancollection/1/collection_items"
+    a = FetchRequest(url=url, parser_name="bc_api", extra={"body": '{"fan_id":1}'})
+    b = FetchRequest(url=url, parser_name="bc_api", extra={"body": '{"fan_id":2}'})
+    plain = FetchRequest(url=url, parser_name="bc_api")
+    assert a.cache_key() != b.cache_key()
+    assert plain.cache_key() == f"bc_api::{url}"
+
+
 async def test_collection_api_client_paginates_and_stops() -> None:
     # Two pages of the collection_items XHR; the client should follow last_token
     # until more_available is false, and send the right POST body each time.

@@ -6,10 +6,11 @@ sites. Providers translate backend-specific failures into the exception hierarch
 below, which is what drives the waterfall's fallback decisions.
 """
 
+import hashlib
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
-
 
 # ── Request / result ─────────────────────────────────────────────────────────
 
@@ -33,7 +34,15 @@ class FetchRequest:
     extra: dict[str, Any] = field(default_factory=dict)
 
     def cache_key(self) -> str:
-        return f"{self.parser_name or 'raw'}::{self.url}"
+        key = f"{self.parser_name or 'raw'}::{self.url}"
+        # POST pagination shares one URL but varies by body (in `extra`), so fold a
+        # digest of `extra` in — otherwise different pages would collide in the cache.
+        if self.extra:
+            digest = hashlib.sha1(
+                json.dumps(self.extra, sort_keys=True, default=str).encode()
+            ).hexdigest()[:12]
+            key = f"{key}::{digest}"
+        return key
 
 
 @dataclass(slots=True)

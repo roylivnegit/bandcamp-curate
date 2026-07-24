@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from app.bandcamp.nimble_transport import GatewayFetcher, post_json_via_nimble
 from app.bandcamp.parse import ParsedItem, parse_collection_items_api
 
 COLLECTION_ITEMS_URL = "https://bandcamp.com/api/fancollection/1/collection_items"
@@ -48,11 +49,14 @@ class CollectionApiClient:
 
     def __init__(
         self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT,
-        delay: float = DEFAULT_DELAY,
+        delay: float = DEFAULT_DELAY, gateway: GatewayFetcher | None = None,
     ) -> None:
         self._client = client
         self._count = count
-        self._delay = delay
+        # When a gateway is set, POST through Nimble (proxied, no 429s, credit/page);
+        # otherwise direct-to-Bandcamp (free). The delay only matters for the direct path.
+        self._gateway = gateway
+        self._delay = 0.0 if gateway is not None else delay
 
     async def fetch_page(
         self,
@@ -68,15 +72,18 @@ class CollectionApiClient:
             "older_than_token": older_than_token,
             "count": count or self._count,
         }
-        client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
-        owns_client = self._client is None
-        try:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            body = resp.json()
-        finally:
-            if owns_client:
-                await client.aclose()
+        if self._gateway is not None:
+            body = await post_json_via_nimble(self._gateway, url, payload)
+        else:
+            client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
+            owns_client = self._client is None
+            try:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                body = resp.json()
+            finally:
+                if owns_client:
+                    await client.aclose()
         return parse_collection_items_api(body)
 
     async def iter_items(

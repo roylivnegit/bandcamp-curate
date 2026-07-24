@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     scraper_max_concurrency: int = 40
     # Per-provider same-request retries on 429/5xx (backoff between each).
     scraper_max_retries: int = 10
+    # Route the paginated Bandcamp API calls (collection/wishlist/follows/supporters)
+    # through Nimble instead of direct httpx: no 429s under concurrency, but 1 credit
+    # per page (vs free direct). Also logged to provider_usage / counted in the budget.
+    pagination_via_nimble: bool = True
 
     # Crawl fan-out bound: max distance from the seed to keep crawling
     # (seed=0 → my albums=1 → their supporters=2 → those supporters' albums=3 …).

@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from app.config import get_settings
 from app.crawl import runner
 from app.crawl.seed import seed_fan_collection
+from app.crawl.service import build_pagination_clients
 from app.db.models import CrawlFrontier
 from app.db.session import get_sessionmaker
 from app.scraping.factory import build_gateway
@@ -38,8 +39,12 @@ async def cmd_run(max_iters: int) -> int:
         return 2
     sessionmaker = get_sessionmaker()
     gateway = build_gateway(settings, sessionmaker=sessionmaker)
+    col, fol, sup = build_pagination_clients(
+        gateway, via_nimble=settings.pagination_via_nimble
+    )
     outcomes = await runner.run_until_empty(
         sessionmaker, gateway, seed_url=settings.bandcamp_fan_url,
+        collection_client=col, follows_client=fol, supporters_client=sup,
         max_depth=settings.crawl_max_depth, max_requests=settings.crawl_max_requests,
         max_iterations=max_iters,
     )

@@ -35,6 +35,19 @@ class Fetcher(Protocol):
     async def fetch(self, request: FetchRequest) -> FetchResult: ...
 
 
+def build_pagination_clients(
+    gateway: Fetcher, *, via_nimble: bool
+) -> tuple[CollectionApiClient, FollowsApiClient, SupportersApiClient]:
+    """The three pagination clients, routed through Nimble (via the gateway) or
+    direct-to-Bandcamp per `via_nimble`. Used by the worker and the CLI."""
+    gw = gateway if via_nimble else None
+    return (
+        CollectionApiClient(gateway=gw),
+        FollowsApiClient(gateway=gw),
+        SupportersApiClient(gateway=gw),
+    )
+
+
 @dataclass(slots=True)
 class CrawlOutcome:
     url: str

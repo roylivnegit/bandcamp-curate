@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from app.bandcamp.nimble_transport import GatewayFetcher, post_json_via_nimble
 from app.bandcamp.parse import ParsedBand, parse_following_bands_api
 
 FOLLOWING_BANDS_URL = "https://bandcamp.com/api/fancollection/1/following_bands"
@@ -37,11 +38,12 @@ class FollowsApiClient:
 
     def __init__(
         self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT,
-        delay: float = DEFAULT_DELAY,
+        delay: float = DEFAULT_DELAY, gateway: GatewayFetcher | None = None,
     ) -> None:
         self._client = client
         self._count = count
-        self._delay = delay
+        self._gateway = gateway
+        self._delay = 0.0 if gateway is not None else delay
 
     async def fetch_page(
         self, fan_id: int, older_than_token: str, *, count: int | None = None
@@ -51,15 +53,18 @@ class FollowsApiClient:
             "older_than_token": older_than_token,
             "count": count or self._count,
         }
-        client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
-        owns_client = self._client is None
-        try:
-            resp = await client.post(FOLLOWING_BANDS_URL, json=payload)
-            resp.raise_for_status()
-            body = resp.json()
-        finally:
-            if owns_client:
-                await client.aclose()
+        if self._gateway is not None:
+            body = await post_json_via_nimble(self._gateway, FOLLOWING_BANDS_URL, payload)
+        else:
+            client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
+            owns_client = self._client is None
+            try:
+                resp = await client.post(FOLLOWING_BANDS_URL, json=payload)
+                resp.raise_for_status()
+                body = resp.json()
+            finally:
+                if owns_client:
+                    await client.aclose()
         return parse_following_bands_api(body)
 
     async def iter_bands(
