@@ -109,6 +109,20 @@ def test_parse_album_page_from_fixture() -> None:
     assert track.url == "https://cerebro-spinal.bandcamp.com/track/panchito"
 
 
+def test_album_tags_html_unescaped() -> None:
+    # Bandcamp tag anchors carry HTML entities (drum &amp; bass, d&#39;n&#39;b).
+    html_text = ALBUM_FIXTURE.read_text().replace(
+        '<div class="tralbum-tags tralbumData">',
+        '<div class="tralbum-tags tralbumData">\n'
+        '  <a class="tag" href="#">drum &amp; bass</a>\n'
+        '  <a class="tag" href="#">d&#39;n&#39;b</a>',
+        1,
+    )
+    tags = parse_album_page(html_text).tags
+    assert "drum & bass" in tags and "d'n'b" in tags
+    assert not any("&amp;" in t or "&#39;" in t for t in tags)
+
+
 def test_parse_album_supporters_from_collectors_blob() -> None:
     sup = parse_album_supporters(ALBUM_FIXTURE.read_text())
 

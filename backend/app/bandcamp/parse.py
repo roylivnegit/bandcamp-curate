@@ -298,11 +298,12 @@ def parse_album_page(page_html: str) -> ParsedAlbum:
             )
         )
 
-    # Genre tags: normalized to lowercase, de-duped, order preserved.
+    # Genre tags: HTML-unescaped (the anchor text carries entities like `&amp;`),
+    # normalized to lowercase, de-duped, order preserved.
     seen: set[str] = set()
     tags: list[str] = []
     for raw in _TAG_RE.findall(page_html):
-        tag = raw.strip().lower()
+        tag = html.unescape(raw).strip().lower()
         if tag and tag not in seen:
             seen.add(tag)
             tags.append(tag)
