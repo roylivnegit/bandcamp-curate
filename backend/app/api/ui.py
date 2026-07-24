@@ -69,15 +69,15 @@ _PAGE = """<!doctype html>
   .meta { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
   .chip { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:2px 9px; color:var(--text); }
   .chip.tag { color:var(--accent); cursor:pointer; }
-  .grow { flex:1; }
-  .block { background:none; border:1px solid var(--line); color:var(--muted); border-radius:8px;
-    padding:3px 9px; font-size:12px; cursor:pointer; }
-  .block:hover { border-color:var(--danger); color:var(--danger); }
-  .like { background:none; border:1px solid var(--line); color:var(--muted); border-radius:8px;
-    padding:3px 9px; font-size:12px; cursor:pointer; }
+  /* Actions live in their own row so they never wrap with the chips — fixed spot. */
+  .actions { margin-top:12px; display:flex; gap:8px; align-items:center; justify-content:flex-end; }
+  .act { background:none; border:1px solid var(--line); color:var(--muted); border-radius:9px;
+    padding:6px 13px; font-size:13px; font-weight:500; cursor:pointer; line-height:1; }
   .like:hover { border-color:var(--accent); color:var(--accent); }
-  .listen { color:var(--accent); text-decoration:none; font-weight:600; white-space:nowrap; }
-  .listen:hover { text-decoration:underline; }
+  .block:hover { border-color:var(--danger); color:var(--danger); }
+  .listen { color:var(--accent); text-decoration:none; font-weight:600; white-space:nowrap;
+    border:1px solid var(--accent); border-radius:9px; padding:6px 13px; font-size:13px; line-height:1; }
+  .listen:hover { background:var(--accent); color:#06231e; }
   .empty { color:var(--muted); text-align:center; padding:50px 0; }
   .more { display:block; margin:16px auto 0; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-top:12px; }
@@ -185,9 +185,10 @@ function card(r){
         <span class="chip">${co} neighbour${co===1?'':'s'} own this</span>
         ${tags}
         ${(r.reasons.seed_tags||[]).length?`<span class="chip" title="genres of your albums that surfaced this">via ${esc((r.reasons.seed_tags||[]).slice(0,3).join(', '))}</span>`:''}
-        <span class="grow"></span>
-        <button class="like" data-like-album="${r.album_id||''}" data-like-track="${r.track_id||''}">♥ like</button>
-        ${r.band_id?`<button class="block" data-block="${r.band_id}" data-bname="${esc(r.band_name)}">⊘ block</button>`:''}
+      </div>
+      <div class="actions">
+        <button class="act like" data-like-album="${r.album_id||''}" data-like-track="${r.track_id||''}">♥ like</button>
+        ${r.band_id?`<button class="act block" data-block="${r.band_id}" data-bname="${esc(r.band_name)}">⊘ block</button>`:''}
         ${r.url?`<a class="listen" href="${esc(r.url)}" target="_blank" rel="noopener">Bandcamp ↗</a>`:''}
       </div>
     </div>
@@ -242,7 +243,7 @@ async function loadBlocked(){
   panel.innerHTML = rows.length
     ? '<div class="hint">Blocked artists / labels — these never appear in the feed:</div>'+rows.map(b=>
         `<div class="brow"><div class="grow"><b>${esc(b.band_name)||b.band_id}</b>${b.band_url?` <span class="hint">${esc(b.band_url)}</span>`:''}</div>
-         <button class="block" data-unblock="${b.band_id}">unblock</button></div>`).join('')
+         <button class="act" data-unblock="${b.band_id}">unblock</button></div>`).join('')
     : '<div class="hint">Nothing blocked yet. Use “⊘ block” on a card.</div>';
 }
 $('#blockedBtn').addEventListener('click',async()=>{ panelOpen=!panelOpen; panel.style.display=panelOpen?'block':'none'; if(panelOpen) await loadBlocked(); });
@@ -259,7 +260,7 @@ async function loadLiked(){
     ? '<div class="hint">Liked — kept out of the feed (your next crawl reflects the real wishlist/purchase/follow):</div>'+rows.map(r=>
         `<div class="brow"><div class="grow"><b>${esc(r.title)||r.item_type}</b> <span class="hint">${esc(r.band_name)||''}</span></div>
          ${r.url?`<a class="listen" href="${esc(r.url)}" target="_blank" rel="noopener">↗</a>`:''}
-         <button class="block" data-unlike-album="${r.album_id||''}" data-unlike-track="${r.track_id||''}">unlike</button></div>`).join('')
+         <button class="act" data-unlike-album="${r.album_id||''}" data-unlike-track="${r.track_id||''}">unlike</button></div>`).join('')
     : '<div class="hint">Nothing liked yet. Use “♥ like” on a card once you\\'ve wishlisted/bought/followed it.</div>';
 }
 $('#likedBtn').addEventListener('click',async()=>{ lpanelOpen=!lpanelOpen; lpanel.style.display=lpanelOpen?'block':'none'; if(lpanelOpen) await loadLiked(); });
