@@ -60,17 +60,29 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   default 3): ingest still happens at the boundary, only outward enqueue stops.
 - **M4–M6** pending (curation, API+UI, deploy).
 
-## Local infra (installed 2026-07-24 via brew, not docker)
-`postgresql@16` + `redis` run as `brew services` (auto-start at login). The gitignored `.env`
-uses docker hostnames (`@postgres`, `@redis`) for compose; **for local runs override to
-localhost** — every crawl/alembic command below is prefixed with:
+## Local infra — docker-compose (canonical, set up 2026-07-24)
+Postgres 16 + Redis 7 run as containers via `docker-compose.yml` (services: `postgres`, `redis`,
+`api`, `worker`). Docker runtime is **colima** (headless, Apple Virtualization.Framework — Docker
+Desktop needs a GUI first-launch we can't automate). Compose maps pg→`localhost:5432`, redis→`localhost:6379`.
+```bash
+colima start                              # boot the docker VM (once per login)
+docker compose up -d postgres redis       # bring up the data services
+docker compose ps                         # both should be healthy
+# app/worker containers (optional): docker compose up -d api worker   (builds ./backend)
+docker compose down                       # stop; `down -v` also drops the pgdata volume
+```
+The gitignored `.env` uses compose hostnames (`@postgres`,`@redis`) — the `api`/`worker` containers
+use those directly. **Running the app/alembic/scripts from the host venv needs the localhost override:**
 ```bash
 cd backend && . .venv/bin/activate && set -a && . ../.env && set +a && \
   export DATABASE_URL='postgresql+asyncpg://crate:crate@localhost:5432/crate' \
          REDIS_URL='redis://localhost:6379/0'
 ```
-DB `crate`/role `crate` (pw `crate`) created; schema at `0001_baseline`. Stop services with
-`brew services stop postgresql@16 redis`. Inspect: `PGPASSWORD=crate psql -h localhost -U crate -d crate`.
+DB `crate`/role `crate` (pw `crate`); schema at `0001_baseline`; the 2026-07-24 POC data was
+pg_dump/restored into the compose volume (counts intact). Inspect:
+`docker exec crate-digger-postgres-1 psql -U crate -d crate -c '\dt'`.
+(An earlier ad-hoc `brew` Postgres/Redis was used first, then decommissioned via `brew services
+stop postgresql@16 redis` — still installed but off, so it won't fight compose for the ports.)
 
 ## Immediate next steps
 1. ~~Live end-to-end smoke test~~ ✅ done 2026-07-24 — `scripts.crawl seed && run 3` populated the

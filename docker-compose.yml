@@ -54,8 +54,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Enabled in M3 when the ARQ worker lands.
-    command: ["python", "-c", "print('worker placeholder — enabled in M3'); import time; time.sleep(31536000)"]
+    # ARQ worker: drains the crawl frontier (seed/enqueue via scripts.crawl or the
+    # seed_crawl job). Idle until work is enqueued — it won't crawl on its own.
+    command: ["arq", "app.worker.WorkerSettings"]
     volumes:
       - ./backend:/app
 
