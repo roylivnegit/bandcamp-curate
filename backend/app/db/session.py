@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import get_settings
+from app.db.url import normalized_async_url
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
@@ -16,9 +17,11 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
+        url, connect_args = normalized_async_url(get_settings().database_url)
         _engine = create_async_engine(
-            get_settings().database_url,
-            pool_pre_ping=True,
+            url,
+            pool_pre_ping=True,  # managed PG closes idle conns; ping before use
+            connect_args=connect_args,
             future=True,
         )
     return _engine
