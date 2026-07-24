@@ -1,0 +1,45 @@
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import health
+from app.config import get_settings
+
+settings = get_settings()
+logging.basicConfig(level=settings.log_level)
+logger = logging.getLogger("crate_digger")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    logger.info("crate-digger starting (env=%s)", settings.app_env)
+    if not settings.nimble_configured:
+        logger.warning("NIMBLE_API_KEY is not set — scraping will fail until configured.")
+    yield
+
+
+app = FastAPI(
+    title="crate-digger",
+    version="0.1.0",
+    summary="Bandcamp discovery engine",
+    lifespan=lifespan,
+)
+
+# The Vite dev server; tighten for production deploys.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(health.router)
+# Routers added in later milestones: feed, blacklist, rules, jobs, usage (M5).
+
+
+@app.get("/", tags=["root"])
+async def root() -> dict:
+    return {"name": "crate-digger", "docs": "/docs", "health": "/health"}
