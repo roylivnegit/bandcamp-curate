@@ -25,6 +25,7 @@ from app.db.models import (
     Recommendation,
     Tag,
     Track,
+    TrackTag,
 )
 from app.db.session import get_session
 
@@ -82,13 +83,20 @@ async def _count(session: AsyncSession, stmt) -> int:
 
 
 def _has_tag(names: list[str]):
-    """EXISTS: the recommendation's album carries any of these genre tags."""
-    return exists(
+    """EXISTS: the recommendation's album OR track carries any of these genre tags."""
+    album_match = exists(
         select(1)
         .select_from(AlbumTag)
         .join(Tag, Tag.id == AlbumTag.tag_id)
         .where(AlbumTag.album_id == Recommendation.album_id, Tag.name.in_(names))
     )
+    track_match = exists(
+        select(1)
+        .select_from(TrackTag)
+        .join(Tag, Tag.id == TrackTag.tag_id)
+        .where(TrackTag.track_id == Recommendation.track_id, Tag.name.in_(names))
+    )
+    return album_match | track_match
 
 
 def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
@@ -100,8 +108,10 @@ def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
         stmt = stmt.where(band_id_col.in_(label_id))
     if exclude_label_id:
         stmt = stmt.where(band_id_col.notin_(exclude_label_id))
-    if tag:
-        stmt = stmt.where(_has_tag(tag))          # implies albums (tracks have no tags)
+    # Include = AND: the item must carry EVERY selected genre (one EXISTS each).
+    for t in tag:
+        stmt = stmt.where(_has_tag([t]))
+    # Exclude = drop the item if it carries ANY excluded genre.
     if exclude_tag:
         stmt = stmt.where(~_has_tag(exclude_tag))
     return stmt

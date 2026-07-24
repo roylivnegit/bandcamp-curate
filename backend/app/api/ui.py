@@ -49,10 +49,32 @@ _PAGE = """<!doctype html>
   .tchip.by { border-color:var(--accent); color:var(--accent); }
   .tchip.out { border-color:var(--danger); color:var(--danger); text-decoration:line-through; }
   .tchip .n { opacity:.6; margin-left:4px; }
+  /* genre dropdown (searchable, count-ordered) */
+  .genrebar { display:flex; align-items:center; gap:10px; margin-top:10px; flex-wrap:wrap; }
+  .dd { position:relative; }
+  .ddpanel { position:absolute; z-index:30; top:calc(100% + 6px); left:0; width:300px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:8px;
+    box-shadow:0 10px 30px rgba(0,0,0,.45); }
+  .ddsearch { width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:8px 10px; font-size:13px; outline:none; }
+  .ddsearch:focus { border-color:var(--accent); }
+  .ddlist { max-height:300px; overflow-y:auto; margin-top:8px; }
+  .ddlist::-webkit-scrollbar { width:8px; } .ddlist::-webkit-scrollbar-thumb { background:var(--line); border-radius:4px; }
+  .ddrow { display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .ddrow:hover { background:var(--panel2); }
+  .ddrow.sel { color:var(--accent); }
+  .ddrow .box { width:15px; height:15px; flex:none; border:1px solid var(--line); border-radius:4px;
+    display:inline-flex; align-items:center; justify-content:center; font-size:10px; color:transparent; }
+  .ddrow.sel .box { background:var(--accent); border-color:var(--accent); color:#06231e; }
+  .ddrow .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ddrow .cnt { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .ddempty { color:var(--muted); font-size:12px; padding:10px 8px; }
   .active { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px; min-height:0; }
   .fpill { font-size:12px; background:var(--panel2); border:1px solid var(--line); border-radius:999px;
-    padding:3px 8px; color:var(--text); cursor:pointer; }
-  .fpill b { color:var(--accent); } .fpill.out b { color:var(--danger); }
+    padding:3px 4px 3px 9px; color:var(--text); display:inline-flex; align-items:center; gap:6px; }
+  .fpill .tog { cursor:pointer; } .fpill b { color:var(--accent); } .fpill.out b { color:var(--danger); }
+  .fpill .rm { cursor:pointer; padding:0 5px; border-radius:999px; color:var(--muted); }
+  .fpill .rm:hover { background:var(--line); color:var(--text); }
   main { margin:12px 0 60px; }
   .card { display:flex; gap:14px; align-items:flex-start; background:var(--panel);
     border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:10px; }
@@ -105,8 +127,16 @@ _PAGE = """<!doctype html>
   <button class="btn ghost" id="blockedBtn">Blocked (0)</button>
   <button class="btn" id="recompute">↻ Recompute</button>
 </div>
-<div class="hint">Filter by genre — click once to <b style="color:var(--accent)">include</b>, twice to <b style="color:var(--danger)">exclude</b>:</div>
-<div class="tagbar" id="tagbar"></div>
+<div class="genrebar">
+  <div class="dd">
+    <button class="btn ghost" id="genreBtn">＋ Genre filter</button>
+    <div class="ddpanel" id="genrePanel" style="display:none">
+      <input class="ddsearch" id="genreSearch" placeholder="Search genres…" autocomplete="off"/>
+      <div class="ddlist" id="genreList"></div>
+    </div>
+  </div>
+  <span class="hint" style="margin:0">pick several — an item must match <b>all</b> selected genres. Click a pill to flip it to exclude.</span>
+</div>
 <div class="hint" id="seedHint" style="display:none">Hide recs generated from your own <b>seed genres</b> (click to exclude; recomputes):</div>
 <div class="tagbar" id="seedbar"></div>
 <div class="active" id="active"></div>
@@ -127,6 +157,7 @@ let type='', offset=0, loading=false;
 const tagState={};          // tag -> 'by' | 'out'
 let labelFilter=null;       // {id, name}
 const seedExclude=new Set();// seed genres to exclude at recompute time
+let facetTags=[];           // [{value,label,count}] genres present in current recs
 
 function esc(s){ return (s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -155,19 +186,31 @@ async function loadStats(){
 
 async function loadFacets(){
   const f=await (await fetch('/api/facets')).json();
-  $('#tagbar').innerHTML = f.tags.length
-    ? f.tags.map(t=>`<span class="tchip" data-tag="${esc(t.value)}">${esc(t.label)}<span class="n">${t.count}</span></span>`).join('')
-    : '<span class="hint">No genre tags on recommendations yet — crawl more album pages to populate them.</span>';
+  facetTags = f.tags;                       // ordered by count desc from the API
+  renderGenreList($('#genreSearch').value||'');
+  updateGenreBtn();
   $('#seedHint').style.display = f.seed_tags.length ? 'block' : 'none';
   $('#seedbar').innerHTML = f.seed_tags.map(t=>
     `<span class="tchip seed" data-seed="${esc(t.value)}">${esc(t.label)}<span class="n">${t.count}</span></span>`).join('');
-  renderTagStates();
+  renderSeedStates();
 }
-function renderTagStates(){
-  document.querySelectorAll('.tchip[data-tag]').forEach(c=>{
-    const m=tagState[c.dataset.tag]; c.classList.toggle('by',m==='by'); c.classList.toggle('out',m==='out');
-  });
+function renderSeedStates(){
   document.querySelectorAll('.tchip.seed').forEach(c=> c.classList.toggle('out', seedExclude.has(c.dataset.seed)));
+}
+function updateGenreBtn(){
+  const n=Object.keys(tagState).length;
+  $('#genreBtn').textContent = n ? `Genres (${n}) ▾` : '＋ Genre filter';
+}
+function renderGenreList(q){
+  q=(q||'').trim().toLowerCase();
+  const rows = facetTags.filter(t=>t.label.toLowerCase().includes(q));
+  const list=$('#genreList');
+  if(!facetTags.length){ list.innerHTML='<div class="ddempty">No genre tags yet — crawl more album pages.</div>'; return; }
+  list.innerHTML = rows.length
+    ? rows.map(t=>{const sel=tagState[t.value]!==undefined;
+        return `<div class="ddrow ${sel?'sel':''}" data-tag="${esc(t.value)}">
+          <span class="box">✓</span><span class="nm">${esc(t.label)}</span><span class="cnt">${t.count.toLocaleString()}</span></div>`;}).join('')
+    : '<div class="ddempty">No genres match “'+esc(q)+'”.</div>';
 }
 async function recompute(){
   const q=new URLSearchParams(); seedExclude.forEach(t=>q.append('exclude_seed_tag',t));
@@ -177,8 +220,8 @@ async function recompute(){
 function renderActive(){
   const bits=[];
   for(const [t,m] of Object.entries(tagState))
-    bits.push(`<span class="fpill ${m==='out'?'out':''}" data-clear-tag="${esc(t)}">${m==='out'?'exclude':'genre'}: <b>${esc(t)}</b> ✕</span>`);
-  if(labelFilter) bits.push(`<span class="fpill" data-clear-label="1">label: <b>${esc(labelFilter.name)}</b> ✕</span>`);
+    bits.push(`<span class="fpill ${m==='out'?'out':''}"><span class="tog" data-tog="${esc(t)}">${m==='out'?'exclude':'genre'}: <b>${esc(t)}</b></span><span class="rm" data-rmtag="${esc(t)}">✕</span></span>`);
+  if(labelFilter) bits.push(`<span class="fpill"><span class="tog">label: <b>${esc(labelFilter.name)}</b></span><span class="rm" data-clear-label="1">✕</span></span>`);
   $('#active').innerHTML=bits.join('');
 }
 
@@ -215,18 +258,26 @@ async function loadPage(reset){
   moreBtn.style.display=(rows.length===LIMIT)?'block':'none';
   loading=false; moreBtn.disabled=false;
 }
-function refresh(){ renderTagStates(); renderActive(); loadPage(true); }
+function refresh(){ renderGenreList($('#genreSearch').value||''); updateGenreBtn(); renderActive(); loadPage(true); }
 
 // ── events ──
 $('#filter').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
   [...e.currentTarget.children].forEach(x=>x.classList.remove('on')); b.classList.add('on'); type=b.dataset.t; loadPage(true); });
-$('#tagbar').addEventListener('click',e=>{ const c=e.target.closest('.tchip'); if(!c)return;
-  const t=c.dataset.tag, m=tagState[t]; if(!m) tagState[t]='by'; else if(m==='by') tagState[t]='out'; else delete tagState[t]; refresh(); });
+// genre dropdown: searchable, count-ordered, multi-select (AND)
+$('#genreBtn').addEventListener('click',e=>{ e.stopPropagation(); const p=$('#genrePanel'); const open=p.style.display==='none';
+  p.style.display=open?'block':'none'; if(open){ $('#genreSearch').value=''; renderGenreList(''); $('#genreSearch').focus(); } });
+$('#genreSearch').addEventListener('input',e=>renderGenreList(e.target.value));
+$('#genreList').addEventListener('click',e=>{ const r=e.target.closest('.ddrow'); if(!r)return;
+  const t=r.dataset.tag; if(tagState[t]!==undefined) delete tagState[t]; else tagState[t]='by'; refresh(); });
+document.addEventListener('click',e=>{ if(!e.target.closest('.dd')) $('#genrePanel').style.display='none'; });
 $('#seedbar').addEventListener('click',async e=>{ const c=e.target.closest('.tchip.seed'); if(!c)return;
   const t=c.dataset.seed; if(seedExclude.has(t)) seedExclude.delete(t); else seedExclude.add(t);
   c.classList.toggle('out',seedExclude.has(t)); await recompute(); });
-$('#active').addEventListener('click',e=>{ const p=e.target.closest('[data-clear-tag]'); const l=e.target.closest('[data-clear-label]');
-  if(p){ delete tagState[p.dataset.clearTag]; refresh(); } if(l){ labelFilter=null; refresh(); } });
+$('#active').addEventListener('click',e=>{
+  const rm=e.target.closest('[data-rmtag]'); const cl=e.target.closest('[data-clear-label]'); const tog=e.target.closest('[data-tog]');
+  if(rm){ delete tagState[rm.dataset.rmtag]; refresh(); return; }
+  if(cl){ labelFilter=null; refresh(); return; }
+  if(tog){ const t=tog.dataset.tog; tagState[t]= tagState[t]==='out'?'by':'out'; refresh(); }});
 feed.addEventListener('click',async e=>{
   const tag=e.target.closest('.chip.tag'); if(tag){ tagState[tag.dataset.tag]='by'; refresh(); return; }
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }

@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.curation.engine import curate
 from app.db.base import Base
-from app.db.models import Album, Band, Fan, FanItem, Follow, Track
+from app.db.models import Album, AlbumTag, Band, Fan, FanItem, Follow, Tag, Track
 from app.db.session import get_session
 from app.enums import BandKind, ItemType, TargetType
 from app.main import app
@@ -37,6 +37,11 @@ async def _seed(s: AsyncSession) -> None:
         FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t2.id),
         Follow(band_id=b3.id, target_type=TargetType.ARTIST),
     ])
+    # a2 ("Recommend Me") carries two genres → for the AND-filter test.
+    rock, jazz = Tag(name="rock"), Tag(name="jazz")
+    s.add_all([rock, jazz])
+    await s.flush()
+    s.add_all([AlbumTag(album_id=a2.id, tag_id=rock.id), AlbumTag(album_id=a2.id, tag_id=jazz.id)])
     await s.commit()
 
 
@@ -147,6 +152,18 @@ async def test_label_filter(client: AsyncClient) -> None:
     assert only and all(r["band_id"] == band_id for r in only)
     without = (await client.get(f"/api/recommendations?exclude_label_id={band_id}")).json()
     assert band_id not in {r["band_id"] for r in without}
+
+
+async def test_multi_tag_filter_is_AND(client: AsyncClient) -> None:
+    async def get_titles(qs: str) -> set[str]:
+        return {r["title"] for r in (await client.get("/api/recommendations" + qs)).json()}
+
+    assert "Recommend Me" in await get_titles("?tag=rock")
+    assert "Recommend Me" in await get_titles("?tag=rock&tag=jazz")   # has BOTH → kept
+    assert "Recommend Me" not in await get_titles("?tag=rock&tag=metal")  # AND: lacks metal → gone
+    # count endpoint uses the same AND logic
+    assert (await client.get("/api/recommendations/count?tag=rock&tag=jazz")).json()["count"] >= 1
+    assert (await client.get("/api/recommendations/count?tag=rock&tag=metal")).json()["count"] == 0
 
 
 async def test_recommendations_count_matches_filters(client: AsyncClient) -> None:
