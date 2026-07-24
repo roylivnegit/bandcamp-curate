@@ -30,8 +30,12 @@ async def main() -> int:
     scroll = "--scroll" in rest
     capture = next((a for a in rest if not a.startswith("--")), None)
 
-    network_capture = [{"url": {"type": "contains", "value": capture}}] if capture else None
-    browser_actions = [{"name": "auto_scroll"}] if scroll else None
+    # v2 shapes: network_capture filters wrap under `filter`; browser_actions key
+    # each step by its action name (not `{"name": ...}`).
+    network_capture = (
+        [{"filter": {"url": {"type": "contains", "value": capture}}}] if capture else None
+    )
+    browser_actions = [{"auto_scroll": True}, {"wait": 2000}] if scroll else None
 
     provider = NimbleProvider(settings, timeout=240.0)
     print(f"POST {provider._endpoint}  url={url}  capture={capture}  scroll={scroll}")
@@ -49,7 +53,10 @@ async def main() -> int:
 
     nc = payload.get("network_capture") or []
     captured = sum(len(g.get("results", [])) for g in nc if isinstance(g, dict))
-    print(f"HTTP {result.status_code}  html_bytes={len(result.html or '')}  latency={result.latency_ms}ms")
+    print(
+        f"HTTP {result.status_code}  html_bytes={len(result.html or '')}  "
+        f"latency={result.latency_ms}ms"
+    )
     print(f"top-level data keys: {sorted(payload) if isinstance(payload, dict) else type(payload)}")
     print(f"network_capture groups={len(nc)} captured_results={captured}")
     print(f"wrote {out}")

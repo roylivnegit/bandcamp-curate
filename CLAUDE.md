@@ -14,7 +14,7 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
 - Layout: `backend/app/{scraping,bandcamp,db,api}`, `backend/nimble_parsers/` (unused so far),
   `backend/tests/`, `backend/scripts/` (verify_nimble.py, dump_extract.py).
 
-## Status (as of 2026-07-24)
+## Status (as of 2026-07-24, M2 done + M3 started)
 - **M0 Scaffold** ✅ committed (`da93068`) — FastAPI skeleton, 15-table schema, Alembic
   baseline (builds from ORM metadata), docker-compose, health endpoints.
 - **M1 Nimble waterfall** ✅ committed (`25443bb`) — `ScraperProvider` ABC, `NimbleProvider`
@@ -22,23 +22,38 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   (priority fallback, quota→circuit-open, 429→backoff, auth→fail-fast), rate limiter, cache,
   `provider_usage` logging. **Live smoke test passed (HTTP 200).** Also updated the
   `nimble-webit-api` skill in ~/Downloads to v2 and scrubbed the leaked key from it.
-- **M2 Parsers + mappers** 🔨 in progress (NOT yet committed):
-  - ✅ `fan_collection`: `parse_fan_page()` + `ingest_fan_collection()` mapper, 23 tests pass
-    (incl. in-memory SQLite mapper tests, idempotency, is_me→follows rule).
-  - ✅ `album_page`: structure confirmed (`data-tralbum` id/url/`current.title`/`trackinfo[]`,
-    `data-band` id+name, tags via `<a class="tag">`). Parser/mapper **not written yet**.
-  - 🔨 `album_supporters`: supporters are in the album **HTML DOM** (`<a class="fan pic"
-    href="https://bandcamp.com/<user>?from=fanthanks">`), NOT in any JSON blob; only ~first
-    page embedded, rest via a collectors API. Parser **not written yet**.
-- **M3–M6** pending (crawl workers, curation, API+UI, deploy).
+- **M2 Parsers + mappers** ✅ committed (`fce998c`):
+  - ✅ `fan_collection`: `parse_fan_page()` + `ingest_fan_collection()` mapper.
+  - ✅ `album_page`: `parse_album_page()` (`data-tralbum` id/url/`current.title`/`trackinfo[]`,
+    `data-band` id+name, tags via `<a class="tag">`) + `ingest_album()` mapper (band/album/
+    tracks/tags, idempotent).
+  - ✅ `album_supporters`: `parse_album_supporters()` + `ingest_album_supporters()` mapper.
+    **Correction to earlier note:** supporters ARE in a clean JSON blob — `<div
+    id="collectors-data" data-blob="{thumbs:[{fan_id,username,name}],more_thumbs_available,
+    token}">`. We parse that (gives **fan_id**), and fall back to the `<a class="fan pic">` DOM
+    anchors (username only) if the blob is absent.
+  - Real fixture `tests/fixtures/album_page.html` (trimmed from a live panchito fetch + 2
+    synthetic supporters for multi/dedup coverage).
+- **M3 Crawl workers** 🔨 in progress (committed): `app/crawl/` = frontier repo (`crawl_frontier`,
+  idempotent enqueue/claim/complete) + `service` (`crawl_fan_collection`→enqueue owned albums;
+  `crawl_album`→ingest supporters, enqueue their collections) + `runner` (Redis-free driver) +
+  `seed`. `app/worker.py` = ARQ adaptor (`seed_crawl`/`crawl_next` self-perpetuating chain).
+  `scripts/crawl.py` = in-process CLI (`seed`/`run`/`status`). All crawl logic unit-tested with a
+  fake fetcher over the fixtures (no credits). **Not yet run against live infra** (needs
+  Postgres+Redis; collection_items pagination capture parser is written but unverified vs a real
+  Nimble `network_capture` sample — see below).
+- **M4–M6** pending (curation, API+UI, deploy).
 
 ## Immediate next steps
-1. Write `parse_album_page()` (album/tracks/band/tags) + `parse_album_supporters()` (regex/DOM
-   for `class="fan pic" href="https://bandcamp.com/<user>"`), add mappers + fixture tests.
-2. Commit M2.
-3. M3: seed ingest from `BANDCAMP_FAN_URL`, ARQ crawl workers over the supporter→collection
-   frontier (use the `collection_items` API for full pagination — item objects share the shape
-   `parse_collection_item()` already handles).
+1. Stand up Postgres+Redis (docker-compose), `alembic upgrade head`, then
+   `python -m scripts.crawl seed && python -m scripts.crawl run 3` for a live smoke test.
+2. Verify `collection_items` pagination: one live fan-page fetch with `render + auto_scroll +
+   network_capture(collection_items)` (correct v2 shapes now in `fan_collection_request()` /
+   `dump_extract.py`), then confirm `parse_collection_items_capture()` finds the XHR bodies in
+   the real `network_capture` shape (currently parsed defensively; no live sample yet — all prior
+   capture attempts returned 0 groups).
+3. Add crawl bounds (depth/budget caps) before a wide run — the frontier only dedups by
+   (url,kind); it doesn't yet cap fan-out.
 
 ## Open decision (flag to the user)
 The plan chose Nimble **server-side parsit-ai** parsing, but the data turned out to be clean
@@ -54,10 +69,12 @@ thin adapter. Confirm this is acceptable or revisit.
 - Set up env & tests (no global venv persists between sessions):
   ```bash
   cd backend
-  python3.12 -m venv .venv && . .venv/bin/activate
+  python3 -m venv .venv && . .venv/bin/activate   # 3.12+; this box has 3.14 only
   pip install -e ".[dev]" aiosqlite
-  pytest -q
+  pytest -q                                        # 39 tests as of M3 start
   ```
+  The `.env` lives at the **repo root** (not `backend/`); config reads it via env vars, so
+  `set -a && . ../.env && set +a` before running scripts that need the Nimble key.
 - Nimble calls cost credits (~3–35s each). Use `scripts/dump_extract.py <url> <out.json>` to
   save real responses and author parsers offline against them. Saved samples from this session
   were in the scratchpad (gone now); re-fetch if needed.
