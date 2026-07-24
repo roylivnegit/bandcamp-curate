@@ -42,8 +42,10 @@ class Band(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     bandcamp_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
-    # Nullable: a band is often discovered by id before its page is scraped.
-    url: Mapped[str | None] = mapped_column(String(512), unique=True, index=True)
+    # Nullable: a band is often discovered by id before its page is scraped. NOT unique —
+    # Bandcamp URLs collide across items (single-track albums, remasters, VA comps); the
+    # bandcamp_id is the natural key.
+    url: Mapped[str | None] = mapped_column(String(512), index=True)
     name: Mapped[str | None] = mapped_column(String(512))
     kind: Mapped[str] = mapped_column(String(16), default=BandKind.UNKNOWN, index=True)
 
@@ -57,7 +59,8 @@ class Album(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     bandcamp_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
     # Nullable: an album may be known only by id (e.g. a track's parent) pre-scrape.
-    url: Mapped[str | None] = mapped_column(String(512), unique=True, index=True)
+    # NOT unique (see Band.url) — bandcamp_id is the key.
+    url: Mapped[str | None] = mapped_column(String(512), index=True)
     title: Mapped[str | None] = mapped_column(String(512))
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)
 
@@ -71,7 +74,8 @@ class Track(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     bandcamp_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
-    url: Mapped[str | None] = mapped_column(String(512), unique=True, index=True)
+    # NOT unique (see Band.url) — a "track" item can even carry an /album/ URL.
+    url: Mapped[str | None] = mapped_column(String(512), index=True)
     title: Mapped[str | None] = mapped_column(String(512))
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)

@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # Safety budget: stop crawling once this many provider (Nimble) page fetches
     # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
-    crawl_max_requests: int = 2000
+    crawl_max_requests: int = 4700
 
     # Seed
     bandcamp_fan_url: str = ""
