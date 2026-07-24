@@ -78,11 +78,21 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   explainable rows to `recommendations` (idempotent clear+insert). `scripts/curate.py [N]` prints
   the feed. **Wishlist ingestion added**: `fan_items.is_wishlist` (migration `0002`, guarded), parsed
   from `item_cache.wishlist`, ingested only for `is_me`.
-  - **Live result 2026-07-24**: after crawling ~12 neighbour collections (8k non-me fan_items),
-    curate produced 7,768 recs; top pick was a sibling release on a label guron already buys from;
-    verified 0 recs leak owned/wishlisted/followed items. Tag-affinity is mostly 0 so far because
-    album tags only come from crawled album *pages* (only ~14 crawled) — it strengthens as more
-    album pages are visited.
+  - **One rec per band** (`compute_recommendations(one_per_band=True)`), and **seed-tag
+    provenance**: for each rec, `_seed_tag_provenance()` records the genres of *your* albums whose
+    supporters own it (stored in `reasons.seed_tags`, shown as "via …" in the UI). `exclude_seed_tags`
+    drops recs generated from your albums carrying those genres — the "don't show me things from my
+    <genre> collection" filter (curation-time; `POST /api/recommendations/recompute?exclude_seed_tag=`).
+  - **Tags tracked at 3 levels**: `album_tags` (existing) + `band_tags` + `track_tags` (migration
+    `0003`, guarded + backfilled). `ingest_album` links album-page tags to the album, its band, and
+    each of its tracks. `curation.seed_tags()` lists your own albums' genres (the seed-exclusion
+    facet). `GET /api/facets` returns tags + labels + seed_tags.
+  - **Live**: curate → 1,600 recs (= 1,600 distinct bands). Tag-affinity/genre-filter data grows as
+    album *pages* are crawled (tags live there, not in `collection_items`); a targeted batch tags the
+    top recs without fan-out (enqueue at `depth=max_depth`, or fetch+`ingest_album` directly).
+  - **Rate-limit hygiene**: the direct API clients (`CollectionApiClient`/`SupportersApiClient`/
+    `FollowsApiClient`) now pause `DEFAULT_DELAY=0.4s` between pages — Bandcamp 429s bulk direct
+    pagination without it. Tests pass `delay=0`.
 - **M5 API + UI** 🔨 POC done (committed + run live): FastAPI serves a self-contained dark feed UI
   at `GET /` (`app/api/ui.py`, no build step) over these `/api` endpoints (`feed.py`,
   `blacklist.py`):

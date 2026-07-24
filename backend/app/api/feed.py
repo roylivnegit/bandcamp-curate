@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 from app.config import Settings, get_settings
 from app.crawl.runner import requests_used
 from app.curation.engine import curate
+from app.curation.engine import seed_tags as seed_tag_genres
 from app.db.models import (
     Album,
     AlbumTag,
@@ -33,6 +34,7 @@ class Reasons(BaseModel):
     co_owners: int = 0
     tag_affinity: float = 0.0
     matched_tags: list[str] = []
+    seed_tags: list[str] = []  # genres of your albums that generated this rec
 
 
 class RecommendationOut(BaseModel):
@@ -55,6 +57,7 @@ class Facet(BaseModel):
 class FacetsOut(BaseModel):
     tags: list[Facet]
     labels: list[Facet]
+    seed_tags: list[Facet]  # genres of your own albums (for the seed-exclusion filter)
 
 
 class StatsOut(BaseModel):
@@ -203,16 +206,23 @@ async def facets(session: AsyncSession = Depends(get_session)) -> FacetsOut:
             .limit(200)
         )
     ).all()
+    seed = await seed_tag_genres(session)
     return FacetsOut(
         tags=[Facet(value=n, label=n, count=c) for n, c in tag_rows],
         labels=[
             Facet(value=str(bid), label=name or "unknown", count=c)
             for bid, name, c in label_rows
         ],
+        seed_tags=[Facet(value=n, label=n, count=c) for n, c in seed],
     )
 
 
 @router.post("/recommendations/recompute")
-async def recompute(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    scored = await curate(session)
-    return {"computed": len(scored)}
+async def recompute(
+    session: AsyncSession = Depends(get_session),
+    exclude_seed_tag: list[str] = Query(default=[]),
+) -> dict[str, Any]:
+    """Recompute the feed. `exclude_seed_tag` drops recs generated from your albums
+    carrying those genres (seed-provenance exclusion)."""
+    scored = await curate(session, exclude_seed_tags=set(exclude_seed_tag))
+    return {"computed": len(scored), "excluded_seed_tags": exclude_seed_tag}

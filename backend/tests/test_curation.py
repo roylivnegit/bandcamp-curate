@@ -8,6 +8,7 @@ from app.curation.engine import compute_recommendations, curate, get_me
 from app.db.base import Base
 from app.db.models import (
     Album,
+    AlbumSupporter,
     AlbumTag,
     Band,
     Blacklist,
@@ -178,6 +179,35 @@ async def test_follow_by_label_url_excludes_albums_on_that_page(
     scored = await compute_recommendations(session)
     rec_album_ids = {s.album_id for s in scored if s.album_id}
     assert a.id not in rec_album_ids  # excluded via followed label's URL host
+
+
+async def test_seed_tag_provenance_and_exclusion(session: AsyncSession) -> None:
+    # me owns A1 (tagged rock,jazz). f2 supports A1 (album_supporters) and owns A4.
+    # So A4's seed provenance = {rock, jazz}. Excluding "rock" drops A4.
+    await _build_graph(session)
+    me = (await session.execute(select(Fan).where(Fan.is_me.is_(True)))).scalar_one()
+    a1 = (await session.execute(select(Album).where(Album.bandcamp_id == 1))).scalar_one()
+    a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
+    f2 = (await session.execute(select(Fan).where(Fan.username == "f2"))).scalar_one()
+    session.add(AlbumSupporter(album_id=a1.id, fan_id=f2.id))  # f2 supports my A1
+    await session.commit()
+
+    scored = await compute_recommendations(session)
+    a4_rec = next(s for s in scored if s.album_id == a4.id)
+    assert set(a4_rec.reasons["seed_tags"]) == {"rock", "jazz"}  # provenance recorded
+
+    filtered = await compute_recommendations(session, exclude_seed_tags={"rock"})
+    assert a4.id not in {s.album_id for s in filtered}  # generated-from-rock → gone
+
+    _ = me  # (me is the seed; used implicitly by the engine)
+
+
+async def test_seed_tags_lists_my_album_genres(session: AsyncSession) -> None:
+    from app.curation.engine import seed_tags
+
+    await _build_graph(session)  # my A1 is tagged rock + jazz
+    genres = dict(await seed_tags(session))
+    assert genres.get("rock") == 1 and genres.get("jazz") == 1
 
 
 async def test_get_me_requires_seed(session: AsyncSession) -> None:

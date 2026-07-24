@@ -96,6 +96,24 @@ class AlbumTag(Base):
     tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id"), primary_key=True)
 
 
+class BandTag(Base):
+    """Tags a band carries (aggregated from its releases' album-page tags)."""
+
+    __tablename__ = "band_tags"
+
+    band_id: Mapped[int] = mapped_column(ForeignKey("bands.id"), primary_key=True)
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id"), primary_key=True)
+
+
+class TrackTag(Base):
+    """Tags a track carries (inherited from its album page's tags)."""
+
+    __tablename__ = "track_tags"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id"), primary_key=True)
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id"), primary_key=True)
+
+
 # ── Social graph ───────────────────────────────────────────────────────────────
 
 
@@ -265,6 +283,8 @@ __all__ = [
     "Track",
     "Tag",
     "AlbumTag",
+    "BandTag",
+    "TrackTag",
     "Fan",
     "FanItem",
     "AlbumSupporter",

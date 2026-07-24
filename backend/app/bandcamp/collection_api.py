@@ -17,6 +17,7 @@ gets IP-throttled at scale, swap the transport to route through the ScraperGatew
 (Nimble) — the pagination logic here is transport-agnostic via the injected client.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -26,6 +27,8 @@ from app.bandcamp.parse import ParsedItem, parse_collection_items_api
 COLLECTION_ITEMS_URL = "https://bandcamp.com/api/fancollection/1/collection_items"
 WISHLIST_ITEMS_URL = "https://bandcamp.com/api/fancollection/1/wishlist_items"
 DEFAULT_COUNT = 40
+# Small pause between pages — Bandcamp 429s bulk direct pagination without it.
+DEFAULT_DELAY = 0.4
 # A browser-like UA; the API is public but bare clients are sometimes rejected.
 _DEFAULT_HEADERS = {
     "User-Agent": (
@@ -44,10 +47,12 @@ class CollectionApiClient:
     """
 
     def __init__(
-        self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT
+        self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT,
+        delay: float = DEFAULT_DELAY,
     ) -> None:
         self._client = client
         self._count = count
+        self._delay = delay
 
     async def fetch_page(
         self,
@@ -93,3 +98,5 @@ class CollectionApiClient:
             if not more or not last_token or last_token == token:
                 return
             token = last_token
+            if self._delay:
+                await asyncio.sleep(self._delay)

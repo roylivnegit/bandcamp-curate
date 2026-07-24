@@ -186,7 +186,7 @@ async def test_collection_api_client_paginates_and_stops() -> None:
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http:
-        client = CollectionApiClient(http, count=40)
+        client = CollectionApiClient(http, count=40, delay=0)
         items = [i async for i in client.iter_items(9985893, "tok0")]
 
     assert [i.item_id for i in items] == [1, 2]
@@ -209,7 +209,7 @@ async def test_follows_api_client_paginates() -> None:
             "more_available": False, "last_token": "f2"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        bands = [b async for b in FollowsApiClient(http).iter_bands(9985893, "f0")]
+        bands = [b async for b in FollowsApiClient(http, delay=0).iter_bands(9985893, "f0")]
     assert [b.bandcamp_id for b in bands] == [10, 20]
     assert bands[0].url == "https://l1.bandcamp.com"
 

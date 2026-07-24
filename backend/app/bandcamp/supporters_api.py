@@ -17,6 +17,7 @@ and not yet verified against a live call — flagged in CLAUDE.md. Keep the requ
 constants below in one place so a single live check can correct them.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -25,6 +26,7 @@ from app.bandcamp.parse import ParsedSupporter, parse_thumbs_api
 
 THUMBS_URL = "https://bandcamp.com/api/tralbumcollectors/2/thumbs"
 DEFAULT_COUNT = 40
+DEFAULT_DELAY = 0.4  # pause between pages — avoid Bandcamp 429s on bulk pagination
 _DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -39,10 +41,12 @@ class SupportersApiClient:
     """Pages through the collectors `thumbs` API. Injectable client for testing."""
 
     def __init__(
-        self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT
+        self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT,
+        delay: float = DEFAULT_DELAY,
     ) -> None:
         self._client = client
         self._count = count
+        self._delay = delay
 
     async def fetch_page(
         self,
@@ -91,3 +95,5 @@ class SupportersApiClient:
             if not more or not last_token or last_token == token:
                 return
             token = last_token
+            if self._delay:
+                await asyncio.sleep(self._delay)

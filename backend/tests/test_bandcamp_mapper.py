@@ -17,11 +17,13 @@ from app.db.models import (
     AlbumSupporter,
     AlbumTag,
     Band,
+    BandTag,
     Fan,
     FanItem,
     Follow,
     Tag,
     Track,
+    TrackTag,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fan_page.html"
@@ -147,6 +149,19 @@ async def test_ingest_album_populates_graph(session: AsyncSession) -> None:
     assert album.bandcamp_id == 4255072328
     assert album.title == "Panchito"
     assert album.band_id is not None
+
+
+async def test_ingest_album_tags_band_and_tracks(session: AsyncSession) -> None:
+    pa = parse_album_page(ALBUM_FIXTURE.read_text())  # 4 tags, 1 track
+    await ingest_album(session, pa)
+    assert await _count(session, AlbumTag) == 4
+    assert await _count(session, BandTag) == 4          # band gets all 4 tags
+    assert await _count(session, TrackTag) == 4          # 1 track × 4 tags
+
+    # Idempotent — no duplicate band/track tag rows on re-ingest.
+    await ingest_album(session, pa)
+    assert await _count(session, BandTag) == 4
+    assert await _count(session, TrackTag) == 4
 
 
 async def test_ingest_album_is_idempotent(session: AsyncSession) -> None:

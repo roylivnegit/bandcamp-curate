@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     Album,
+    AlbumSupporter,
     AlbumTag,
     Band,
     Blacklist,
@@ -152,17 +153,71 @@ async def _tag_names(session: AsyncSession, tag_ids: set[int]) -> dict[int, str]
     return {tid: name for tid, name in rows}
 
 
+async def _seed_tag_provenance(
+    session: AsyncSession, me: Fan
+) -> tuple[dict[int, set[str]], dict[int, set[str]]]:
+    """Map each candidate → the genre tags of *your* albums that generated it.
+
+    A candidate is surfaced because a taste-neighbour owns it; that neighbour is in
+    the graph because they support an album you own. So the candidate's "seed genres"
+    are the tags of your albums whose supporters own the candidate. Powers the
+    "don't show me things generated from my <genre> collection" filter and explains
+    *why* something was recommended.
+    """
+    my_albums = await _scalar_set(
+        session,
+        select(FanItem.album_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.album_id.isnot(None)
+        ),
+    )
+    if not my_albums:
+        return {}, {}
+
+    # For each of my tagged albums: its supporters, and everything those supporters
+    # own → (candidate, seed tag) pairs.
+    rows = (
+        await session.execute(
+            select(FanItem.album_id, FanItem.track_id, Tag.name)
+            .select_from(AlbumSupporter)
+            .join(FanItem, FanItem.fan_id == AlbumSupporter.fan_id)
+            .join(AlbumTag, AlbumTag.album_id == AlbumSupporter.album_id)
+            .join(Tag, Tag.id == AlbumTag.tag_id)
+            .where(
+                AlbumSupporter.album_id.in_(my_albums),
+                FanItem.fan_id != me.id,
+            )
+        )
+    ).all()
+
+    album_prov: dict[int, set[str]] = {}
+    track_prov: dict[int, set[str]] = {}
+    for album_id, track_id, tag_name in rows:
+        if album_id is not None:
+            album_prov.setdefault(album_id, set()).add(tag_name)
+        elif track_id is not None:
+            track_prov.setdefault(track_id, set()).add(tag_name)
+    return album_prov, track_prov
+
+
 async def compute_recommendations(
-    session: AsyncSession, *, limit: int | None = None, one_per_band: bool = True
+    session: AsyncSession,
+    *,
+    limit: int | None = None,
+    one_per_band: bool = True,
+    exclude_seed_tags: set[str] | None = None,
 ) -> list[ScoredItem]:
     """Score unowned albums + tracks by neighbour co-ownership (+ tag affinity).
 
     With `one_per_band` (default), only each band's highest-scoring item is kept —
-    the feed shows one recommendation per artist/label.
+    the feed shows one recommendation per artist/label. `exclude_seed_tags` drops
+    candidates generated from your albums carrying any of those genres (seed
+    provenance) — "don't recommend things that came from my <genre> collection".
     """
     me = await get_me(session)
     excl = await build_exclusions(session, me)
     tag_profile = await _my_tag_profile(session, me)
+    album_prov, track_prov = await _seed_tag_provenance(session, me)
+    exclude_seed_tags = exclude_seed_tags or set()
 
     scored: list[ScoredItem] = []
 
@@ -200,6 +255,9 @@ async def compute_recommendations(
     for album_id, band_id, url, co_owners in album_rows:
         if _excluded_album(album_id, band_id, url):
             continue
+        seed_tags = album_prov.get(album_id, set())
+        if exclude_seed_tags & seed_tags:
+            continue
         tags = album_tags.get(album_id, [])
         matched = [tag_names[t] for t in tags if t in tag_profile]
         tag_affinity = sum(tag_profile.get(t, 0) for t in tags)
@@ -215,6 +273,7 @@ async def compute_recommendations(
                     "co_owners": co_owners,
                     "tag_affinity": tag_affinity,
                     "matched_tags": sorted(set(matched)),
+                    "seed_tags": sorted(seed_tags),
                 },
             )
         )
@@ -243,6 +302,9 @@ async def compute_recommendations(
             or _url_host(url) in excl.band_hosts
         ):
             continue
+        seed_tags = track_prov.get(track_id, set())
+        if exclude_seed_tags & seed_tags:
+            continue
         scored.append(
             ScoredItem(
                 item_type=str(ItemType.TRACK),
@@ -250,7 +312,7 @@ async def compute_recommendations(
                 track_id=track_id,
                 score=W_CO_OWNER * co_owners,
                 band_id=band_id,
-                reasons={"co_owners": co_owners},
+                reasons={"co_owners": co_owners, "seed_tags": sorted(seed_tags)},
             )
         )
 
@@ -287,8 +349,33 @@ async def store_recommendations(
     return len(scored)
 
 
-async def curate(session: AsyncSession, *, limit: int | None = None) -> list[ScoredItem]:
+async def curate(
+    session: AsyncSession, *, limit: int | None = None,
+    exclude_seed_tags: set[str] | None = None,
+) -> list[ScoredItem]:
     """Compute + persist recommendations. Returns the stored, ranked list."""
-    scored = await compute_recommendations(session, limit=limit)
+    scored = await compute_recommendations(
+        session, limit=limit, exclude_seed_tags=exclude_seed_tags
+    )
     await store_recommendations(session, scored)
     return scored
+
+
+async def seed_tags(session: AsyncSession) -> list[tuple[str, int]]:
+    """Genres of your own crawled albums (the seeds), with how many albums carry each.
+
+    These are the values the "exclude by seed genre" filter offers.
+    """
+    me = await get_me(session)
+    rows = (
+        await session.execute(
+            select(Tag.name, func.count(func.distinct(AlbumTag.album_id)))
+            .select_from(FanItem)
+            .join(AlbumTag, AlbumTag.album_id == FanItem.album_id)
+            .join(Tag, Tag.id == AlbumTag.tag_id)
+            .where(FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False))
+            .group_by(Tag.name)
+            .order_by(func.count(func.distinct(AlbumTag.album_id)).desc(), Tag.name)
+        )
+    ).all()
+    return [(name, n) for name, n in rows]

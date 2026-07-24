@@ -22,11 +22,13 @@ from app.db.models import (
     AlbumSupporter,
     AlbumTag,
     Band,
+    BandTag,
     Fan,
     FanItem,
     Follow,
     Tag,
     Track,
+    TrackTag,
 )
 from app.enums import BandKind, ItemType, TargetType
 
@@ -277,29 +279,51 @@ async def _add_album_tag(session: AsyncSession, album: Album, tag: Tag) -> bool:
     return True
 
 
+async def _link_tag(session: AsyncSession, model, id_col, obj_id: int, tag_id: int) -> None:
+    """Idempotently link a band/track to a tag (composite-PK association)."""
+    exists = (
+        await session.execute(select(model).where(id_col == obj_id, model.tag_id == tag_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        session.add(model(**{id_col.key: obj_id, "tag_id": tag_id}))
+        await session.flush()
+
+
 async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCounts:
-    """Upsert an album, its band, tracks, and genre tags (idempotent)."""
+    """Upsert an album, its band, tracks, and genre tags (idempotent).
+
+    Tags parsed from the album page are linked at three levels: the album
+    (`album_tags`), its band (`band_tags` — a band accumulates its releases' tags),
+    and each of its tracks (`track_tags`).
+    """
     counts = AlbumIngestCounts()
     band = await get_or_create_band(session, pa.band)
     album = await get_or_create_album(
         session, bandcamp_id=pa.album_id, url=pa.url, title=pa.title, band=band
     )
 
+    tracks: list[Track] = []
     for pt in pa.tracks:
-        track = (
+        existing = (
             await session.execute(select(Track).where(Track.bandcamp_id == pt.track_id))
         ).scalar_one_or_none()
-        if track is None:
+        if existing is None:
             counts.tracks += 1
-        await get_or_create_track(
-            session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title,
-            band=band, album=album,
+        tracks.append(
+            await get_or_create_track(
+                session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title,
+                band=band, album=album,
+            )
         )
 
     for name in pa.tags:
         tag = await get_or_create_tag(session, name)
         if await _add_album_tag(session, album, tag):
             counts.tags += 1
+        if band is not None:
+            await _link_tag(session, BandTag, BandTag.band_id, band.id, tag.id)
+        for track in tracks:
+            await _link_tag(session, TrackTag, TrackTag.track_id, track.id, tag.id)
 
     await session.commit()
     return counts

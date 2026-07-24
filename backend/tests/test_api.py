@@ -149,8 +149,14 @@ async def test_label_filter(client: AsyncClient) -> None:
 
 async def test_facets(client: AsyncClient) -> None:
     f = (await client.get("/api/facets")).json()
-    assert "tags" in f and "labels" in f
+    assert "tags" in f and "labels" in f and "seed_tags" in f
     # Every recommended band shows up as a label facet.
     rec_bands = {r["band_id"] for r in (await client.get("/api/recommendations")).json()}
     facet_bands = {int(x["value"]) for x in f["labels"]}
     assert rec_bands <= facet_bands
+
+
+async def test_recompute_accepts_seed_tag_exclusion(client: AsyncClient) -> None:
+    r = await client.post("/api/recommendations/recompute?exclude_seed_tag=psytrance")
+    assert r.status_code == 200
+    assert r.json()["excluded_seed_tags"] == ["psytrance"]

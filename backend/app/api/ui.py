@@ -101,6 +101,8 @@ _PAGE = """<!doctype html>
 </div>
 <div class="hint">Filter by genre — click once to <b style="color:var(--accent)">include</b>, twice to <b style="color:var(--danger)">exclude</b>:</div>
 <div class="tagbar" id="tagbar"></div>
+<div class="hint" id="seedHint" style="display:none">Hide recs generated from your own <b>seed genres</b> (click to exclude; recomputes):</div>
+<div class="tagbar" id="seedbar"></div>
 <div class="active" id="active"></div>
 <div class="panel" id="blockedPanel" style="display:none"></div>
 <main>
@@ -116,6 +118,7 @@ const LIMIT=50;
 let type='', offset=0, loading=false;
 const tagState={};          // tag -> 'by' | 'out'
 let labelFilter=null;       // {id, name}
+const seedExclude=new Set();// seed genres to exclude at recompute time
 
 function esc(s){ return (s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -139,13 +142,22 @@ async function loadFacets(){
   const f=await (await fetch('/api/facets')).json();
   $('#tagbar').innerHTML = f.tags.length
     ? f.tags.map(t=>`<span class="tchip" data-tag="${esc(t.value)}">${esc(t.label)}<span class="n">${t.count}</span></span>`).join('')
-    : '<span class="hint">No genre tags yet — crawl more album pages to populate them.</span>';
+    : '<span class="hint">No genre tags on recommendations yet — crawl more album pages to populate them.</span>';
+  $('#seedHint').style.display = f.seed_tags.length ? 'block' : 'none';
+  $('#seedbar').innerHTML = f.seed_tags.map(t=>
+    `<span class="tchip seed" data-seed="${esc(t.value)}">${esc(t.label)}<span class="n">${t.count}</span></span>`).join('');
   renderTagStates();
 }
 function renderTagStates(){
-  document.querySelectorAll('.tchip').forEach(c=>{
+  document.querySelectorAll('.tchip[data-tag]').forEach(c=>{
     const m=tagState[c.dataset.tag]; c.classList.toggle('by',m==='by'); c.classList.toggle('out',m==='out');
   });
+  document.querySelectorAll('.tchip.seed').forEach(c=> c.classList.toggle('out', seedExclude.has(c.dataset.seed)));
+}
+async function recompute(){
+  const q=new URLSearchParams(); seedExclude.forEach(t=>q.append('exclude_seed_tag',t));
+  await fetch('/api/recommendations/recompute?'+q,{method:'POST'});
+  await loadStats(); await loadFacets(); loadPage(true);
 }
 function renderActive(){
   const bits=[];
@@ -167,6 +179,7 @@ function card(r){
       <div class="meta">
         <span class="chip">${co} neighbour${co===1?'':'s'} own this</span>
         ${tags}
+        ${(r.reasons.seed_tags||[]).length?`<span class="chip" title="genres of your albums that surfaced this">via ${esc((r.reasons.seed_tags||[]).slice(0,3).join(', '))}</span>`:''}
         <span class="grow"></span>
         ${r.band_id?`<button class="block" data-block="${r.band_id}" data-bname="${esc(r.band_name)}">⊘ block</button>`:''}
         ${r.url?`<a class="listen" href="${esc(r.url)}" target="_blank" rel="noopener">Bandcamp ↗</a>`:''}
@@ -192,6 +205,9 @@ $('#filter').addEventListener('click',e=>{ const b=e.target.closest('button'); i
   [...e.currentTarget.children].forEach(x=>x.classList.remove('on')); b.classList.add('on'); type=b.dataset.t; loadPage(true); });
 $('#tagbar').addEventListener('click',e=>{ const c=e.target.closest('.tchip'); if(!c)return;
   const t=c.dataset.tag, m=tagState[t]; if(!m) tagState[t]='by'; else if(m==='by') tagState[t]='out'; else delete tagState[t]; refresh(); });
+$('#seedbar').addEventListener('click',async e=>{ const c=e.target.closest('.tchip.seed'); if(!c)return;
+  const t=c.dataset.seed; if(seedExclude.has(t)) seedExclude.delete(t); else seedExclude.add(t);
+  c.classList.toggle('out',seedExclude.has(t)); await recompute(); });
 $('#active').addEventListener('click',e=>{ const p=e.target.closest('[data-clear-tag]'); const l=e.target.closest('[data-clear-label]');
   if(p){ delete tagState[p.dataset.clearTag]; refresh(); } if(l){ labelFilter=null; refresh(); } });
 feed.addEventListener('click',async e=>{
@@ -204,8 +220,7 @@ feed.addEventListener('click',async e=>{
 });
 moreBtn.addEventListener('click',()=>loadPage(false));
 $('#recompute').addEventListener('click',async e=>{ e.target.disabled=true; e.target.textContent='Recomputing…';
-  await fetch('/api/recommendations/recompute',{method:'POST'}); await loadStats(); await loadFacets(); loadPage(true);
-  e.target.disabled=false; e.target.textContent='↻ Recompute'; });
+  await recompute(); e.target.disabled=false; e.target.textContent='↻ Recompute'; });
 
 // ── blocked panel ──
 const panel=$('#blockedPanel'); let panelOpen=false;

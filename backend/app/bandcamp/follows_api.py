@@ -12,6 +12,7 @@ the rest via the same public endpoint the fan page scrolls:
 (`followeers` is Bandcamp's spelling.) Verified live 2026-07-24.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -20,6 +21,7 @@ from app.bandcamp.parse import ParsedBand, parse_following_bands_api
 
 FOLLOWING_BANDS_URL = "https://bandcamp.com/api/fancollection/1/following_bands"
 DEFAULT_COUNT = 60
+DEFAULT_DELAY = 0.4  # pause between pages — avoid Bandcamp 429s on bulk pagination
 _DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -34,10 +36,12 @@ class FollowsApiClient:
     """Pages through the `following_bands` API. Injectable client for testing."""
 
     def __init__(
-        self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT
+        self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT,
+        delay: float = DEFAULT_DELAY,
     ) -> None:
         self._client = client
         self._count = count
+        self._delay = delay
 
     async def fetch_page(
         self, fan_id: int, older_than_token: str, *, count: int | None = None
@@ -72,3 +76,5 @@ class FollowsApiClient:
             if not more or not last_token or last_token == token:
                 return
             token = last_token
+            if self._delay:
+                await asyncio.sleep(self._delay)
