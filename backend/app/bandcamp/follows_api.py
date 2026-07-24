@@ -1,0 +1,74 @@
+"""Mimic Bandcamp's `following_bands` XHR to page through everyone you follow.
+
+The fan page embeds only the first ~45 followed bands, but a fan can follow
+thousands (`following_bands_count`). Curation must exclude *all* of them, so we page
+the rest via the same public endpoint the fan page scrolls:
+
+    POST https://bandcamp.com/api/fancollection/1/following_bands
+    {"fan_id": <int>, "older_than_token": "<token>", "count": <int>}
+    → {"followeers": [{band_id, name, url_hints, token}], "more_available": bool,
+       "last_token": "<token>"}
+
+(`followeers` is Bandcamp's spelling.) Verified live 2026-07-24.
+"""
+
+from collections.abc import AsyncIterator
+
+import httpx
+
+from app.bandcamp.parse import ParsedBand, parse_following_bands_api
+
+FOLLOWING_BANDS_URL = "https://bandcamp.com/api/fancollection/1/following_bands"
+DEFAULT_COUNT = 60
+_DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+}
+
+
+class FollowsApiClient:
+    """Pages through the `following_bands` API. Injectable client for testing."""
+
+    def __init__(
+        self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT
+    ) -> None:
+        self._client = client
+        self._count = count
+
+    async def fetch_page(
+        self, fan_id: int, older_than_token: str, *, count: int | None = None
+    ) -> tuple[list[ParsedBand], str | None, bool]:
+        payload = {
+            "fan_id": fan_id,
+            "older_than_token": older_than_token,
+            "count": count or self._count,
+        }
+        client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
+        owns_client = self._client is None
+        try:
+            resp = await client.post(FOLLOWING_BANDS_URL, json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+        finally:
+            if owns_client:
+                await client.aclose()
+        return parse_following_bands_api(body)
+
+    async def iter_bands(
+        self, fan_id: int, start_token: str, *, max_pages: int = 200
+    ) -> AsyncIterator[ParsedBand]:
+        """Yield every followed band after `start_token`, to the end of the list."""
+        token: str | None = start_token
+        for _ in range(max_pages):
+            if not token:
+                return
+            bands, last_token, more = await self.fetch_page(fan_id, token)
+            for band in bands:
+                yield band
+            if not more or not last_token or last_token == token:
+                return
+            token = last_token

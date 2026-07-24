@@ -14,6 +14,7 @@ collection we started crawling from. Recommendations are recomputed wholesale
 (clear + insert) so re-running is idempotent.
 """
 
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import delete, func, select
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     Album,
     AlbumTag,
+    Band,
     Blacklist,
     Fan,
     FanItem,
@@ -52,6 +54,15 @@ class Exclusions:
     album_ids: set[int]
     track_ids: set[int]
     band_ids: set[int]
+    band_hosts: set[str]  # url hosts of followed bands (e.g. "atomesmusic.bandcamp.com")
+
+
+def _url_host(url: str | None) -> str | None:
+    """The host of a Bandcamp URL, e.g. https://atomesmusic.bandcamp.com/album/x → host."""
+    if not url:
+        return None
+    m = re.match(r"https?://([^/]+)", url)
+    return m.group(1).lower() if m else None
 
 
 async def get_me(session: AsyncSession) -> Fan:
@@ -76,8 +87,15 @@ async def build_exclusions(session: AsyncSession, me: Fan) -> Exclusions:
     my_tracks = await _scalar_set(
         session, select(FanItem.track_id).where(FanItem.fan_id == me.id)
     )
-    # Bands you follow.
+    # Bands you follow (by id and by URL host — a followed label and an album's
+    # artist can differ by band_id but share the label's subdomain).
     followed = await _scalar_set(session, select(Follow.band_id))
+    followed_urls = (
+        await session.execute(
+            select(Band.url).select_from(Follow).join(Band, Band.id == Follow.band_id)
+        )
+    ).scalars()
+    band_hosts = {h for h in (_url_host(u) for u in followed_urls) if h}
     # Active blacklist.
     bl_albums = await _scalar_set(
         session, select(Blacklist.album_id).where(Blacklist.active.is_(True))
@@ -92,6 +110,7 @@ async def build_exclusions(session: AsyncSession, me: Fan) -> Exclusions:
         album_ids=my_albums | bl_albums,
         track_ids=my_tracks | bl_tracks,
         band_ids=followed | bl_bands,
+        band_hosts=band_hosts,
     )
 
 
@@ -142,32 +161,39 @@ async def compute_recommendations(
 
     scored: list[ScoredItem] = []
 
+    def _excluded_album(aid: int, band_id: int | None, url: str | None) -> bool:
+        return (
+            aid in excl.album_ids
+            or band_id in excl.band_ids
+            or _url_host(url) in excl.band_hosts
+        )
+
     # ── Album candidates: co-owners among non-me fans ────────────────────────
     album_rows = (
         await session.execute(
             select(
                 FanItem.album_id,
                 Album.band_id,
+                Album.url,
                 func.count(func.distinct(FanItem.fan_id)).label("co_owners"),
             )
             .select_from(FanItem)
             .join(Fan, (Fan.id == FanItem.fan_id) & Fan.is_me.is_(False))
             .join(Album, Album.id == FanItem.album_id)
             .where(FanItem.album_id.isnot(None))
-            .group_by(FanItem.album_id, Album.band_id)
+            .group_by(FanItem.album_id, Album.band_id, Album.url)
         )
     ).all()
 
     candidate_album_ids = {
-        aid for aid, band_id, _ in album_rows
-        if aid not in excl.album_ids and band_id not in excl.band_ids
+        aid for aid, band_id, url, _ in album_rows if not _excluded_album(aid, band_id, url)
     }
     album_tags = await _album_tags(session, candidate_album_ids)
     all_tag_ids = {t for tags in album_tags.values() for t in tags}
     tag_names = await _tag_names(session, all_tag_ids)
 
-    for album_id, band_id, co_owners in album_rows:
-        if album_id in excl.album_ids or band_id in excl.band_ids:
+    for album_id, band_id, url, co_owners in album_rows:
+        if _excluded_album(album_id, band_id, url):
             continue
         tags = album_tags.get(album_id, [])
         matched = [tag_names[t] for t in tags if t in tag_profile]
@@ -193,18 +219,23 @@ async def compute_recommendations(
             select(
                 FanItem.track_id,
                 Track.band_id,
+                Track.url,
                 func.count(func.distinct(FanItem.fan_id)).label("co_owners"),
             )
             .select_from(FanItem)
             .join(Fan, (Fan.id == FanItem.fan_id) & Fan.is_me.is_(False))
             .join(Track, Track.id == FanItem.track_id)
             .where(FanItem.track_id.isnot(None))
-            .group_by(FanItem.track_id, Track.band_id)
+            .group_by(FanItem.track_id, Track.band_id, Track.url)
         )
     ).all()
 
-    for track_id, band_id, co_owners in track_rows:
-        if track_id in excl.track_ids or band_id in excl.band_ids:
+    for track_id, band_id, url, co_owners in track_rows:
+        if (
+            track_id in excl.track_ids
+            or band_id in excl.band_ids
+            or _url_host(url) in excl.band_hosts
+        ):
             continue
         scored.append(
             ScoredItem(

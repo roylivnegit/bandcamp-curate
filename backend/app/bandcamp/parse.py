@@ -67,6 +67,8 @@ class FanCollection:
     more_available: bool = False
     wishlist_last_token: str | None = None
     wishlist_more_available: bool = False
+    follows_last_token: str | None = None
+    follows_more_available: bool = False
 
 
 @dataclass(slots=True)
@@ -210,6 +212,8 @@ def parse_fan_page(page_html: str) -> FanCollection:
     last_token = cd.get("last_token")
     wd = blob.get("wishlist_data") or {}
     wishlist_token = wd.get("last_token")
+    fbd = blob.get("following_bands_data") or {}
+    follows_token = fbd.get("last_token")
     return FanCollection(
         fan=fan,
         items=items,
@@ -220,7 +224,31 @@ def parse_fan_page(page_html: str) -> FanCollection:
         more_available=bool(last_token),
         wishlist_last_token=wishlist_token,
         wishlist_more_available=bool(wishlist_token),
+        follows_last_token=follows_token,
+        follows_more_available=bool(follows_token),
     )
+
+
+def parse_following_bands_api(
+    payload: dict,
+) -> tuple[list[ParsedBand], str | None, bool]:
+    """Parse a `following_bands` XHR response → (bands, last_token, more_available).
+
+    The list arrives under the key `followeers` (Bandcamp's spelling); each entry has
+    `band_id`, `name`, `url_hints`, and a pagination `token`.
+    """
+    entries = payload.get("followeers") or payload.get("items") or []
+    bands = [
+        ParsedBand(
+            bandcamp_id=e.get("band_id"),
+            name=e.get("name"),
+            url=band_url_from_hints(e.get("url_hints")),
+        )
+        for e in entries
+        if e.get("band_id")
+    ]
+    last_token = next((e["token"] for e in reversed(entries) if e.get("token")), None)
+    return bands, last_token, bool(payload.get("more_available"))
 
 
 def parse_collection_items_api(payload: dict) -> tuple[list[ParsedItem], str | None, bool]:

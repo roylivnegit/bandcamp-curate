@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bandcamp.collection_api import CollectionApiClient
+from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.mapper import ingest_album, ingest_album_supporters, ingest_fan_collection
 from app.bandcamp.parse import parse_album_page, parse_album_supporters, parse_fan_page
 from app.bandcamp.supporters_api import SupportersApiClient
@@ -71,6 +72,7 @@ async def crawl_fan_collection(
     *,
     is_me: bool = False,
     collection_client: CollectionApiClient | None = None,
+    follows_client: FollowsApiClient | None = None,
     depth: int = 0,
     max_depth: int | None = None,
 ) -> CrawlOutcome:
@@ -78,6 +80,8 @@ async def crawl_fan_collection(
 
     The rendered page gives the first page + fan_id + pagination token; the rest is
     pulled by mimicking the `collection_items` XHR (deterministic, no auto-scroll).
+    For your own account (`is_me`) we also page the *full* follows list so curation
+    can exclude every artist/label you follow (the page embeds only the first ~45).
     Owned albums are enqueued at `depth + 1`, capped by `max_depth`.
     """
     result = await fetcher.fetch(fan_collection_request(url))
@@ -94,6 +98,15 @@ async def crawl_fan_collection(
             if item.item_id not in seen:
                 seen.add(item.item_id)
                 fc.items.append(item)
+
+    # Page through the rest of my follows (only relevant for is_me — they gate curation).
+    if is_me and fc.follows_more_available and fc.follows_last_token and fc.fan.fan_id:
+        fclient = follows_client or FollowsApiClient()
+        seen_bands = {b.bandcamp_id for b in fc.follows}
+        async for band in fclient.iter_bands(fc.fan.fan_id, fc.follows_last_token):
+            if band.bandcamp_id not in seen_bands:
+                seen_bands.add(band.bandcamp_id)
+                fc.follows.append(band)
 
     counts = await ingest_fan_collection(session, fc, is_me=is_me)
 

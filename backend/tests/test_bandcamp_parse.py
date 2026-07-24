@@ -7,6 +7,7 @@ from app.bandcamp.parse import (
     parse_album_supporters,
     parse_collection_items_api,
     parse_fan_page,
+    parse_following_bands_api,
     parse_thumbs_api,
 )
 
@@ -179,3 +180,26 @@ def test_parse_thumbs_api_xhr_results_shape() -> None:
 def test_parse_thumbs_api_empty() -> None:
     supporters, last_token, more = parse_thumbs_api({})
     assert supporters == [] and last_token is None and more is False
+
+
+def test_parse_following_bands_api() -> None:
+    # The list arrives under the (misspelled) key `followeers`.
+    payload = {
+        "followeers": [
+            {"band_id": 3650790604, "name": "ATOMES MUSIC",
+             "url_hints": {"subdomain": "atomesmusic"}, "token": "t1"},
+            {"band_id": 222, "name": "Other", "url_hints": {"subdomain": "other"},
+             "token": "t2"},
+        ],
+        "more_available": True,
+        "last_token": "t2",
+    }
+    bands, last_token, more = parse_following_bands_api(payload)
+    assert [b.bandcamp_id for b in bands] == [3650790604, 222]
+    assert bands[0].url == "https://atomesmusic.bandcamp.com"
+    assert last_token == "t2" and more is True
+
+
+def test_parse_following_bands_api_empty() -> None:
+    bands, last_token, more = parse_following_bands_api({})
+    assert bands == [] and last_token is None and more is False

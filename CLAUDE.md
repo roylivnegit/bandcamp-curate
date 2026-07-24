@@ -48,6 +48,12 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   - `collection_api.CollectionApiClient` → `api/fancollection/1/collection_items`
     (`{fan_id, older_than_token, count}` → `{items, last_token, more_available}`). Items reuse
     `parse_collection_item()`.
+  - `follows_api.FollowsApiClient` → `api/fancollection/1/following_bands`
+    (`{fan_id, older_than_token, count}` → `{followeers[], more_available, last_token}` — note the
+    misspelled `followeers` key). The page embeds only the first ~45 follows but a fan can follow
+    thousands, so `crawl_fan_collection` pages the **full** list for `is_me` — curation must exclude
+    every followed artist/label. (Bug fixed 2026-07-24: follows were capped at 45 → followed labels
+    like `adncolors`/`atomesmusic` leaked into recommendations.)
   - `supporters_api.SupportersApiClient` → `api/tralbumcollectors/2/thumbs`
     (`{tralbum_type, tralbum_id, token, count}` → `{results[], more_available}`). NOTE the XHR
     response uses `results`/`more_available`, **different** from the embedded `#collectors-data`
@@ -64,7 +70,9 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   albums/tracks by **co-ownership among taste-neighbours** (# non-me fans who own it) + a
   **tag-affinity** nudge from your owned-album genres, after excluding everything already in your
   world — **owned + wishlisted** (`fan_items`, the wishlist via `is_wishlist`), **followed** bands
-  (`follows`), and active **blacklist**. "You" = the `is_me` fan (from BANDCAMP_FAN_URL). Writes
+  (`follows`, matched by band_id **and by URL host** so a followed label excludes albums whose
+  stored band is the artist), and active **blacklist**. "You" = the `is_me` fan (from
+  BANDCAMP_FAN_URL). Writes
   explainable rows to `recommendations` (idempotent clear+insert). `scripts/curate.py [N]` prints
   the feed. **Wishlist ingestion added**: `fan_items.is_wishlist` (migration `0002`, guarded), parsed
   from `item_cache.wishlist`, ingested only for `is_me`.

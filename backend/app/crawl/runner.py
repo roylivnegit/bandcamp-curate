@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bandcamp.collection_api import CollectionApiClient
+from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier
 from app.crawl.service import CrawlOutcome, Fetcher, crawl_album, crawl_fan_collection
@@ -44,6 +45,7 @@ async def process_entry(
     *,
     seed_url: str | None = None,
     collection_client: CollectionApiClient | None = None,
+    follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
 ) -> CrawlOutcome:
@@ -53,6 +55,7 @@ async def process_entry(
             session, fetcher, entry.url,
             is_me=(entry.url == seed_url),
             collection_client=collection_client,
+            follows_client=follows_client,
             depth=entry.depth,
             max_depth=max_depth,
         )
@@ -70,6 +73,7 @@ async def process_one(
     *,
     seed_url: str | None = None,
     collection_client: CollectionApiClient | None = None,
+    follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
 ) -> CrawlOutcome | None:
@@ -83,7 +87,7 @@ async def process_one(
     try:
         outcome = await process_entry(
             session, fetcher, entry, seed_url=seed_url,
-            collection_client=collection_client,
+            collection_client=collection_client, follows_client=follows_client,
             supporters_client=supporters_client, max_depth=max_depth,
         )
     except Exception as exc:  # noqa: BLE001 — record and move on; crawl is resumable
@@ -108,6 +112,7 @@ async def run_until_empty(
     *,
     seed_url: str | None = None,
     collection_client: CollectionApiClient | None = None,
+    follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
     max_requests: int | None = None,
@@ -124,7 +129,7 @@ async def run_until_empty(
             try:
                 outcome = await process_one(
                     session, fetcher, seed_url=seed_url,
-                    collection_client=collection_client,
+                    collection_client=collection_client, follows_client=follows_client,
                     supporters_client=supporters_client, max_depth=max_depth,
                 )
             except Exception:  # noqa: BLE001 — already recorded; keep draining

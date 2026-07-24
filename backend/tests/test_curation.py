@@ -128,6 +128,32 @@ async def test_blacklist_excludes_candidate(session: AsyncSession) -> None:
     assert a4.id not in rec_album_ids  # blacklisted → gone
 
 
+async def test_follow_by_label_url_excludes_albums_on_that_page(
+    session: AsyncSession,
+) -> None:
+    # Follow a LABEL (band 3, url label.bandcamp.com). A neighbour owns an album on
+    # that label's page whose stored band is a *different* id (the artist). band_id
+    # matching would miss it; host matching must catch it.
+    await _build_graph(session)
+    label = (await session.execute(select(Band).where(Band.bandcamp_id == 3))).scalar_one()
+    label.url = "https://label.bandcamp.com"
+    artist = Band(bandcamp_id=99, name="Artist On Label", kind=BandKind.ARTIST)
+    session.add(artist)
+    await session.flush()
+    # album on the label's page, band = the artist (not followed by id)
+    a = Album(bandcamp_id=900, title="On The Label",
+              url="https://label.bandcamp.com/album/x", band_id=artist.id)
+    session.add(a)
+    await session.flush()
+    f2 = (await session.execute(select(Fan).where(Fan.username == "f2"))).scalar_one()
+    session.add(FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a.id))
+    await session.commit()
+
+    scored = await compute_recommendations(session)
+    rec_album_ids = {s.album_id for s in scored if s.album_id}
+    assert a.id not in rec_album_ids  # excluded via followed label's URL host
+
+
 async def test_get_me_requires_seed(session: AsyncSession) -> None:
     import pytest
 

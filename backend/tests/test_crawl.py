@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.bandcamp.collection_api import CollectionApiClient
+from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.parse import ParsedBand, ParsedItem, ParsedSupporter
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier, runner
@@ -182,6 +183,93 @@ async def test_collection_api_client_paginates_and_stops() -> None:
     assert [i.item_id for i in items] == [1, 2]
     assert [b["older_than_token"] for b in seen_bodies] == ["tok0", "tok1"]
     assert all(b["fan_id"] == 9985893 and b["count"] == 40 for b in seen_bodies)
+
+
+async def test_follows_api_client_paginates() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        tok = _json.loads(request.content)["older_than_token"]
+        if tok == "f0":
+            return httpx.Response(200, json={
+                "followeers": [{"band_id": 10, "name": "L1",
+                                "url_hints": {"subdomain": "l1"}, "token": "f1"}],
+                "more_available": True, "last_token": "f1"})
+        return httpx.Response(200, json={
+            "followeers": [{"band_id": 20, "name": "L2",
+                            "url_hints": {"subdomain": "l2"}, "token": "f2"}],
+            "more_available": False, "last_token": "f2"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        bands = [b async for b in FollowsApiClient(http).iter_bands(9985893, "f0")]
+    assert [b.bandcamp_id for b in bands] == [10, 20]
+    assert bands[0].url == "https://l1.bandcamp.com"
+
+
+class FakeFollowsClient:
+    def __init__(self, bands: list[ParsedBand] | None = None) -> None:
+        self._bands = bands or []
+
+    async def iter_bands(
+        self, fan_id: int, start_token: str, *, max_pages: int = 200
+    ) -> AsyncIterator[ParsedBand]:
+        for b in self._bands:
+            yield b
+
+
+def _fan_html_with_follows_token() -> str:
+    import html as _html
+    import json as _json
+
+    blob = {
+        "fan_data": {"fan_id": 9985893, "username": "guron",
+                     "trackpipe_url": "https://bandcamp.com/guron"},
+        "item_cache": {
+            "collection": {},
+            "wishlist": {},
+            "following_bands": {
+                "1": {"band_id": 111, "name": "Embedded One",
+                      "url_hints": {"subdomain": "one"}},
+                "2": {"band_id": 222, "name": "Embedded Two",
+                      "url_hints": {"subdomain": "two"}},
+            },
+        },
+        "collection_data": {"item_count": 0, "last_token": None},
+        "wishlist_data": {"last_token": None},
+        "following_bands_data": {"item_count": 3, "last_token": "1779:222"},
+    }
+    enc = _html.escape(_json.dumps(blob), quote=True)
+    return f'<div id="pagedata" data-blob="{enc}"></div>'
+
+
+async def test_crawl_fan_collection_pages_all_follows(session: AsyncSession) -> None:
+    # 2 follows embedded + a follows token; the follows XHR adds a 3rd. is_me → all
+    # become Follow rows (this is the fix for missing label-follows in curation).
+    from app.db.models import Follow
+
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_follows_token()})
+    extra = ParsedBand(bandcamp_id=987654, name="Paged Label",
+                       url="https://pagedlabel.bandcamp.com")
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, is_me=True,
+        collection_client=FakeCollectionClient(),
+        follows_client=FakeFollowsClient([extra]),
+    )
+    n = (await session.execute(select(func.count()).select_from(Follow))).scalar_one()
+    assert n == 3  # 2 embedded + 1 paged
+
+
+async def test_follows_not_paged_for_other_fans(session: AsyncSession) -> None:
+    from app.db.models import Follow
+
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_follows_token()})
+    called = FakeFollowsClient([ParsedBand(bandcamp_id=1, name="x", url="https://x.bandcamp.com")])
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, is_me=False,
+        collection_client=FakeCollectionClient(), follows_client=called,
+    )
+    # not is_me → follows aren't ingested at all
+    n = (await session.execute(select(func.count()).select_from(Follow))).scalar_one()
+    assert n == 0
 
 
 async def test_supporters_api_client_paginates_and_stops() -> None:
