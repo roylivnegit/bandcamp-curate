@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bandcamp.collection_api import CollectionApiClient
 from app.bandcamp.mapper import ingest_album, ingest_album_supporters, ingest_fan_collection
 from app.bandcamp.parse import parse_album_page, parse_album_supporters, parse_fan_page
+from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl.frontier import enqueue
 from app.db.models import Album
 from app.enums import CrawlKind
@@ -119,10 +120,13 @@ async def crawl_album(
     *,
     depth: int = 0,
     max_depth: int | None = None,
+    supporters_client: SupportersApiClient | None = None,
 ) -> CrawlOutcome:
     """Fetch an album page, ingest album/tracks/tags/supporters, enqueue supporters.
 
-    Supporter collections are enqueued at `depth + 1`, capped by `max_depth`.
+    The page embeds the first page of supporters; the rest are pulled by mimicking
+    the collectors `thumbs` XHR. Supporter collections are enqueued at `depth + 1`,
+    capped by `max_depth`.
     """
     result = await fetcher.fetch(album_request(url))
     if not result.html:
@@ -136,6 +140,18 @@ async def crawl_album(
     ).scalar_one()
 
     sup = parse_album_supporters(result.html)
+
+    # Page through the remaining supporters via the thumbs XHR.
+    if sup.more_available and sup.last_token and sup.album_id:
+        client = supporters_client or SupportersApiClient()
+        seen = {s.username for s in sup.supporters}
+        async for s in client.iter_supporters(
+            sup.album_id, sup.last_token, tralbum_type=sup.tralbum_type
+        ):
+            if s.username not in seen:
+                seen.add(s.username)
+                sup.supporters.append(s)
+
     scounts = await ingest_album_supporters(session, album, sup)
 
     enqueued = 0

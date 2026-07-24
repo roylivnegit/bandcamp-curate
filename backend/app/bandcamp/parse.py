@@ -99,6 +99,9 @@ class AlbumSupporters:
     supporters: list[ParsedSupporter] = field(default_factory=list)
     album_id: int | None = None
     album_url: str | None = None
+    # "a" for an album page, "t" for a track page — the `tralbum_type` the
+    # collectors/thumbs XHR expects for pagination.
+    tralbum_type: str = "a"
     more_available: bool = False
     last_token: str | None = None
 
@@ -287,26 +290,17 @@ def parse_album_supporters(page_html: str) -> AlbumSupporters:
     tralbum = _decode_attr(_TRALBUM_RE.search(page_html)) or {}
     album_id = tralbum.get("id")
     album_url = tralbum.get("url")
+    tralbum_type = "t" if tralbum.get("item_type") == "track" else "a"
 
     blob = _decode_attr(_COLLECTORS_RE.search(page_html))
     if blob is not None:
-        thumbs = blob.get("thumbs") or []
-        supporters = [
-            ParsedSupporter(
-                username=t["username"],
-                fan_id=t.get("fan_id"),
-                name=t.get("name"),
-                url=f"https://bandcamp.com/{t['username']}",
-            )
-            for t in thumbs
-            if t.get("username")
-        ]
-        last_token = thumbs[-1].get("token") if thumbs else None
+        supporters, last_token, more = parse_thumbs_api(blob)
         return AlbumSupporters(
             supporters=supporters,
             album_id=album_id,
             album_url=album_url,
-            more_available=bool(blob.get("more_thumbs_available")),
+            tralbum_type=tralbum_type,
+            more_available=more,
             last_token=last_token,
         )
 
@@ -320,5 +314,29 @@ def parse_album_supporters(page_html: str) -> AlbumSupporters:
                 ParsedSupporter(username=user, url=f"https://bandcamp.com/{user}")
             )
     return AlbumSupporters(
-        supporters=supporters, album_id=album_id, album_url=album_url
+        supporters=supporters, album_id=album_id, album_url=album_url,
+        tralbum_type=tralbum_type,
     )
+
+
+def _supporter_from_thumb(thumb: dict) -> ParsedSupporter:
+    return ParsedSupporter(
+        username=thumb["username"],
+        fan_id=thumb.get("fan_id"),
+        name=thumb.get("name"),
+        url=f"https://bandcamp.com/{thumb['username']}",
+    )
+
+
+def parse_thumbs_api(payload: dict) -> tuple[list[ParsedSupporter], str | None, bool]:
+    """Parse a collectors `thumbs` response → (supporters, last_token, more_available).
+
+    Handles both the embedded `#collectors-data` blob and the paginated thumbs XHR —
+    both carry `thumbs[]` (each with `fan_id`/`username`/`name`/`token`) and a
+    `more_thumbs_available` flag. `last_token` is the final thumb's pagination token.
+    """
+    thumbs = payload.get("thumbs") or []
+    supporters = [_supporter_from_thumb(t) for t in thumbs if t.get("username")]
+    # Last present pagination token (defensive against a trailing tokenless thumb).
+    last_token = next((t["token"] for t in reversed(thumbs) if t.get("token")), None)
+    return supporters, last_token, bool(payload.get("more_thumbs_available"))

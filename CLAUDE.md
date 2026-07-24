@@ -40,25 +40,30 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   `seed`. `app/worker.py` = ARQ adaptor (`seed_crawl`/`crawl_next` self-perpetuating chain).
   `scripts/crawl.py` = in-process CLI (`seed`/`run`/`status`). All crawl logic unit-tested with a
   fake fetcher over the fixtures (no credits). **Not yet run against live infra** (needs Postgres+Redis).
-- **Collection pagination = mimic the XHR, not render+scroll.** `app/bandcamp/collection_api.py`
-  (`CollectionApiClient`) POSTs Bandcamp's public `api/fancollection/1/collection_items`
-  (`{fan_id, older_than_token, count}` → `{items, last_token, more_available}`) directly and
-  pages via `last_token`. The fan page is rendered once (for fan_id + first page + token); the
-  rest comes from the API. Items share the shape `parse_collection_item()` already handles.
-  Endpoint is public/no-auth; direct httpx now, swap transport to route via Nimble if IP-throttled.
+- **Pagination = mimic the XHR, not render+scroll.** Two clients POST Bandcamp's public JSON APIs
+  directly and page via the returned token; the fan/album page is rendered once for the first page + ids.
+  - `collection_api.CollectionApiClient` → `api/fancollection/1/collection_items`
+    (`{fan_id, older_than_token, count}` → `{items, last_token, more_available}`). Items reuse
+    `parse_collection_item()`.
+  - `supporters_api.SupportersApiClient` → `api/tralbumcollectors/2/thumbs`
+    (`{tralbum_type, tralbum_id, token, count}` → `{thumbs, more_thumbs_available}`). Response
+    shares the embedded `#collectors-data` shape, so `parse_thumbs_api()` handles both.
+  Both are injectable (fakes in tests, `MockTransport` unit tests); direct httpx now, swap the
+  transport to route via Nimble if IP-throttled. **Response shapes grounded in observed data;
+  the collectors endpoint URL/version + request-body field names are inferred, not live-verified.**
+- **Fan-out is bounded by depth** (`crawl_frontier.depth`, seed=0; `crawl_max_depth` config,
+  default 3): ingest still happens at the boundary, only outward enqueue stops.
 - **M4–M6** pending (curation, API+UI, deploy).
 
 ## Immediate next steps
 1. Stand up Postgres+Redis (docker-compose), `alembic upgrade head`, then
    `python -m scripts.crawl seed && python -m scripts.crawl run 3` for a live smoke test.
-2. Live-verify one `collection_items` POST against the real API (confirm body/`last_token`/
-   `more_available` field names for `guron`'s fan_id) — the client is unit-tested vs a
-   `MockTransport` but hasn't hit Bandcamp yet.
-3. Supporter deep-pagination: the album's `#collectors-data` blob gives the first page +
-   `more_thumbs_available` + a `token`; add the analogous thumbs-XHR client (needs one live
-   sample to confirm the endpoint/shape).
-4. Add crawl bounds (depth/budget caps) before a wide run — the frontier only dedups by
-   (url,kind); it doesn't yet cap fan-out.
+2. Live-verify the two API clients against the real endpoints (one `collection_items` POST for
+   `guron`'s fan_id; one `tralbumcollectors/.../thumbs` POST for panchito's album_id) — both are
+   unit-tested vs `MockTransport` but haven't hit Bandcamp. Correct the endpoint/body constants if
+   the live shapes differ (they live in one place each: `collection_api.py`, `supporters_api.py`).
+3. Consider a secondary budget cap (max total frontier size / max fetches per run) on top of the
+   depth bound before a very wide run.
 
 ## Open decision — RESOLVED (2026-07-24)
 Earlier flagged: local Python parsing vs Nimble server-side parsing, with the v2 parser def
@@ -80,7 +85,7 @@ Nimble parser can parse JSON and to prefer mimicking XHRs over render+scroll (bo
   cd backend
   python3 -m venv .venv && . .venv/bin/activate   # 3.12+; this box has 3.14 only
   pip install -e ".[dev]" aiosqlite
-  pytest -q                                        # 38 tests as of M3 start
+  pytest -q                                        # 46 tests as of M3
   ```
   The `.env` lives at the **repo root** (not `backend/`); config reads it via env vars, so
   `set -a && . ../.env && set +a` before running scripts that need the Nimble key.

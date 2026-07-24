@@ -7,6 +7,7 @@ from app.bandcamp.parse import (
     parse_album_supporters,
     parse_collection_items_api,
     parse_fan_page,
+    parse_thumbs_api,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fan_page.html"
@@ -133,3 +134,31 @@ def test_parse_album_supporters_dom_fallback() -> None:
     assert [s.username for s in sup.supporters] == ["alice", "bob"]  # de-duped
     assert sup.supporters[0].fan_id is None
     assert sup.more_available is False
+
+
+def test_parse_album_supporters_exposes_tralbum_type() -> None:
+    # The album fixture is a full album → tralbum_type "a" for the thumbs XHR.
+    sup = parse_album_supporters(ALBUM_FIXTURE.read_text())
+    assert sup.tralbum_type == "a"
+    assert sup.album_id == 4255072328
+
+
+def test_parse_thumbs_api() -> None:
+    payload = {
+        "thumbs": [
+            {"fan_id": 1, "username": "alice", "name": "Alice", "token": "t1"},
+            {"fan_id": 2, "username": "bob", "name": "Bob", "token": "t2"},
+            {"fan_id": 3, "name": "no username"},  # skipped — no username
+        ],
+        "more_thumbs_available": True,
+    }
+    supporters, last_token, more = parse_thumbs_api(payload)
+    assert [s.username for s in supporters] == ["alice", "bob"]
+    assert supporters[0].fan_id == 1 and supporters[0].url == "https://bandcamp.com/alice"
+    assert last_token == "t2"  # final thumb's token
+    assert more is True
+
+
+def test_parse_thumbs_api_empty() -> None:
+    supporters, last_token, more = parse_thumbs_api({})
+    assert supporters == [] and last_token is None and more is False

@@ -7,7 +7,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.bandcamp.collection_api import CollectionApiClient
-from app.bandcamp.parse import ParsedBand, ParsedItem
+from app.bandcamp.parse import ParsedBand, ParsedItem, ParsedSupporter
+from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
 from app.crawl.service import crawl_album, crawl_fan_collection
@@ -59,6 +60,24 @@ def _album_item(item_id: int, url: str) -> ParsedItem:
         band=ParsedBand(bandcamp_id=item_id + 1, name="Paged Band"),
         title="Paged Album", url=url,
     )
+
+
+class FakeSupportersClient:
+    """Stands in for the collectors thumbs XHR — yields preset extra supporters."""
+
+    def __init__(self, supporters: list[ParsedSupporter] | None = None) -> None:
+        self._supporters = supporters or []
+
+    async def iter_supporters(
+        self, tralbum_id: int, start_token: str, *, tralbum_type: str = "a",
+        max_pages: int = 100,
+    ) -> AsyncIterator[ParsedSupporter]:
+        for s in self._supporters:
+            yield s
+
+
+def _supporter(username: str) -> ParsedSupporter:
+    return ParsedSupporter(username=username, url=f"https://bandcamp.com/{username}")
 
 
 @pytest_asyncio.fixture
@@ -165,11 +184,43 @@ async def test_collection_api_client_paginates_and_stops() -> None:
     assert all(b["fan_id"] == 9985893 and b["count"] == 40 for b in seen_bodies)
 
 
+async def test_supporters_api_client_paginates_and_stops() -> None:
+    seen_bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        body = _json.loads(request.content)
+        seen_bodies.append(body)
+        if body["token"] == "t0":
+            return httpx.Response(200, json={
+                "thumbs": [{"fan_id": 1, "username": "alice", "token": "t1"}],
+                "more_thumbs_available": True,
+            })
+        return httpx.Response(200, json={
+            "thumbs": [{"fan_id": 2, "username": "bob", "token": "t2"}],
+            "more_thumbs_available": False,
+        })
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = SupportersApiClient(http, count=40)
+        users = [s.username async for s in client.iter_supporters(4255072328, "t0")]
+
+    assert users == ["alice", "bob"]
+    assert [b["token"] for b in seen_bodies] == ["t0", "t1"]
+    assert all(
+        b["tralbum_id"] == 4255072328 and b["tralbum_type"] == "a" for b in seen_bodies
+    )
+
+
 async def test_crawl_album_ingests_supporters_and_enqueues_them(
     session: AsyncSession,
 ) -> None:
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
-    outcome = await crawl_album(session, fetcher, ALBUM_URL)
+    outcome = await crawl_album(
+        session, fetcher, ALBUM_URL, supporters_client=FakeSupportersClient()
+    )
 
     assert outcome.supporters == 3
     assert await _count(session, Album) == 1
@@ -189,9 +240,28 @@ async def test_crawl_album_ingests_supporters_and_enqueues_them(
     }
 
 
+async def test_crawl_album_pages_extra_supporters(session: AsyncSession) -> None:
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    # The thumbs XHR yields two supporters beyond the 3 embedded in the page.
+    client = FakeSupportersClient([_supporter("late_fan"), _supporter("night_owl")])
+    outcome = await crawl_album(session, fetcher, ALBUM_URL, supporters_client=client)
+
+    assert outcome.supporters == 5
+    assert await _count(session, AlbumSupporter) == 5
+    fans = (
+        await session.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
+        )
+    ).scalars().all()
+    assert "https://bandcamp.com/late_fan" in {f.url for f in fans}
+
+
 async def test_crawl_album_propagates_depth(session: AsyncSession) -> None:
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
-    await crawl_album(session, fetcher, ALBUM_URL, depth=1, max_depth=3)
+    await crawl_album(
+        session, fetcher, ALBUM_URL, depth=1, max_depth=3,
+        supporters_client=FakeSupportersClient(),
+    )
     fans = (
         await session.execute(
             select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
@@ -203,7 +273,10 @@ async def test_crawl_album_propagates_depth(session: AsyncSession) -> None:
 async def test_crawl_album_at_max_depth_enqueues_nothing(session: AsyncSession) -> None:
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
     # Album is ingested, but at depth == max_depth its supporters are NOT enqueued.
-    outcome = await crawl_album(session, fetcher, ALBUM_URL, depth=3, max_depth=3)
+    outcome = await crawl_album(
+        session, fetcher, ALBUM_URL, depth=3, max_depth=3,
+        supporters_client=FakeSupportersClient(),
+    )
     assert outcome.supporters == 3  # still ingested
     assert outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
@@ -224,7 +297,8 @@ async def test_runner_walks_the_graph(
     # fan pages have no fake route, so those entries error out and the walk stops.
     outcomes = await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
-        collection_client=FakeCollectionClient(), max_iterations=25,
+        collection_client=FakeCollectionClient(),
+        supporters_client=FakeSupportersClient(), max_iterations=25,
     )
 
     kinds = [o.kind for o in outcomes]
@@ -253,7 +327,8 @@ async def test_runner_respects_max_depth(
     # so supporter fan-collections (depth 2) are never enqueued.
     await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
-        collection_client=FakeCollectionClient(), max_depth=1, max_iterations=25,
+        collection_client=FakeCollectionClient(),
+        supporters_client=FakeSupportersClient(), max_depth=1, max_iterations=25,
     )
 
     async with sessionmaker_() as s:
