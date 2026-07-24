@@ -1,0 +1,12 @@
+# Dev overlay: live code reload. Bind-mounts the source over the baked image and
+# runs uvicorn with --reload. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./backend:/app
+
+  worker:
+    volumes:
+      - ./backend:/app

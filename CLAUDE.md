@@ -127,20 +127,29 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   localhost override) → http://127.0.0.1:8000. Verified live (1,600 recs = 1,600 distinct bands;
   block/unblock/label-filter all work). `ruff` ignores B008 (FastAPI Depends idiom) + E501 for the
   UI template. Tag facets are sparse until more album *pages* are crawled (tags live there).
-- **M6** pending (deploy). The compose `api`/`worker` services already build ./backend; wiring a
-  real deploy target is what's left.
+- **M6 Deploy** 🔨 self-hosted stack done (committed): `docker compose up -d` brings up the **whole
+  app** — `postgres`, `redis`, a one-shot `migrate` (runs `alembic upgrade head`, then api/worker
+  wait on `service_completed_successfully`), `api` (uvicorn, `/health` healthcheck), and `worker`
+  (`arq app.worker.WorkerSettings`). Dockerfile fixed (was `pip install .` before copying `app/` →
+  build failed); baked image = a real deployable (no host source needed). `docker-compose.dev.yml`
+  overlay bind-mounts source + adds `--reload` for dev. Verified live: all services healthy, api
+  serves the real data in-container, worker connected to Redis. **Cloud target (Fly/Railway/VPS)
+  not wired yet** — the compose stack is the artifact; a cloud deploy would push this image + a
+  managed Postgres/Redis.
 
 ## Local infra — docker-compose (canonical, set up 2026-07-24)
-Postgres 16 + Redis 7 run as containers via `docker-compose.yml` (services: `postgres`, `redis`,
-`api`, `worker`). Docker runtime is **colima** (headless, Apple Virtualization.Framework — Docker
-Desktop needs a GUI first-launch we can't automate). Compose maps pg→`localhost:5432`, redis→`localhost:6379`.
+Postgres 16 + Redis 7 + api + worker run via `docker-compose.yml`. Docker runtime is **colima**
+(headless, Apple Virtualization.Framework — Docker Desktop needs a GUI first-launch we can't
+automate). Compose maps pg→`localhost:5432`, redis→`localhost:6379`, api→`localhost:8000`.
 ```bash
 colima start                              # boot the docker VM (once per login)
-docker compose up -d postgres redis       # bring up the data services
-docker compose ps                         # both should be healthy
-# app/worker containers (optional): docker compose up -d api worker   (builds ./backend)
+docker compose up -d                      # WHOLE stack: pg + redis + migrate + api + worker
+docker compose ps                         # api healthy, worker up
+docker compose logs -f worker             # follow the crawl worker
+# dev (live reload): docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 docker compose down                       # stop; `down -v` also drops the pgdata volume
 ```
+Just the data services (for host-run uvicorn/scripts): `docker compose up -d postgres redis`.
 The gitignored `.env` uses compose hostnames (`@postgres`,`@redis`) — the `api`/`worker` containers
 use those directly. **Running the app/alembic/scripts from the host venv needs the localhost override:**
 ```bash

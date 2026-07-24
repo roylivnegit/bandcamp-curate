@@ -25,11 +25,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot: bring the schema to head, then exit. api/worker wait for it.
+  migrate:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://crate:crate@postgres:5432/crate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
   api:
     build: ./backend
     env_file: .env
     environment:
-      # Override compose-internal hosts (the .env values may point at localhost).
+      # Override compose-internal hosts (the .env values point at localhost/@postgres).
       DATABASE_URL: postgresql+asyncpg://crate:crate@postgres:5432/crate
       REDIS_URL: redis://redis:6379/0
     ports:
@@ -39,9 +51,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./backend:/app
+      migrate:
+        condition: service_completed_successfully
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   worker:
     build: ./backend
@@ -54,11 +73,18 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # ARQ worker: drains the crawl frontier (seed/enqueue via scripts.crawl or the
     # seed_crawl job). Idle until work is enqueued — it won't crawl on its own.
     command: ["arq", "app.worker.WorkerSettings"]
-    volumes:
-      - ./backend:/app
+    restart: unless-stopped
+
+# ── Dev override (live code reload) ──────────────────────────────────────────
+# The services above run the baked image (a real deployable — no host source
+# needed). For local development with live reload, run:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# which bind-mounts ./backend and adds uvicorn --reload.
 
 volumes:
   pgdata:
