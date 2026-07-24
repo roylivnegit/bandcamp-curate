@@ -222,13 +222,13 @@ feed.addEventListener('click',async e=>{
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
   const blk=e.target.closest('[data-block]'); if(blk){
     blk.disabled=true; await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
-    await loadStats(); await loadBlocked(); loadPage(true); return;
+    await loadStats(); await loadFacets(); await loadBlocked(); loadPage(true); return;
   }
   const lk=e.target.closest('[data-like-album],[data-like-track]'); if(lk){
     lk.disabled=true;
     const body=lk.dataset.likeAlbum?{album_id:+lk.dataset.likeAlbum}:{track_id:+lk.dataset.likeTrack};
     await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    lk.closest('.card').remove(); await loadStats(); await loadLiked();
+    lk.closest('.card').remove(); await loadStats(); await loadFacets(); await loadLiked();
   }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));
