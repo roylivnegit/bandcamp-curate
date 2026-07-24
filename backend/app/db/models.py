@@ -11,6 +11,7 @@ Enum-typed columns are stored as strings (see app.enums) to keep migrations simp
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -28,6 +29,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin
 from app.enums import BandKind, CrawlKind, CrawlStatus, ItemType, TargetType
 
+# JSONB on Postgres; plain JSON elsewhere (e.g. SQLite in tests).
+JSONVariant = JSON().with_variant(JSONB, "postgresql")
+
 # ── Core graph ────────────────────────────────────────────────────────────────
 
 
@@ -38,7 +42,8 @@ class Band(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     bandcamp_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
-    url: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    # Nullable: a band is often discovered by id before its page is scraped.
+    url: Mapped[str | None] = mapped_column(String(512), unique=True, index=True)
     name: Mapped[str | None] = mapped_column(String(512))
     kind: Mapped[str] = mapped_column(String(16), default=BandKind.UNKNOWN, index=True)
 
@@ -51,7 +56,8 @@ class Album(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     bandcamp_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
-    url: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    # Nullable: an album may be known only by id (e.g. a track's parent) pre-scrape.
+    url: Mapped[str | None] = mapped_column(String(512), unique=True, index=True)
     title: Mapped[str | None] = mapped_column(String(512))
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)
 
@@ -171,7 +177,7 @@ class CurationRule(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
-    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    config: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
 
 
@@ -188,7 +194,7 @@ class Recommendation(Base):
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), index=True)
     score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
-    reasons: Mapped[dict] = mapped_column(JSONB, default=dict)
+    reasons: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -241,7 +247,7 @@ class RawPage(Base):
     parser: Mapped[str | None] = mapped_column(String(128), index=True)
     provider: Mapped[str] = mapped_column(String(64))
     status_code: Mapped[int | None] = mapped_column(Integer)
-    payload: Mapped[dict] = mapped_column(JSONB)
+    payload: Mapped[dict] = mapped_column(JSONVariant)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
