@@ -78,6 +78,8 @@ _PAGE = """<!doctype html>
   .listen { color:var(--accent); text-decoration:none; font-weight:600; white-space:nowrap;
     border:1px solid var(--accent); border-radius:9px; padding:6px 13px; font-size:13px; line-height:1; }
   .listen:hover { background:var(--accent); color:#06231e; }
+  .count { color:var(--muted); font-size:13px; margin:6px 0 10px; }
+  .count b { color:var(--text); font-size:16px; }
   .empty { color:var(--muted); text-align:center; padding:50px 0; }
   .more { display:block; margin:16px auto 0; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-top:12px; }
@@ -111,6 +113,7 @@ _PAGE = """<!doctype html>
 <div class="panel" id="likedPanel" style="display:none"></div>
 <div class="panel" id="blockedPanel" style="display:none"></div>
 <main>
+  <div class="count" id="count"></div>
   <div id="feed"></div>
   <button class="btn more" id="more" style="display:none">Load more</button>
   <div class="empty" id="empty" style="display:none">No recommendations match — clear a filter, or Recompute.</div>
@@ -127,12 +130,19 @@ const seedExclude=new Set();// seed genres to exclude at recompute time
 
 function esc(s){ return (s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-function query(){
-  const q=new URLSearchParams(); q.set('limit',LIMIT); q.set('offset',offset);
+function filterParams(){
+  const q=new URLSearchParams();
   if(type) q.set('item_type',type);
   for(const [t,m] of Object.entries(tagState)){ if(m==='by') q.append('tag',t); else if(m==='out') q.append('exclude_tag',t); }
   if(labelFilter) q.set('label_id', labelFilter.id);
   return q;
+}
+function query(){ const q=filterParams(); q.set('limit',LIMIT); q.set('offset',offset); return q; }
+async function updateCount(){
+  const n=(await (await fetch('/api/recommendations/count?'+filterParams())).json()).count;
+  const kind = type ? (type==='album'?'albums':'tracks') : 'results';
+  const filtered = filterParams().toString().length>0;
+  $('#count').innerHTML = `<b>${n.toLocaleString()}</b> ${kind}${filtered?' match your filters':''}`;
 }
 
 async function loadStats(){
@@ -197,7 +207,7 @@ function card(r){
 
 async function loadPage(reset){
   if(loading) return; loading=true; moreBtn.disabled=true;
-  if(reset){ offset=0; feed.innerHTML=''; }
+  if(reset){ offset=0; feed.innerHTML=''; updateCount(); }
   const rows=await (await fetch('/api/recommendations?'+query())).json();
   feed.insertAdjacentHTML('beforeend', rows.map(card).join(''));
   offset+=rows.length;
@@ -228,7 +238,7 @@ feed.addEventListener('click',async e=>{
     lk.disabled=true;
     const body=lk.dataset.likeAlbum?{album_id:+lk.dataset.likeAlbum}:{track_id:+lk.dataset.likeTrack};
     await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    lk.closest('.card').remove(); await loadStats(); await loadFacets(); await loadLiked();
+    lk.closest('.card').remove(); await loadStats(); await loadFacets(); await loadLiked(); updateCount();
   }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));

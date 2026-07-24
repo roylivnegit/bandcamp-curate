@@ -81,6 +81,32 @@ async def _count(session: AsyncSession, stmt) -> int:
     return (await session.execute(stmt)).scalar_one()
 
 
+def _has_tag(names: list[str]):
+    """EXISTS: the recommendation's album carries any of these genre tags."""
+    return exists(
+        select(1)
+        .select_from(AlbumTag)
+        .join(Tag, Tag.id == AlbumTag.tag_id)
+        .where(AlbumTag.album_id == Recommendation.album_id, Tag.name.in_(names))
+    )
+
+
+def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
+                       label_id, exclude_label_id):
+    """Apply the shared feed filters (item_type / tags / labels) to a query."""
+    if item_type:
+        stmt = stmt.where(Recommendation.item_type == item_type)
+    if label_id:
+        stmt = stmt.where(band_id_col.in_(label_id))
+    if exclude_label_id:
+        stmt = stmt.where(band_id_col.notin_(exclude_label_id))
+    if tag:
+        stmt = stmt.where(_has_tag(tag))          # implies albums (tracks have no tags)
+    if exclude_tag:
+        stmt = stmt.where(~_has_tag(exclude_tag))
+    return stmt
+
+
 @router.get("/stats", response_model=StatsOut)
 async def stats(
     session: AsyncSession = Depends(get_session),
@@ -151,25 +177,10 @@ async def recommendations(
         .outerjoin(tb, tb.id == Track.band_id)
         .order_by(Recommendation.score.desc(), Recommendation.id)
     )
-    if item_type:
-        stmt = stmt.where(Recommendation.item_type == item_type)
-    if label_id:
-        stmt = stmt.where(band_id_col.in_(label_id))
-    if exclude_label_id:
-        stmt = stmt.where(band_id_col.notin_(exclude_label_id))
-
-    def _has_tag(names: list[str]):
-        return exists(
-            select(1)
-            .select_from(AlbumTag)
-            .join(Tag, Tag.id == AlbumTag.tag_id)
-            .where(AlbumTag.album_id == Recommendation.album_id, Tag.name.in_(names))
-        )
-
-    if tag:
-        stmt = stmt.where(_has_tag(tag))          # implies albums (tracks have no tags)
-    if exclude_tag:
-        stmt = stmt.where(~_has_tag(exclude_tag))
+    stmt = _apply_rec_filters(
+        stmt, band_id_col, item_type=item_type, tag=tag, exclude_tag=exclude_tag,
+        label_id=label_id, exclude_label_id=exclude_label_id,
+    )
     stmt = stmt.limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
@@ -188,6 +199,30 @@ async def recommendations(
         )
         for i, r in enumerate(rows)
     ]
+
+
+@router.get("/recommendations/count")
+async def recommendations_count(
+    session: AsyncSession = Depends(get_session),
+    item_type: str | None = Query(None, pattern="^(album|track)$"),
+    tag: list[str] = Query(default=[]),
+    exclude_tag: list[str] = Query(default=[]),
+    label_id: list[int] = Query(default=[]),
+    exclude_label_id: list[int] = Query(default=[]),
+) -> dict[str, int]:
+    """How many recommendations match the current filters (for the feed's count header)."""
+    band_id_col = func.coalesce(Album.band_id, Track.band_id)
+    stmt = (
+        select(func.count())
+        .select_from(Recommendation)
+        .outerjoin(Album, Album.id == Recommendation.album_id)
+        .outerjoin(Track, Track.id == Recommendation.track_id)
+    )
+    stmt = _apply_rec_filters(
+        stmt, band_id_col, item_type=item_type, tag=tag, exclude_tag=exclude_tag,
+        label_id=label_id, exclude_label_id=exclude_label_id,
+    )
+    return {"count": (await session.execute(stmt)).scalar_one()}
 
 
 @router.get("/facets", response_model=FacetsOut)

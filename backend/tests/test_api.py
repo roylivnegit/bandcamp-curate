@@ -149,6 +149,20 @@ async def test_label_filter(client: AsyncClient) -> None:
     assert band_id not in {r["band_id"] for r in without}
 
 
+async def test_recommendations_count_matches_filters(client: AsyncClient) -> None:
+    total = (await client.get("/api/recommendations/count")).json()["count"]
+    rows = (await client.get("/api/recommendations?limit=200")).json()
+    assert total == len(rows)  # unfiltered count == full list
+
+    # filtered count agrees with the filtered list
+    albums = (await client.get("/api/recommendations/count?item_type=album")).json()["count"]
+    album_rows = (await client.get("/api/recommendations?item_type=album&limit=200")).json()
+    assert albums == len(album_rows)
+
+    # a followed band / owned item is excluded, so a bogus label yields 0
+    assert (await client.get("/api/recommendations/count?label_id=99999")).json()["count"] == 0
+
+
 async def test_facets(client: AsyncClient) -> None:
     f = (await client.get("/api/facets")).json()
     assert "tags" in f and "labels" in f and "seed_tags" in f
