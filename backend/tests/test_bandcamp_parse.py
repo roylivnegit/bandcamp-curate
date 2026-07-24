@@ -159,6 +159,23 @@ def test_parse_thumbs_api() -> None:
     assert more is True
 
 
+def test_parse_thumbs_api_xhr_results_shape() -> None:
+    # The paginated thumbs XHR uses results/more_available (verified live), and each
+    # result ships a ready `url` — distinct from the embedded blob's thumbs shape.
+    payload = {
+        "results": [
+            {"fan_id": 9985893, "username": "guron", "name": "guron",
+             "url": "https://bandcamp.com/guron", "token": "1:1764260121:9985893:0:0:0"},
+        ],
+        "more_available": True,
+    }
+    supporters, last_token, more = parse_thumbs_api(payload)
+    assert [s.username for s in supporters] == ["guron"]
+    assert supporters[0].url == "https://bandcamp.com/guron"
+    assert last_token == "1:1764260121:9985893:0:0:0"
+    assert more is True
+
+
 def test_parse_thumbs_api_empty() -> None:
     supporters, last_token, more = parse_thumbs_api({})
     assert supporters == [] and last_token is None and more is False

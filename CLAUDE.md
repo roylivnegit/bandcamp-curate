@@ -46,22 +46,26 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     (`{fan_id, older_than_token, count}` → `{items, last_token, more_available}`). Items reuse
     `parse_collection_item()`.
   - `supporters_api.SupportersApiClient` → `api/tralbumcollectors/2/thumbs`
-    (`{tralbum_type, tralbum_id, token, count}` → `{thumbs, more_thumbs_available}`). Response
-    shares the embedded `#collectors-data` shape, so `parse_thumbs_api()` handles both.
+    (`{tralbum_type, tralbum_id, token, count}` → `{results[], more_available}`). NOTE the XHR
+    response uses `results`/`more_available`, **different** from the embedded `#collectors-data`
+    blob's `thumbs`/`more_thumbs_available`; `parse_thumbs_api()` handles both. Each result also
+    ships a ready `url`.
   Both are injectable (fakes in tests, `MockTransport` unit tests); direct httpx now, swap the
-  transport to route via Nimble if IP-throttled. **Response shapes grounded in observed data;
-  the collectors endpoint URL/version + request-body field names are inferred, not live-verified.**
+  transport to route via Nimble if IP-throttled. **Both endpoints live-verified 2026-07-24**
+  against `guron`'s collection (40 items/page) + `panchito`'s supporters (results shape captured).
 - **Fan-out is bounded by depth** (`crawl_frontier.depth`, seed=0; `crawl_max_depth` config,
   default 3): ingest still happens at the boundary, only outward enqueue stops.
 - **M4–M6** pending (curation, API+UI, deploy).
 
 ## Immediate next steps
-1. Stand up Postgres+Redis (docker-compose), `alembic upgrade head`, then
-   `python -m scripts.crawl seed && python -m scripts.crawl run 3` for a live smoke test.
-2. Live-verify the two API clients against the real endpoints (one `collection_items` POST for
-   `guron`'s fan_id; one `tralbumcollectors/.../thumbs` POST for panchito's album_id) — both are
-   unit-tested vs `MockTransport` but haven't hit Bandcamp. Correct the endpoint/body constants if
-   the live shapes differ (they live in one place each: `collection_api.py`, `supporters_api.py`).
+1. Stand up Postgres+Redis, `alembic upgrade head`, then `python -m scripts.crawl seed &&
+   python -m scripts.crawl run 3` for a live end-to-end smoke test through Nimble+DB.
+   **Blocker:** this box has no `docker`/`postgres`/`redis` installed (only `docker-compose.yml`);
+   install Docker Desktop or `brew install postgresql@16 redis` first.
+2. ~~Live-verify the two pagination endpoints~~ ✅ done 2026-07-24 (direct Bandcamp, no Nimble):
+   `collection_items` returns 40 items/page; `tralbumcollectors/2/thumbs` returns `results[]`.
+   Note: the thumbs endpoint also accepts a synthetic "newest" token
+   (`1:9999999999:9999999999:0:0:0`) to fetch supporters from the top without the embedded blob.
 3. Consider a secondary budget cap (max total frontier size / max fetches per run) on top of the
    depth bound before a very wide run.
 

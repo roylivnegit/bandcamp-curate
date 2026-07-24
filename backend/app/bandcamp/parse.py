@@ -324,19 +324,22 @@ def _supporter_from_thumb(thumb: dict) -> ParsedSupporter:
         username=thumb["username"],
         fan_id=thumb.get("fan_id"),
         name=thumb.get("name"),
-        url=f"https://bandcamp.com/{thumb['username']}",
+        url=thumb.get("url") or f"https://bandcamp.com/{thumb['username']}",
     )
 
 
 def parse_thumbs_api(payload: dict) -> tuple[list[ParsedSupporter], str | None, bool]:
-    """Parse a collectors `thumbs` response → (supporters, last_token, more_available).
+    """Parse a collectors response → (supporters, last_token, more_available).
 
-    Handles both the embedded `#collectors-data` blob and the paginated thumbs XHR —
-    both carry `thumbs[]` (each with `fan_id`/`username`/`name`/`token`) and a
-    `more_thumbs_available` flag. `last_token` is the final thumb's pagination token.
+    Handles both shapes (verified live 2026-07-24):
+      * embedded `#collectors-data` blob: `{thumbs[], more_thumbs_available}`
+      * paginated thumbs XHR: `{results[], more_available}`
+    Each entry carries `fan_id`/`username`/`name`/`token` (the XHR also carries a
+    ready `url`). `last_token` is the final entry's pagination token.
     """
-    thumbs = payload.get("thumbs") or []
-    supporters = [_supporter_from_thumb(t) for t in thumbs if t.get("username")]
-    # Last present pagination token (defensive against a trailing tokenless thumb).
-    last_token = next((t["token"] for t in reversed(thumbs) if t.get("token")), None)
-    return supporters, last_token, bool(payload.get("more_thumbs_available"))
+    entries = payload.get("thumbs") or payload.get("results") or []
+    supporters = [_supporter_from_thumb(t) for t in entries if t.get("username")]
+    # Last present pagination token (defensive against a trailing tokenless entry).
+    last_token = next((t["token"] for t in reversed(entries) if t.get("token")), None)
+    more = bool(payload.get("more_thumbs_available") or payload.get("more_available"))
+    return supporters, last_token, more

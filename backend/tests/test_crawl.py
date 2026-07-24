@@ -192,14 +192,17 @@ async def test_supporters_api_client_paginates_and_stops() -> None:
 
         body = _json.loads(request.content)
         seen_bodies.append(body)
+        # Live XHR shape (verified): {results[], more_available} — NOT thumbs/more_thumbs_available.
         if body["token"] == "t0":
             return httpx.Response(200, json={
-                "thumbs": [{"fan_id": 1, "username": "alice", "token": "t1"}],
-                "more_thumbs_available": True,
+                "results": [{"fan_id": 1, "username": "alice",
+                             "url": "https://bandcamp.com/alice", "token": "t1"}],
+                "more_available": True,
             })
         return httpx.Response(200, json={
-            "thumbs": [{"fan_id": 2, "username": "bob", "token": "t2"}],
-            "more_thumbs_available": False,
+            "results": [{"fan_id": 2, "username": "bob",
+                         "url": "https://bandcamp.com/bob", "token": "t2"}],
+            "more_available": False,
         })
 
     transport = httpx.MockTransport(handler)
