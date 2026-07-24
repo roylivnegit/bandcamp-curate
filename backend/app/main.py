@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health
+from app.api import feed, health, ui
 from app.config import get_settings
 
 settings = get_settings()
@@ -37,9 +37,11 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-# Routers added in later milestones: feed, blacklist, rules, jobs, usage (M5).
+app.include_router(feed.router)  # /api/stats, /api/recommendations, /api/recommendations/recompute
+app.include_router(ui.router)  # GET / — the feed UI
+# Later milestones: blacklist, rules, jobs, usage.
 
 
-@app.get("/", tags=["root"])
-async def root() -> dict:
-    return {"name": "crate-digger", "docs": "/docs", "health": "/health"}
+@app.get("/api/info", tags=["root"])
+async def info() -> dict:
+    return {"name": "crate-digger", "docs": "/docs", "health": "/health", "ui": "/"}

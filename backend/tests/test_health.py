@@ -3,9 +3,16 @@ from starlette.testclient import TestClient
 from app.main import app
 
 
-def test_root() -> None:
+def test_root_serves_ui() -> None:
     with TestClient(app) as client:
         resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_info() -> None:
+    with TestClient(app) as client:
+        resp = client.get("/api/info")
     assert resp.status_code == 200
     assert resp.json()["name"] == "crate-digger"
 

@@ -73,7 +73,17 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     verified 0 recs leak owned/wishlisted/followed items. Tag-affinity is mostly 0 so far because
     album tags only come from crawled album *pages* (only ~14 crawled) — it strengthens as more
     album pages are visited.
-- **M5–M6** pending (API+UI, deploy).
+- **M5 API + UI** 🔨 POC done (committed + run live): FastAPI `app/api/feed.py` serves
+  `GET /api/stats`, `GET /api/recommendations` (limit/offset + `item_type` filter, joined to
+  album/track/band + reasons), `POST /api/recommendations/recompute` (re-runs `curate`).
+  `app/api/ui.py` serves the feed at `GET /` — a self-contained dark HTML page (no build step)
+  that fetches those endpoints: stat tiles, All/Albums/Tracks filter, ranked cards
+  (score, band, "N neighbours own this", matched-tag chips, Bandcamp link), load-more, Recompute.
+  Run it: `uvicorn app.main:app` (host venv + localhost DATABASE_URL/REDIS_URL override) →
+  http://127.0.0.1:8000. Verified live against the POC DB (7,768 recs). `ruff` now ignores B008
+  (FastAPI `Depends()` idiom) and E501 for the UI template.
+- **M6** pending (deploy). The compose `api`/`worker` services already build ./backend; wiring a
+  real deploy target is what's left.
 
 ## Local infra — docker-compose (canonical, set up 2026-07-24)
 Postgres 16 + Redis 7 run as containers via `docker-compose.yml` (services: `postgres`, `redis`,
