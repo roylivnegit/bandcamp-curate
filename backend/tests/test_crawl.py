@@ -6,7 +6,11 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.bandcamp.collection_api import CollectionApiClient
+from app.bandcamp.collection_api import (
+    COLLECTION_ITEMS_URL,
+    WISHLIST_ITEMS_URL,
+    CollectionApiClient,
+)
 from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.parse import ParsedBand, ParsedItem, ParsedSupporter
 from app.bandcamp.supporters_api import SupportersApiClient
@@ -43,15 +47,20 @@ class FakeFetcher:
 
 
 class FakeCollectionClient:
-    """Stands in for the collection_items XHR — yields preset extra items."""
+    """Stands in for the collection_items / wishlist_items XHRs (URL-routed)."""
 
-    def __init__(self, items: list[ParsedItem] | None = None) -> None:
+    def __init__(
+        self, items: list[ParsedItem] | None = None,
+        wishlist: list[ParsedItem] | None = None,
+    ) -> None:
         self._items = items or []
+        self._wishlist = wishlist or []
 
     async def iter_items(
-        self, fan_id: int, start_token: str, *, max_pages: int = 100
+        self, fan_id: int, start_token: str, *,
+        url: str = COLLECTION_ITEMS_URL, max_pages: int = 100,
     ) -> AsyncIterator[ParsedItem]:
-        for item in self._items:
+        for item in (self._wishlist if url == WISHLIST_ITEMS_URL else self._items):
             yield item
 
 
@@ -256,6 +265,45 @@ async def test_crawl_fan_collection_pages_all_follows(session: AsyncSession) -> 
     )
     n = (await session.execute(select(func.count()).select_from(Follow))).scalar_one()
     assert n == 3  # 2 embedded + 1 paged
+
+
+def _fan_html_with_wishlist_token() -> str:
+    import html as _html
+    import json as _json
+
+    def item(iid):
+        return {"item_id": iid, "item_type": "album", "band_id": iid * 10,
+                "band_name": f"B{iid}", "item_title": f"W{iid}",
+                "item_url": f"https://b{iid}.bandcamp.com/album/x",
+                "url_hints": {"subdomain": f"b{iid}"}}
+
+    blob = {
+        "fan_data": {"fan_id": 9985893, "username": "guron",
+                     "trackpipe_url": "https://bandcamp.com/guron"},
+        "item_cache": {"collection": {}, "wishlist": {"1": item(1)}, "following_bands": {}},
+        "collection_data": {"item_count": 0, "last_token": None},
+        "wishlist_data": {"item_count": 3, "last_token": "1782:333:a::"},
+        "following_bands_data": {"last_token": None},
+    }
+    enc = _html.escape(_json.dumps(blob), quote=True)
+    return f'<div id="pagedata" data-blob="{enc}"></div>'
+
+
+async def test_crawl_fan_collection_pages_all_wishlist(session: AsyncSession) -> None:
+    # 1 wishlist item embedded + a wishlist token; the wishlist XHR adds 2 more.
+    # All become is_wishlist fan_items (is_me), so curation can exclude them.
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_wishlist_token()})
+    extra = [_album_item(9002, "https://x.bandcamp.com/album/w2"),
+             _album_item(9003, "https://x.bandcamp.com/album/w3")]
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, is_me=True,
+        collection_client=FakeCollectionClient(wishlist=extra),
+        follows_client=FakeFollowsClient(),
+    )
+    wished = (await session.execute(
+        select(func.count()).select_from(FanItem).where(FanItem.is_wishlist.is_(True))
+    )).scalar_one()
+    assert wished == 3  # 1 embedded + 2 paged
 
 
 async def test_follows_not_paged_for_other_fans(session: AsyncSession) -> None:

@@ -45,9 +45,11 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   credits** (page renders only; all pagination free-direct).
 - **Pagination = mimic the XHR, not render+scroll.** Two clients POST Bandcamp's public JSON APIs
   directly and page via the returned token; the fan/album page is rendered once for the first page + ids.
-  - `collection_api.CollectionApiClient` → `api/fancollection/1/collection_items`
-    (`{fan_id, older_than_token, count}` → `{items, last_token, more_available}`). Items reuse
-    `parse_collection_item()`.
+  - `collection_api.CollectionApiClient` → `api/fancollection/1/collection_items` **and**
+    `.../wishlist_items` (identical shape; pass `url=WISHLIST_ITEMS_URL`) →
+    `{items, last_token, more_available}`. Items reuse `parse_collection_item()`. For `is_me`,
+    `crawl_fan_collection` pages the **full collection AND the full wishlist** (both embed only the
+    first ~20/page) so curation excludes every owned/wishlisted item.
   - `follows_api.FollowsApiClient` → `api/fancollection/1/following_bands`
     (`{fan_id, older_than_token, count}` → `{followeers[], more_available, last_token}` — note the
     misspelled `followeers` key). The page embeds only the first ~45 follows but a fan can follow

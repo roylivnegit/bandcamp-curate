@@ -20,7 +20,7 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bandcamp.collection_api import CollectionApiClient
+from app.bandcamp.collection_api import WISHLIST_ITEMS_URL, CollectionApiClient
 from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.mapper import ingest_album, ingest_album_supporters, ingest_fan_collection
 from app.bandcamp.parse import parse_album_page, parse_album_supporters, parse_fan_page
@@ -91,13 +91,23 @@ async def crawl_fan_collection(
     fc = parse_fan_page(result.html)
 
     # Page through the remainder of the collection via the XHR API.
+    client = collection_client or CollectionApiClient()
     if fc.more_available and fc.last_token and fc.fan.fan_id:
-        client = collection_client or CollectionApiClient()
         seen = {i.item_id for i in fc.items}
         async for item in client.iter_items(fc.fan.fan_id, fc.last_token):
             if item.item_id not in seen:
                 seen.add(item.item_id)
                 fc.items.append(item)
+
+    # Page through the rest of my wishlist too (is_me only — it gates curation).
+    if is_me and fc.wishlist_more_available and fc.wishlist_last_token and fc.fan.fan_id:
+        seen_w = {i.item_id for i in fc.wishlist}
+        async for item in client.iter_items(
+            fc.fan.fan_id, fc.wishlist_last_token, url=WISHLIST_ITEMS_URL
+        ):
+            if item.item_id not in seen_w:
+                seen_w.add(item.item_id)
+                fc.wishlist.append(item)
 
     # Page through the rest of my follows (only relevant for is_me — they gate curation).
     if is_me and fc.follows_more_available and fc.follows_last_token and fc.fan.fan_id:

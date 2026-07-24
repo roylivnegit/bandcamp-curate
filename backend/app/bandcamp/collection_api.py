@@ -24,6 +24,7 @@ import httpx
 from app.bandcamp.parse import ParsedItem, parse_collection_items_api
 
 COLLECTION_ITEMS_URL = "https://bandcamp.com/api/fancollection/1/collection_items"
+WISHLIST_ITEMS_URL = "https://bandcamp.com/api/fancollection/1/wishlist_items"
 DEFAULT_COUNT = 40
 # A browser-like UA; the API is public but bare clients are sometimes rejected.
 _DEFAULT_HEADERS = {
@@ -37,7 +38,10 @@ _DEFAULT_HEADERS = {
 
 
 class CollectionApiClient:
-    """Pages through the `collection_items` API. Injectable client for testing."""
+    """Pages through a fancollection items API. The `collection_items` and
+    `wishlist_items` endpoints are identical in shape, so one client serves both —
+    pass `url=WISHLIST_ITEMS_URL` to page a wishlist. Injectable for testing.
+    """
 
     def __init__(
         self, client: httpx.AsyncClient | None = None, *, count: int = DEFAULT_COUNT
@@ -46,7 +50,12 @@ class CollectionApiClient:
         self._count = count
 
     async def fetch_page(
-        self, fan_id: int, older_than_token: str, *, count: int | None = None
+        self,
+        fan_id: int,
+        older_than_token: str,
+        *,
+        count: int | None = None,
+        url: str = COLLECTION_ITEMS_URL,
     ) -> tuple[list[ParsedItem], str | None, bool]:
         """Fetch one page → (items, last_token, more_available)."""
         payload = {
@@ -57,7 +66,7 @@ class CollectionApiClient:
         client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
         owns_client = self._client is None
         try:
-            resp = await client.post(COLLECTION_ITEMS_URL, json=payload)
+            resp = await client.post(url, json=payload)
             resp.raise_for_status()
             body = resp.json()
         finally:
@@ -66,14 +75,19 @@ class CollectionApiClient:
         return parse_collection_items_api(body)
 
     async def iter_items(
-        self, fan_id: int, start_token: str, *, max_pages: int = 100
+        self,
+        fan_id: int,
+        start_token: str,
+        *,
+        url: str = COLLECTION_ITEMS_URL,
+        max_pages: int = 100,
     ) -> AsyncIterator[ParsedItem]:
         """Yield every item after `start_token`, following pagination to the end."""
         token: str | None = start_token
         for _ in range(max_pages):
             if not token:
                 return
-            items, last_token, more = await self.fetch_page(fan_id, token)
+            items, last_token, more = await self.fetch_page(fan_id, token, url=url)
             for item in items:
                 yield item
             if not more or not last_token or last_token == token:
