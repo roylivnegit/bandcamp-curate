@@ -84,13 +84,32 @@ async def like(payload: LikeIn, session: AsyncSession = Depends(get_session)) ->
         session.add(
             Like(item_type=item_type, album_id=payload.album_id, track_id=payload.track_id)
         )
-    # Drop it from the current feed immediately.
-    await session.execute(
-        delete(Recommendation).where(
-            Recommendation.album_id == payload.album_id,
-            Recommendation.track_id == payload.track_id,
+    # Drop the whole band from the current feed immediately (curation excludes the
+    # liked item's band, so keep the live feed consistent — not just this one item).
+    if payload.album_id is not None:
+        band_id = (
+            await session.execute(select(Album.band_id).where(Album.id == payload.album_id))
+        ).scalar_one_or_none()
+    else:
+        band_id = (
+            await session.execute(select(Track.band_id).where(Track.id == payload.track_id))
+        ).scalar_one_or_none()
+    if band_id is not None:
+        album_ids = select(Album.id).where(Album.band_id == band_id)
+        track_ids = select(Track.id).where(Track.band_id == band_id)
+        await session.execute(
+            delete(Recommendation).where(
+                Recommendation.album_id.in_(album_ids)
+                | Recommendation.track_id.in_(track_ids)
+            )
         )
-    )
+    else:  # no band — fall back to pruning just the item
+        await session.execute(
+            delete(Recommendation).where(
+                Recommendation.album_id == payload.album_id,
+                Recommendation.track_id == payload.track_id,
+            )
+        )
     await session.commit()
     rows = await _like_rows(session)
     match = next(
@@ -104,10 +123,15 @@ async def like(payload: LikeIn, session: AsyncSession = Depends(get_session)) ->
 
 @router.post("/unlike")
 async def unlike(payload: LikeIn, session: AsyncSession = Depends(get_session)) -> dict:
-    result = await session.execute(
-        delete(Like).where(Like.album_id == payload.album_id, Like.track_id == payload.track_id)
-    )
-    await session.commit()
-    if result.rowcount == 0:
+    existing = (
+        await session.execute(
+            select(Like).where(
+                Like.album_id == payload.album_id, Like.track_id == payload.track_id
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
         raise HTTPException(status_code=404, detail="not liked")
+    await session.delete(existing)
+    await session.commit()
     return {"unliked": True}

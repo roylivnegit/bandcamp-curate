@@ -106,9 +106,12 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   - `GET/POST /api/blacklist` (+ `POST /api/blacklist/{band_id}/unblock`) — block a band (also
     prunes its current recs so the feed updates instantly), list blocked, unblock.
   - `GET/POST /api/likes` (+ `POST /api/likes/unlike`) — **like** an item (♥): a positive
-    dismissal ("I wishlisted/bought/followed it"). Inserts a `likes` row (table + migration `0004`),
-    prunes the item from the feed now, and curation excludes liked items until your next collection
-    crawl reflects the real action. Rec rows carry `album_id`/`track_id`; stats has `liked`.
+    dismissal ("I wishlisted/bought/followed it"). Inserts a `likes` row (table + migration `0004`)
+    and curation excludes the liked item **and its band** — liking one release means you've engaged
+    with that artist, so the whole band drops from the feed (else one-per-band dedup would re-surface
+    it via another release). The like also prunes that band's current recs immediately. Holds until
+    your next collection crawl reflects the real action; unlike brings the band back. Rec rows carry
+    `album_id`/`track_id`; stats has `liked`.
   UI features: stat tiles, All/Albums/Tracks filter, 3-state genre-tag chips (off→include→exclude),
   click a band to filter by that label, **⊘ block** per card, a **Blocked (N)** panel to unblock,
   load-more, Recompute. **Curation now returns one rec per band** (`compute_recommendations(

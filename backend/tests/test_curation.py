@@ -211,14 +211,25 @@ async def test_seed_tags_lists_my_album_genres(session: AsyncSession) -> None:
     assert genres.get("rock") == 1 and genres.get("jazz") == 1
 
 
-async def test_liked_item_excluded(session: AsyncSession) -> None:
+async def test_liked_item_excludes_its_band(session: AsyncSession) -> None:
     await _build_graph(session)
     a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
-    assert a4.id in {s.album_id for s in await compute_recommendations(session)}
+    # A sibling album on the SAME band as a4, owned by a neighbour.
+    a7 = Album(bandcamp_id=7, title="Sibling", band_id=a4.band_id)
+    session.add(a7)
+    await session.flush()
+    f3 = (await session.execute(select(Fan).where(Fan.username == "f3"))).scalar_one()
+    session.add(FanItem(fan_id=f3.id, item_type=ItemType.ALBUM, album_id=a7.id))
+    await session.commit()
 
+    before = {s.album_id for s in await compute_recommendations(session)}
+    assert a4.id in before  # (a7 shares a4's band → deduped to one, but band present)
+
+    # Liking a4 excludes its whole band → neither a4 nor its sibling a7 appear.
     session.add(Like(item_type=str(ItemType.ALBUM), album_id=a4.id))
     await session.commit()
-    assert a4.id not in {s.album_id for s in await compute_recommendations(session)}
+    after = {s.album_id for s in await compute_recommendations(session)}
+    assert a4.id not in after and a7.id not in after
 
 
 async def test_get_me_requires_seed(session: AsyncSession) -> None:

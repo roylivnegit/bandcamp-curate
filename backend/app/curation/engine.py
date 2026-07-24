@@ -109,13 +109,22 @@ async def build_exclusions(session: AsyncSession, me: Fan) -> Exclusions:
     bl_bands = await _scalar_set(
         session, select(Blacklist.band_id).where(Blacklist.active.is_(True))
     )
-    # Liked/acted-on items (positive dismissal).
+    # Liked/acted-on items (positive dismissal). A like excludes the item AND its
+    # band — liking one release of an artist means you've engaged with that artist,
+    # so the whole band drops from the feed (else one-per-band dedup would just
+    # re-surface it via another release).
     liked_albums = await _scalar_set(session, select(Like.album_id))
     liked_tracks = await _scalar_set(session, select(Like.track_id))
+    liked_album_bands = await _scalar_set(
+        session, select(Album.band_id).select_from(Like).join(Album, Album.id == Like.album_id)
+    )
+    liked_track_bands = await _scalar_set(
+        session, select(Track.band_id).select_from(Like).join(Track, Track.id == Like.track_id)
+    )
     return Exclusions(
         album_ids=my_albums | bl_albums | liked_albums,
         track_ids=my_tracks | bl_tracks | liked_tracks,
-        band_ids=followed | bl_bands,
+        band_ids=followed | bl_bands | liked_album_bands | liked_track_bands,
         band_hosts=band_hosts,
     )
 
