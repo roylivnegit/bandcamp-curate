@@ -210,61 +210,13 @@ def parse_fan_page(page_html: str) -> FanCollection:
 
 
 def parse_collection_items_api(payload: dict) -> tuple[list[ParsedItem], str | None, bool]:
-    """Parse a `collection_items` API response → (items, last_token, more_available)."""
+    """Parse a `collection_items` API response → (items, last_token, more_available).
+
+    Handles both the fan-page cache values and the `collection_items` XHR body — the
+    item objects share the same shape (see `app.bandcamp.collection_api`).
+    """
     items = [parse_collection_item(o) for o in payload.get("items", [])]
     return items, payload.get("last_token"), bool(payload.get("more_available"))
-
-
-def _iter_collection_payloads(node: object) -> "list[dict]":
-    """Recursively find `collection_items`-shaped dicts anywhere in a capture tree.
-
-    Nimble's `network_capture` nests intercepted XHR bodies at an unstable depth, and
-    a body may arrive as a dict or as a JSON string. We locate any object that looks
-    like a `collection_items` response (an `items` list plus a `last_token`), so the
-    parser is robust to the exact wrapper shape (which we haven't pinned to a live
-    sample yet).
-    """
-    found: list[dict] = []
-    if isinstance(node, str):
-        stripped = node.strip()
-        if stripped.startswith("{") and ("collection_items" in node or '"items"' in node):
-            try:
-                found.extend(_iter_collection_payloads(json.loads(stripped)))
-            except (ValueError, TypeError):
-                pass
-    elif isinstance(node, dict):
-        if isinstance(node.get("items"), list) and (
-            "last_token" in node or "more_available" in node
-        ):
-            found.append(node)
-        for v in node.values():
-            found.extend(_iter_collection_payloads(v))
-    elif isinstance(node, list):
-        for v in node:
-            found.extend(_iter_collection_payloads(v))
-    return found
-
-
-def parse_collection_items_capture(
-    data: dict,
-) -> tuple[list[ParsedItem], str | None, bool]:
-    """Parse `collection_items` XHR bodies out of a Nimble capture `data` payload.
-
-    Scans `data["network_capture"]` for intercepted collection-API responses and
-    flattens them into (items, last_token, more_available). `last_token` is taken
-    from the deepest page seen so pagination can continue from it.
-    """
-    payloads = _iter_collection_payloads(data.get("network_capture"))
-    items: list[ParsedItem] = []
-    last_token: str | None = None
-    more = False
-    for p in payloads:
-        page_items, token, page_more = parse_collection_items_api(p)
-        items.extend(page_items)
-        if token:
-            last_token = token
-        more = more or page_more
-    return items, last_token, more
 
 
 def parse_album_page(page_html: str) -> ParsedAlbum:

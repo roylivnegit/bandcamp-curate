@@ -1,10 +1,13 @@
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import httpx
 import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.bandcamp.collection_api import CollectionApiClient
+from app.bandcamp.parse import ParsedBand, ParsedItem
 from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
 from app.crawl.service import crawl_album, crawl_fan_collection
@@ -35,6 +38,27 @@ class FakeFetcher:
                     url=request.url, provider="fake", status_code=200, ok=True, html=html
                 )
         raise AssertionError(f"no fake route for {request.url}")
+
+
+class FakeCollectionClient:
+    """Stands in for the collection_items XHR — yields preset extra items."""
+
+    def __init__(self, items: list[ParsedItem] | None = None) -> None:
+        self._items = items or []
+
+    async def iter_items(
+        self, fan_id: int, start_token: str, *, max_pages: int = 100
+    ) -> AsyncIterator[ParsedItem]:
+        for item in self._items:
+            yield item
+
+
+def _album_item(item_id: int, url: str) -> ParsedItem:
+    return ParsedItem(
+        item_id=item_id, item_type="album",
+        band=ParsedBand(bandcamp_id=item_id + 1, name="Paged Band"),
+        title="Paged Album", url=url,
+    )
 
 
 @pytest_asyncio.fixture
@@ -90,17 +114,55 @@ async def test_crawl_fan_collection_ingests_and_enqueues_albums(
     session: AsyncSession,
 ) -> None:
     fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
-    outcome = await crawl_fan_collection(session, fetcher, SEED_URL, is_me=True)
+    # The XHR pagination yields one more owned album beyond the embedded first page.
+    paged = _album_item(555001, "https://paged.bandcamp.com/album/extra")
+    client = FakeCollectionClient([paged])
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL, is_me=True, collection_client=client
+    )
 
-    assert outcome.items == 2  # one album + one track owned
-    assert await _count(session, FanItem) == 2
-    # The owned album should now be queued as an ALBUM crawl.
+    assert outcome.items == 3  # 2 embedded (album+track) + 1 paged album
+    assert await _count(session, FanItem) == 3
+    # Both owned albums (embedded + paged) should now be queued as ALBUM crawls.
     albums = (
         await session.execute(
             select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.ALBUM)
         )
     ).scalars().all()
-    assert len(albums) == outcome.enqueued >= 1
+    assert len(albums) == outcome.enqueued >= 2
+    assert "https://paged.bandcamp.com/album/extra" in {a.url for a in albums}
+
+
+async def test_collection_api_client_paginates_and_stops() -> None:
+    # Two pages of the collection_items XHR; the client should follow last_token
+    # until more_available is false, and send the right POST body each time.
+    seen_bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        body = _json.loads(request.content)
+        seen_bodies.append(body)
+        if body["older_than_token"] == "tok0":
+            return httpx.Response(200, json={
+                "items": [{"item_id": 1, "item_type": "album", "band_id": 10,
+                           "item_title": "A", "item_url": "https://a/album/a"}],
+                "last_token": "tok1", "more_available": True,
+            })
+        return httpx.Response(200, json={
+            "items": [{"item_id": 2, "item_type": "album", "band_id": 20,
+                       "item_title": "B", "item_url": "https://b/album/b"}],
+            "last_token": "tok2", "more_available": False,
+        })
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = CollectionApiClient(http, count=40)
+        items = [i async for i in client.iter_items(9985893, "tok0")]
+
+    assert [i.item_id for i in items] == [1, 2]
+    assert [b["older_than_token"] for b in seen_bodies] == ["tok0", "tok1"]
+    assert all(b["fan_id"] == 9985893 and b["count"] == 40 for b in seen_bodies)
 
 
 async def test_crawl_album_ingests_supporters_and_enqueues_them(
@@ -141,7 +203,8 @@ async def test_runner_walks_the_graph(
     # Bound iterations: guron's collection routes to panchito; the other supporter
     # fan pages have no fake route, so those entries error out and the walk stops.
     outcomes = await runner.run_until_empty(
-        sessionmaker_, fetcher, seed_url=SEED_URL, max_iterations=25
+        sessionmaker_, fetcher, seed_url=SEED_URL,
+        collection_client=FakeCollectionClient(), max_iterations=25,
     )
 
     kinds = [o.kind for o in outcomes]

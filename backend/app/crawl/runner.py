@@ -10,6 +10,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.bandcamp.collection_api import CollectionApiClient
 from app.crawl import frontier
 from app.crawl.service import CrawlOutcome, Fetcher, crawl_album, crawl_fan_collection
 from app.db.models import CrawlFrontier
@@ -24,11 +25,14 @@ async def process_entry(
     entry: CrawlFrontier,
     *,
     seed_url: str | None = None,
+    collection_client: CollectionApiClient | None = None,
 ) -> CrawlOutcome:
     """Run one already-claimed frontier entry by kind. Raises on failure."""
     if entry.kind == CrawlKind.FAN_COLLECTION:
         return await crawl_fan_collection(
-            session, fetcher, entry.url, is_me=(entry.url == seed_url)
+            session, fetcher, entry.url,
+            is_me=(entry.url == seed_url),
+            collection_client=collection_client,
         )
     if entry.kind == CrawlKind.ALBUM:
         return await crawl_album(session, fetcher, entry.url)
@@ -40,6 +44,7 @@ async def process_one(
     fetcher: Fetcher,
     *,
     seed_url: str | None = None,
+    collection_client: CollectionApiClient | None = None,
 ) -> CrawlOutcome | None:
     """Claim and process a single frontier entry. Returns None if none pending."""
     entry = await frontier.claim_next(session)
@@ -49,7 +54,10 @@ async def process_one(
     # re-reading an attribute would trigger an illegal async lazy-load.
     entry_id, url, kind = entry.id, entry.url, entry.kind
     try:
-        outcome = await process_entry(session, fetcher, entry, seed_url=seed_url)
+        outcome = await process_entry(
+            session, fetcher, entry, seed_url=seed_url,
+            collection_client=collection_client,
+        )
     except Exception as exc:  # noqa: BLE001 — record and move on; crawl is resumable
         await session.rollback()
         reloaded = await frontier.get_by_id(session, entry_id)
@@ -71,6 +79,7 @@ async def run_until_empty(
     fetcher: Fetcher,
     *,
     seed_url: str | None = None,
+    collection_client: CollectionApiClient | None = None,
     max_iterations: int = 1000,
 ) -> list[CrawlOutcome]:
     """Process frontier entries until it drains or `max_iterations` is reached."""
@@ -78,7 +87,10 @@ async def run_until_empty(
     for _ in range(max_iterations):
         async with sessionmaker() as session:
             try:
-                outcome = await process_one(session, fetcher, seed_url=seed_url)
+                outcome = await process_one(
+                    session, fetcher, seed_url=seed_url,
+                    collection_client=collection_client,
+                )
             except Exception:  # noqa: BLE001 — already recorded; keep draining
                 continue
         if outcome is None:

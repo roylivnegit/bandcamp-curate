@@ -18,6 +18,7 @@ from typing import Any
 
 from arq.connections import RedisSettings
 
+from app.bandcamp.collection_api import CollectionApiClient
 from app.config import get_settings
 from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
@@ -32,6 +33,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["settings"] = settings
     ctx["sessionmaker"] = get_sessionmaker()
     ctx["gateway"] = build_gateway(settings, sessionmaker=ctx["sessionmaker"])
+    ctx["collection_client"] = CollectionApiClient()
     ctx["seed_url"] = settings.bandcamp_fan_url
 
 
@@ -49,7 +51,8 @@ async def crawl_next(ctx: dict[str, Any]) -> bool:
     async with ctx["sessionmaker"]() as session:
         try:
             outcome = await runner.process_one(
-                session, ctx["gateway"], seed_url=ctx.get("seed_url")
+                session, ctx["gateway"], seed_url=ctx.get("seed_url"),
+                collection_client=ctx.get("collection_client"),
             )
         except Exception:  # noqa: BLE001 — already recorded on the frontier
             outcome = None

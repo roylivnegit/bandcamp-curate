@@ -20,13 +20,9 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bandcamp.collection_api import CollectionApiClient
 from app.bandcamp.mapper import ingest_album, ingest_album_supporters, ingest_fan_collection
-from app.bandcamp.parse import (
-    parse_album_page,
-    parse_album_supporters,
-    parse_collection_items_capture,
-    parse_fan_page,
-)
+from app.bandcamp.parse import parse_album_page, parse_album_supporters, parse_fan_page
 from app.crawl.frontier import enqueue
 from app.db.models import Album
 from app.enums import CrawlKind
@@ -48,21 +44,14 @@ class CrawlOutcome:
 
 
 def fan_collection_request(url: str) -> FetchRequest:
-    """Render the fan page and capture the paginated `collection_items` XHRs.
+    """Plain render of the fan page — just enough to read the embedded blob.
 
-    Uses the confirmed v2 shapes: `network_capture` filters wrap under `filter`,
-    and `browser_actions` key each step by its action name. Auto-scroll makes the
-    deeper collection pages fire so the capture accumulates them.
+    The blob carries the fan_id, the first page of owned items, and the pagination
+    `last_token`. The rest of the collection is fetched by mimicking the
+    `collection_items` XHR directly (see `CollectionApiClient`) rather than
+    auto-scrolling the rendered page.
     """
-    return FetchRequest(
-        url=url,
-        parser_name="fan_collection",
-        render=True,
-        network_capture=[
-            {"filter": {"url": {"type": "contains", "value": "collection_items"}}}
-        ],
-        browser_actions=[{"auto_scroll": True}, {"wait": 2000}],
-    )
+    return FetchRequest(url=url, parser_name="fan_collection", render=True)
 
 
 def album_request(url: str) -> FetchRequest:
@@ -75,19 +64,24 @@ async def crawl_fan_collection(
     url: str,
     *,
     is_me: bool = False,
+    collection_client: CollectionApiClient | None = None,
 ) -> CrawlOutcome:
-    """Fetch a fan page, ingest their collection, and enqueue each owned album."""
+    """Fetch a fan page, ingest their whole collection, and enqueue each owned album.
+
+    The rendered page gives the first page + fan_id + pagination token; the rest is
+    pulled by mimicking the `collection_items` XHR (deterministic, no auto-scroll).
+    """
     result = await fetcher.fetch(fan_collection_request(url))
     if not result.html:
         raise ValueError(f"no HTML returned for fan page {url}")
 
     fc = parse_fan_page(result.html)
 
-    # Fold in any deeper collection pages captured from the pagination XHRs.
-    if result.raw:
-        captured, _token, _more = parse_collection_items_capture(result.raw)
+    # Page through the remainder of the collection via the XHR API.
+    if fc.more_available and fc.last_token and fc.fan.fan_id:
+        client = collection_client or CollectionApiClient()
         seen = {i.item_id for i in fc.items}
-        for item in captured:
+        async for item in client.iter_items(fc.fan.fan_id, fc.last_token):
             if item.item_id not in seen:
                 seen.add(item.item_id)
                 fc.items.append(item)

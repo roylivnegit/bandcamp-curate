@@ -39,27 +39,36 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   `crawl_album`→ingest supporters, enqueue their collections) + `runner` (Redis-free driver) +
   `seed`. `app/worker.py` = ARQ adaptor (`seed_crawl`/`crawl_next` self-perpetuating chain).
   `scripts/crawl.py` = in-process CLI (`seed`/`run`/`status`). All crawl logic unit-tested with a
-  fake fetcher over the fixtures (no credits). **Not yet run against live infra** (needs
-  Postgres+Redis; collection_items pagination capture parser is written but unverified vs a real
-  Nimble `network_capture` sample — see below).
+  fake fetcher over the fixtures (no credits). **Not yet run against live infra** (needs Postgres+Redis).
+- **Collection pagination = mimic the XHR, not render+scroll.** `app/bandcamp/collection_api.py`
+  (`CollectionApiClient`) POSTs Bandcamp's public `api/fancollection/1/collection_items`
+  (`{fan_id, older_than_token, count}` → `{items, last_token, more_available}`) directly and
+  pages via `last_token`. The fan page is rendered once (for fan_id + first page + token); the
+  rest comes from the API. Items share the shape `parse_collection_item()` already handles.
+  Endpoint is public/no-auth; direct httpx now, swap transport to route via Nimble if IP-throttled.
 - **M4–M6** pending (curation, API+UI, deploy).
 
 ## Immediate next steps
 1. Stand up Postgres+Redis (docker-compose), `alembic upgrade head`, then
    `python -m scripts.crawl seed && python -m scripts.crawl run 3` for a live smoke test.
-2. Verify `collection_items` pagination: one live fan-page fetch with `render + auto_scroll +
-   network_capture(collection_items)` (correct v2 shapes now in `fan_collection_request()` /
-   `dump_extract.py`), then confirm `parse_collection_items_capture()` finds the XHR bodies in
-   the real `network_capture` shape (currently parsed defensively; no live sample yet — all prior
-   capture attempts returned 0 groups).
-3. Add crawl bounds (depth/budget caps) before a wide run — the frontier only dedups by
+2. Live-verify one `collection_items` POST against the real API (confirm body/`last_token`/
+   `more_available` field names for `guron`'s fan_id) — the client is unit-tested vs a
+   `MockTransport` but hasn't hit Bandcamp yet.
+3. Supporter deep-pagination: the album's `#collectors-data` blob gives the first page +
+   `more_thumbs_available` + a `token`; add the analogous thumbs-XHR client (needs one live
+   sample to confirm the endpoint/shape).
+4. Add crawl bounds (depth/budget caps) before a wide run — the frontier only dedups by
    (url,kind); it doesn't yet cap fan-out.
 
-## Open decision (flag to the user)
-The plan chose Nimble **server-side parsit-ai** parsing, but the data turned out to be clean
-embedded JSON and the exact v2 `parser` def format is unconfirmed (would cost credits to
-iterate). We're parsing **locally** instead (free, robust). Swapping to parsit-ai later is a
-thin adapter. Confirm this is acceptable or revisit.
+## Open decision — RESOLVED (2026-07-24)
+Earlier flagged: local Python parsing vs Nimble server-side parsing, with the v2 parser def
+format "unconfirmed." **It's confirmed now** — the `parser-builder` skill (imported to
+`~/.claude/skills/parser-builder/`) documents the exact format offline (no credits to iterate):
+`json` selectors + `coercion_filter` parse the JSON-encoded `data-tralbum`/`data-band` attrs and
+auto-parse `network_capture` XHR bodies. So server-side parsing is a viable, unblocked option.
+**We're keeping local parsing** (built, tested, free of parse credits, full control); server-side
+is a thin adapter behind the same provider seam if we ever want to offload it. User confirmed the
+Nimble parser can parse JSON and to prefer mimicking XHRs over render+scroll (both reflected above).
 
 ## Dev workflow
 - Secrets live only in gitignored `.env` (`NIMBLE_API_KEY` as raw token — code adds `Bearer `;
@@ -71,7 +80,7 @@ thin adapter. Confirm this is acceptable or revisit.
   cd backend
   python3 -m venv .venv && . .venv/bin/activate   # 3.12+; this box has 3.14 only
   pip install -e ".[dev]" aiosqlite
-  pytest -q                                        # 39 tests as of M3 start
+  pytest -q                                        # 38 tests as of M3 start
   ```
   The `.env` lives at the **repo root** (not `backend/`); config reads it via env vars, so
   `set -a && . ../.env && set +a` before running scripts that need the Nimble key.

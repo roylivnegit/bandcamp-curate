@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from app.bandcamp.parse import (
@@ -7,7 +6,6 @@ from app.bandcamp.parse import (
     parse_album_page,
     parse_album_supporters,
     parse_collection_items_api,
-    parse_collection_items_capture,
     parse_fan_page,
 )
 
@@ -135,44 +133,3 @@ def test_parse_album_supporters_dom_fallback() -> None:
     assert [s.username for s in sup.supporters] == ["alice", "bob"]  # de-duped
     assert sup.supporters[0].fan_id is None
     assert sup.more_available is False
-
-
-def _item(item_id: int, band_id: int) -> dict:
-    return {
-        "item_id": item_id,
-        "item_type": "album",
-        "band_id": band_id,
-        "band_name": "B",
-        "item_title": "T",
-        "item_url": "https://b.bandcamp.com/album/t",
-        "url_hints": {"subdomain": "b"},
-    }
-
-
-def test_parse_collection_items_capture_flattens_pages() -> None:
-    # Nimble nests intercepted XHR bodies at an unstable depth; one arrives as a
-    # dict, one as a JSON string. Both should be found and flattened.
-    page2 = json.dumps(
-        {"items": [_item(2, 20)], "last_token": "tok2", "more_available": False}
-    )
-    data = {
-        "network_capture": [
-            {
-                "filter": {"url": {"value": "collection_items"}},
-                "results": [
-                    {"body": {"items": [_item(1, 10)], "last_token": "tok1",
-                              "more_available": True}},
-                    {"body": page2},
-                ],
-            }
-        ]
-    }
-    items, last_token, more = parse_collection_items_capture(data)
-    assert sorted(i.item_id for i in items) == [1, 2]
-    assert last_token in {"tok1", "tok2"}
-    assert more is True  # any page reporting more → more
-
-
-def test_parse_collection_items_capture_empty() -> None:
-    items, last_token, more = parse_collection_items_capture({"html": "<html/>"})
-    assert items == [] and last_token is None and more is False
