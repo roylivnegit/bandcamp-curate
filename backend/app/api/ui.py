@@ -296,6 +296,7 @@ _PAGE = """<!doctype html>
 const $=s=>document.querySelector(s);
 const feed=$('#feed'), moreBtn=$('#more'), emptyEl=$('#empty');
 const LIMIT=50;
+const POLL_MS=4000;         // scan status poll interval
 let type='', sort='score', offset=0, loading=false;
 let scanId=null;            // the scan whose feed is open (null = scan list)
 let pollTimer=null;         // status polling handle
@@ -315,11 +316,12 @@ async function showScans(){
   scanId=null; clearTimeout(pollTimer);
   $('#feedView').style.display='none'; $('#scansView').style.display='block'; $('#scanForm').style.display='none';
   const scans=await (await fetch('/api/scans')).json();
+  if(scanId!==null) return;   // user opened a scan mid-fetch - don't yank them back
   $('#scansEmpty').style.display = scans.length ? 'none' : 'block';
   $('#scanCards').innerHTML = scans.map(scanCard).join('') +
     '<div class="newcard" id="newCard">＋  New scan from album URLs</div>';
   const active=scans.some(s=>s.status==='queued'||s.status==='running');
-  if(active) pollTimer=setTimeout(showScans, 4000);   // live-refresh while work runs
+  if(active) pollTimer=setTimeout(showScans, POLL_MS);   // live-refresh while work runs
 }
 function scanCard(s){
   const st=esc(s.status), coll=s.kind==='collection';
@@ -355,11 +357,14 @@ function addSeed(){ const u=$('#seedUrl').value.trim(); if(u){ seeds.push(u); $(
 $('#addSeed').addEventListener('click',addSeed);
 $('#seedUrl').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addSeed(); } });
 $('#seedList').addEventListener('click',e=>{ const r=e.target.closest('[data-seed]'); if(r){ seeds.splice(+r.dataset.seed,1); renderSeeds(); } });
-$('#createScan').addEventListener('click',async()=>{
+$('#createScan').addEventListener('click',async e=>{
+  const btn=e.currentTarget; if(btn.disabled) return; btn.disabled=true;   // guard double-submit
   const name=$('#scanName').value.trim(); $('#scanErr').textContent='';
-  const r=await fetch('/api/scans',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,seeds})});
-  if(r.ok){ $('#scanForm').style.display='none'; showScans(); }
-  else{ let d={}; try{ d=await r.json(); }catch{} $('#scanErr').textContent = d.detail || 'Could not create scan'; }
+  try{
+    const r=await fetch('/api/scans',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,seeds})});
+    if(r.ok){ $('#scanForm').style.display='none'; showScans(); }
+    else{ let d={}; try{ d=await r.json(); }catch{} $('#scanErr').textContent = d.detail || 'Could not create scan'; }
+  } finally { btn.disabled=false; }
 });
 
 // ══ open a scan's feed ══
@@ -381,7 +386,7 @@ async function openScan(id, name, kind, status){
   $('#scanTitle').innerHTML = esc(name)+(kind==='custom'?' <span class="ktag">custom</span>':' <span class="ktag">collection</span>');
   resetFilters(); feed.innerHTML=''; $('#count').innerHTML='';
   loadBlocked(); loadLiked();
-  if(status!=='done'){ showBanner(status); pollTimer=setTimeout(()=>pollScan(id), 4000); return; }
+  if(status!=='done'){ showBanner(status); pollTimer=setTimeout(()=>pollScan(id), POLL_MS); return; }
   showBanner('done'); loadFacets(); loadPage(true);
 }
 async function pollScan(id){
@@ -389,7 +394,7 @@ async function pollScan(id){
   if(scanId!==id) return;                          // navigated away
   if(s.status==='done'){ showBanner('done'); loadFacets(); loadPage(true); }
   else if(s.status==='error'){ showBanner('error', s.error); }
-  else{ showBanner(s.status); pollTimer=setTimeout(()=>pollScan(id), 4000); }
+  else{ showBanner(s.status); pollTimer=setTimeout(()=>pollScan(id), POLL_MS); }
 }
 $('#backScans').addEventListener('click',showScans);
 
