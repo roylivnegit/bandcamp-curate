@@ -187,6 +187,25 @@ async def test_multi_tag_filter_is_AND(client: AsyncClient) -> None:
     assert (await client.get("/api/recommendations/count?tag=rock&tag=metal")).json()["count"] == 0
 
 
+async def test_tag_contains_filter(client: AsyncClient) -> None:
+    async def get_titles(qs: str) -> set[str]:
+        return {r["title"] for r in (await client.get("/api/recommendations" + qs)).json()}
+
+    # substring match, case-insensitive, against the "rock"/"jazz" tags on "Recommend Me".
+    assert "Recommend Me" in await get_titles("?tag_contains=roc")
+    assert "Recommend Me" in await get_titles("?tag_contains=ROC")
+    assert "Recommend Me" not in await get_titles("?tag_contains=xyz")
+    # AND across multiple substrings, like the exact-tag filter.
+    assert "Recommend Me" in await get_titles("?tag_contains=roc&tag_contains=jaz")
+    assert "Recommend Me" not in await get_titles("?tag_contains=roc&tag_contains=xyz")
+    # exclude = drop if ANY excluded substring matches.
+    assert "Recommend Me" not in await get_titles("?exclude_tag_contains=roc")
+    assert "Recommend Me" in await get_titles("?exclude_tag_contains=xyz")
+    # count endpoint uses the same logic
+    assert (await client.get("/api/recommendations/count?tag_contains=roc")).json()["count"] >= 1
+    assert (await client.get("/api/recommendations/count?tag_contains=xyz")).json()["count"] == 0
+
+
 async def test_recommendations_count_matches_filters(client: AsyncClient) -> None:
     total = (await client.get("/api/recommendations/count")).json()["count"]
     rows = (await client.get("/api/recommendations?limit=200")).json()

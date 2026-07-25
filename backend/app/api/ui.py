@@ -280,6 +280,13 @@ _PAGE = """<!doctype html>
         </div>
       </div>
     </div>
+    <div class="dd" id="likeDd">
+      <button class="btn ghost" id="likeBtn">＋ Tag contains</button>
+      <div class="ddpanel compact" id="likePanel" style="display:none">
+        <input class="ddsearch" id="likeInput" placeholder="e.g. psy — press Enter to add" autocomplete="off"/>
+        <div class="ddfoot"><span class="hint">Matches any tag containing this text. Toggle a pill below to include/exclude.</span></div>
+      </div>
+    </div>
   </div>
   <div class="active" id="active"></div>
   <div class="panel" id="likedPanel" style="display:none"></div>
@@ -301,6 +308,7 @@ let type='', sort='score', offset=0, loading=false;
 let scanId=null;            // the scan whose feed is open (null = scan list)
 let pollTimer=null;         // status polling handle
 const tagState={};          // committed tag filters: tag -> 'by' | 'out'
+const tagLikeState={};      // committed substring tag filters: text -> 'by' | 'out'
 let pendingTags=new Set();  // genre-dropdown working set; committed on Save
 let labelFilter=null;       // {id, name}
 let facetTags=[];           // [{value,label,count}] genres present in current recs
@@ -370,8 +378,9 @@ $('#createScan').addEventListener('click',async e=>{
 // ══ open a scan's feed ══
 function resetFilters(){ type=''; sort='score'; offset=0; labelFilter=null;
   for(const k in tagState) delete tagState[k];
+  for(const k in tagLikeState) delete tagLikeState[k];
   $('#filter').querySelectorAll('button').forEach((b,i)=>b.classList.toggle('on',i===0));
-  renderSortLabel(); renderActive(); }
+  renderSortLabel(); updateGenreBtn(); updateLikeBtn(); renderActive(); }
 function showBanner(status, err){
   const el=$('#scanBanner');
   if(status==='done'){ el.style.display='none'; return; }
@@ -404,6 +413,7 @@ function filterParams(){
   if(scanId!=null) q.set('scan_id',scanId);
   if(type) q.set('item_type',type);
   for(const [t,m] of Object.entries(tagState)){ if(m==='by') q.append('tag',t); else if(m==='out') q.append('exclude_tag',t); }
+  for(const [t,m] of Object.entries(tagLikeState)){ if(m==='by') q.append('tag_contains',t); else if(m==='out') q.append('exclude_tag_contains',t); }
   if(labelFilter) q.set('label_id', labelFilter.id);
   return q;
 }
@@ -420,6 +430,7 @@ async function loadFacets(){
   renderGenreList($('#genreSearch').value||''); updateGenreBtn();
 }
 function updateGenreBtn(){ const n=Object.keys(tagState).length; $('#genreBtn').textContent = n ? `Genres (${n}) ▾` : '＋ Genre filter'; }
+function updateLikeBtn(){ const n=Object.keys(tagLikeState).length; $('#likeBtn').textContent = n ? `Contains (${n}) ▾` : '＋ Tag contains'; }
 function renderGenreList(q){
   q=(q||'').trim().toLowerCase();
   const rows = facetTags.filter(t=>t.label.toLowerCase().includes(q));
@@ -443,6 +454,8 @@ function renderActive(){
   const bits=[];
   for(const [t,m] of Object.entries(tagState))
     bits.push(`<span class="fpill ${m==='out'?'out':''}"><span class="tog" data-tog="${esc(t)}" title="click to switch include / exclude">${m==='out'?'⊘ exclude':'✓ include'}: <b>${esc(t)}</b></span><span class="rm" data-rmtag="${esc(t)}" title="remove">×</span></span>`);
+  for(const [t,m] of Object.entries(tagLikeState))
+    bits.push(`<span class="fpill ${m==='out'?'out':''}"><span class="tog" data-togl="${esc(t)}" title="click to switch include / exclude">${m==='out'?'⊘ exclude':'✓ include'}: <b>~${esc(t)}</b></span><span class="rm" data-rmtagl="${esc(t)}" title="remove">×</span></span>`);
   if(labelFilter) bits.push(`<span class="fpill"><span class="tog">label: <b>${esc(labelFilter.name)}</b></span><span class="rm" data-clear-label="1" title="remove">×</span></span>`);
   $('#active').innerHTML=bits.join('');
 }
@@ -476,7 +489,7 @@ async function loadPage(reset){
   moreBtn.style.display=(rows.length===LIMIT)?'block':'none';
   loading=false; moreBtn.disabled=false;
 }
-function refresh(){ renderGenreList($('#genreSearch').value||''); updateGenreBtn(); renderActive(); loadPage(true); }
+function refresh(){ renderGenreList($('#genreSearch').value||''); updateGenreBtn(); updateLikeBtn(); renderActive(); loadPage(true); }
 
 // ── feed events ──
 $('#filter').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
@@ -497,15 +510,24 @@ $('#genreList').addEventListener('click',e=>{ const r=e.target.closest('.ddrow')
 $('#genreSave').addEventListener('click',e=>{ e.stopPropagation(); saveGenres(); });
 $('#genreClear').addEventListener('click',e=>{ e.stopPropagation();
   pendingTags.clear(); renderGenreList($('#genreSearch').value||''); updateSaveBtn(); });
+$('#likeBtn').addEventListener('click',e=>{ e.stopPropagation(); const p=$('#likePanel');
+  if(p.style.display==='none'){ p.style.display='block'; $('#likeInput').value=''; $('#likeInput').focus(); } else p.style.display='none'; });
+$('#likeInput').addEventListener('keydown',e=>{ if(e.key!=='Enter') return; e.preventDefault();
+  const v=e.target.value.trim().toLowerCase();
+  if(v && tagLikeState[v]===undefined){ tagLikeState[v]='by'; e.target.value=''; refresh(); } });
 document.addEventListener('click',e=>{
   if(!e.target.closest('#genreDd')) $('#genrePanel').style.display='none';
   if(!e.target.closest('#sortDd')) $('#sortPanel').style.display='none';
+  if(!e.target.closest('#likeDd')) $('#likePanel').style.display='none';
 });
 $('#active').addEventListener('click',e=>{
-  const rm=e.target.closest('[data-rmtag]'); const cl=e.target.closest('[data-clear-label]'); const tog=e.target.closest('[data-tog]');
+  const rm=e.target.closest('[data-rmtag]'); const rml=e.target.closest('[data-rmtagl]');
+  const cl=e.target.closest('[data-clear-label]'); const tog=e.target.closest('[data-tog]'); const togl=e.target.closest('[data-togl]');
   if(rm){ delete tagState[rm.dataset.rmtag]; refresh(); return; }
+  if(rml){ delete tagLikeState[rml.dataset.rmtagl]; refresh(); return; }
   if(cl){ labelFilter=null; refresh(); return; }
-  if(tog){ const t=tog.dataset.tog; if(t){ tagState[t]= tagState[t]==='out'?'by':'out'; refresh(); } }});
+  if(tog){ const t=tog.dataset.tog; if(t){ tagState[t]= tagState[t]==='out'?'by':'out'; refresh(); } return; }
+  if(togl){ const t=togl.dataset.togl; if(t){ tagLikeState[t]= tagLikeState[t]==='out'?'by':'out'; refresh(); } }});
 feed.addEventListener('click',async e=>{
   const tag=e.target.closest('.chip.tag'); if(tag){ tagState[tag.dataset.tag]='by'; refresh(); return; }
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
