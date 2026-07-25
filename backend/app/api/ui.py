@@ -28,27 +28,21 @@ _PAGE = """<!doctype html>
   h1 { margin:0; font-size:26px; letter-spacing:-.02em; }
   h1 .dot { color:var(--accent); }
   .sub { color:var(--muted); margin-top:4px; font-size:13px; }
-  .stats { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
-  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px;
-    padding:8px 12px; font-size:12px; color:var(--muted); }
-  .stat b { color:var(--text); font-size:15px; display:block; }
-  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:16px; }
   .seg { display:flex; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
   .seg button { background:none; border:0; color:var(--muted); padding:7px 14px; cursor:pointer; font-size:13px; }
   .seg button.on { background:var(--panel2); color:var(--accent); }
+  .sortsel { background:var(--panel); border:1px solid var(--line); color:var(--text);
+    border-radius:10px; padding:7px 12px; font-size:13px; cursor:pointer; }
+  .sortsel:focus { outline:none; border-color:var(--accent); }
   .spacer { flex:1; }
   .btn { background:var(--accent); color:#06231e; border:0; border-radius:10px;
     padding:8px 14px; font-weight:600; cursor:pointer; font-size:13px; }
   .btn.ghost { background:var(--panel); color:var(--muted); border:1px solid var(--line); }
+  /* active toggle state for the Liked / Blocked panel buttons */
+  .btn.ghost.on { background:var(--panel2); color:var(--accent); border-color:var(--accent); }
   .btn:disabled { opacity:.5; cursor:default; }
   .hint { color:var(--muted); font-size:12px; margin:12px 0 4px; }
-  .tagbar { display:flex; gap:6px; overflow-x:auto; padding:6px 0 2px; }
-  .tagbar::-webkit-scrollbar { height:6px; } .tagbar::-webkit-scrollbar-thumb { background:var(--line); border-radius:3px; }
-  .tchip { white-space:nowrap; background:var(--panel); border:1px solid var(--line); color:var(--muted);
-    border-radius:999px; padding:4px 11px; font-size:12px; cursor:pointer; }
-  .tchip.by { border-color:var(--accent); color:var(--accent); }
-  .tchip.out { border-color:var(--danger); color:var(--danger); text-decoration:line-through; }
-  .tchip .n { opacity:.6; margin-left:4px; }
   /* genre dropdown (searchable, count-ordered) */
   .genrebar { display:flex; align-items:center; gap:10px; margin-top:10px; flex-wrap:wrap; }
   .dd { position:relative; }
@@ -73,6 +67,7 @@ _PAGE = """<!doctype html>
   .fpill { font-size:12px; background:var(--panel2); border:1px solid var(--line); border-radius:999px;
     padding:3px 4px 3px 9px; color:var(--text); display:inline-flex; align-items:center; gap:6px; }
   .fpill .tog { cursor:pointer; } .fpill b { color:var(--accent); } .fpill.out b { color:var(--danger); }
+  .fpill.out .tog { color:var(--danger); }
   .fpill .rm { cursor:pointer; padding:0 5px; border-radius:999px; color:var(--muted); }
   .fpill .rm:hover { background:var(--line); color:var(--text); }
   main { margin:12px 0 60px; }
@@ -88,6 +83,8 @@ _PAGE = """<!doctype html>
     color:var(--accent2); border:1px solid var(--line); border-radius:6px; padding:1px 5px; margin-left:8px; }
   .band { color:var(--muted); font-size:13px; margin-top:2px; cursor:pointer; }
   .band:hover { color:var(--accent); text-decoration:underline; }
+  .band .handle { color:var(--accent2); opacity:.85; }
+  .band .handle::before { content:"·"; margin:0 5px; color:var(--muted); }
   .meta { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
   .chip { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:2px 9px; color:var(--text); }
   .chip.tag { color:var(--accent); cursor:pointer; }
@@ -114,7 +111,6 @@ _PAGE = """<!doctype html>
 <header>
   <h1>crate<span class="dot">·</span>digger</h1>
   <div class="sub">Music your collection's supporters own that you don't — one per artist, ranked.</div>
-  <div class="stats" id="stats"></div>
 </header>
 <div class="controls">
   <div class="seg" id="filter">
@@ -122,6 +118,11 @@ _PAGE = """<!doctype html>
     <button data-t="album">Albums</button>
     <button data-t="track">Tracks</button>
   </div>
+  <select class="sortsel" id="sort" title="how to order the feed">
+    <option value="score">Sort · Top score</option>
+    <option value="neighbours">Sort · Most owners</option>
+    <option value="affinity">Sort · Genre match</option>
+  </select>
   <div class="spacer"></div>
   <button class="btn ghost" id="likedBtn">♥ Liked (0)</button>
   <button class="btn ghost" id="blockedBtn">Blocked (0)</button>
@@ -135,10 +136,9 @@ _PAGE = """<!doctype html>
       <div class="ddlist" id="genreList"></div>
     </div>
   </div>
-  <span class="hint" style="margin:0">pick several — an item must match <b>all</b> selected genres. Click a pill to flip it to exclude.</span>
+  <span class="hint" style="margin:0">Pick genres to narrow the feed — an item must match <b>every included</b> genre.
+  Each choice becomes a pill below: <b>click the pill</b> to switch it between <b>include ✓</b> and <b>exclude ⊘</b>; the <b>×</b> removes it.</span>
 </div>
-<div class="hint" id="seedHint" style="display:none">Hide recs generated from your own <b>seed genres</b> (click to exclude; recomputes):</div>
-<div class="tagbar" id="seedbar"></div>
 <div class="active" id="active"></div>
 <div class="panel" id="likedPanel" style="display:none"></div>
 <div class="panel" id="blockedPanel" style="display:none"></div>
@@ -153,13 +153,14 @@ _PAGE = """<!doctype html>
 const $=s=>document.querySelector(s);
 const feed=$('#feed'), moreBtn=$('#more'), emptyEl=$('#empty');
 const LIMIT=50;
-let type='', offset=0, loading=false;
+let type='', sort='score', offset=0, loading=false;
 const tagState={};          // tag -> 'by' | 'out'
 let labelFilter=null;       // {id, name}
-const seedExclude=new Set();// seed genres to exclude at recompute time
 let facetTags=[];           // [{value,label,count}] genres present in current recs
 
 function esc(s){ return (s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// The bandcamp page handle from a release URL (e.g. digitalshamansrecordsofficial.bandcamp.com → the label/page).
+function bcHandle(url){ try{ const m=new URL(url).hostname.match(/^([^.]+)\\.bandcamp\\.com$/i); return (m&&m[1]!=='www')?m[1]:''; }catch(e){ return ''; } }
 
 function filterParams(){
   const q=new URLSearchParams();
@@ -168,7 +169,7 @@ function filterParams(){
   if(labelFilter) q.set('label_id', labelFilter.id);
   return q;
 }
-function query(){ const q=filterParams(); q.set('limit',LIMIT); q.set('offset',offset); return q; }
+function query(){ const q=filterParams(); q.set('sort',sort); q.set('limit',LIMIT); q.set('offset',offset); return q; }
 async function updateCount(){
   const n=(await (await fetch('/api/recommendations/count?'+filterParams())).json()).count;
   const kind = type ? (type==='album'?'albums':'tracks') : 'results';
@@ -176,26 +177,11 @@ async function updateCount(){
   $('#count').innerHTML = `<b>${n.toLocaleString()}</b> ${kind}${filtered?' match your filters':''}`;
 }
 
-async function loadStats(){
-  const s=await (await fetch('/api/stats')).json();
-  const cell=(v,l)=>`<div class="stat"><b>${(''+v).replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')}</b>${l}</div>`;
-  $('#stats').innerHTML = cell(s.recommendations,'recommendations')+cell(s.neighbours,'taste-neighbours')+
-    cell(s.my_owned,'you own')+cell(s.my_wishlist,'wishlist')+cell(s.follows,'follows')+
-    cell(s.liked,'liked')+cell(s.requests_used+' / '+s.request_budget,'crawl budget');
-}
-
 async function loadFacets(){
   const f=await (await fetch('/api/facets')).json();
   facetTags = f.tags;                       // ordered by count desc from the API
   renderGenreList($('#genreSearch').value||'');
   updateGenreBtn();
-  $('#seedHint').style.display = f.seed_tags.length ? 'block' : 'none';
-  $('#seedbar').innerHTML = f.seed_tags.map(t=>
-    `<span class="tchip seed" data-seed="${esc(t.value)}">${esc(t.label)}<span class="n">${t.count}</span></span>`).join('');
-  renderSeedStates();
-}
-function renderSeedStates(){
-  document.querySelectorAll('.tchip.seed').forEach(c=> c.classList.toggle('out', seedExclude.has(c.dataset.seed)));
 }
 function updateGenreBtn(){
   const n=Object.keys(tagState).length;
@@ -213,27 +199,27 @@ function renderGenreList(q){
     : '<div class="ddempty">No genres match “'+esc(q)+'”.</div>';
 }
 async function recompute(){
-  const q=new URLSearchParams(); seedExclude.forEach(t=>q.append('exclude_seed_tag',t));
-  await fetch('/api/recommendations/recompute?'+q,{method:'POST'});
-  await loadStats(); await loadFacets(); loadPage(true);
+  await fetch('/api/recommendations/recompute',{method:'POST'});
+  await loadFacets(); loadPage(true);
 }
 function renderActive(){
   const bits=[];
   for(const [t,m] of Object.entries(tagState))
-    bits.push(`<span class="fpill ${m==='out'?'out':''}"><span class="tog" data-tog="${esc(t)}">${m==='out'?'exclude':'genre'}: <b>${esc(t)}</b></span><span class="rm" data-rmtag="${esc(t)}">✕</span></span>`);
-  if(labelFilter) bits.push(`<span class="fpill"><span class="tog">label: <b>${esc(labelFilter.name)}</b></span><span class="rm" data-clear-label="1">✕</span></span>`);
+    bits.push(`<span class="fpill ${m==='out'?'out':''}"><span class="tog" data-tog="${esc(t)}" title="click to switch include / exclude">${m==='out'?'⊘ exclude':'✓ include'}: <b>${esc(t)}</b></span><span class="rm" data-rmtag="${esc(t)}" title="remove">×</span></span>`);
+  if(labelFilter) bits.push(`<span class="fpill"><span class="tog">label: <b>${esc(labelFilter.name)}</b></span><span class="rm" data-clear-label="1" title="remove">×</span></span>`);
   $('#active').innerHTML=bits.join('');
 }
 
 function card(r){
   const tags=(r.reasons.matched_tags||[]).map(t=>`<span class="chip tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
   const co=r.reasons.co_owners||0;
+  const hnd=bcHandle(r.url);
   return `<div class="card">
     <div class="rank">${r.rank}</div>
     <div class="score"><b>${r.score.toFixed(1)}</b><span>score</span></div>
     <div class="body">
       <div class="title">${esc(r.title)||'—'}<span class="type">${r.item_type}</span></div>
-      <div class="band" data-label="${r.band_id||''}" data-name="${esc(r.band_name)}">${esc(r.band_name)||'unknown artist'}</div>
+      <div class="band" data-label="${r.band_id||''}" data-name="${esc(r.band_name)}">${esc(r.band_name)||'unknown artist'}${hnd?`<span class="handle">${esc(hnd)}</span>`:''}</div>
       <div class="meta">
         <span class="chip">${co} neighbour${co===1?'':'s'} own this</span>
         ${tags}
@@ -263,6 +249,7 @@ function refresh(){ renderGenreList($('#genreSearch').value||''); updateGenreBtn
 // ── events ──
 $('#filter').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
   [...e.currentTarget.children].forEach(x=>x.classList.remove('on')); b.classList.add('on'); type=b.dataset.t; loadPage(true); });
+$('#sort').addEventListener('change',e=>{ sort=e.target.value; loadPage(true); });
 // genre dropdown: searchable, count-ordered, multi-select (AND)
 $('#genreBtn').addEventListener('click',e=>{ e.stopPropagation(); const p=$('#genrePanel'); const open=p.style.display==='none';
   p.style.display=open?'block':'none'; if(open){ $('#genreSearch').value=''; renderGenreList(''); $('#genreSearch').focus(); } });
@@ -270,26 +257,23 @@ $('#genreSearch').addEventListener('input',e=>renderGenreList(e.target.value));
 $('#genreList').addEventListener('click',e=>{ const r=e.target.closest('.ddrow'); if(!r)return;
   const t=r.dataset.tag; if(tagState[t]!==undefined) delete tagState[t]; else tagState[t]='by'; refresh(); });
 document.addEventListener('click',e=>{ if(!e.target.closest('.dd')) $('#genrePanel').style.display='none'; });
-$('#seedbar').addEventListener('click',async e=>{ const c=e.target.closest('.tchip.seed'); if(!c)return;
-  const t=c.dataset.seed; if(seedExclude.has(t)) seedExclude.delete(t); else seedExclude.add(t);
-  c.classList.toggle('out',seedExclude.has(t)); await recompute(); });
 $('#active').addEventListener('click',e=>{
   const rm=e.target.closest('[data-rmtag]'); const cl=e.target.closest('[data-clear-label]'); const tog=e.target.closest('[data-tog]');
   if(rm){ delete tagState[rm.dataset.rmtag]; refresh(); return; }
   if(cl){ labelFilter=null; refresh(); return; }
-  if(tog){ const t=tog.dataset.tog; tagState[t]= tagState[t]==='out'?'by':'out'; refresh(); }});
+  if(tog){ const t=tog.dataset.tog; if(t){ tagState[t]= tagState[t]==='out'?'by':'out'; refresh(); } }});
 feed.addEventListener('click',async e=>{
   const tag=e.target.closest('.chip.tag'); if(tag){ tagState[tag.dataset.tag]='by'; refresh(); return; }
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
   const blk=e.target.closest('[data-block]'); if(blk){
     blk.disabled=true; await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
-    await loadStats(); await loadFacets(); await loadBlocked(); loadPage(true); return;
+    await loadFacets(); await loadBlocked(); loadPage(true); return;
   }
   const lk=e.target.closest('[data-like-album],[data-like-track]'); if(lk){
     lk.disabled=true;
     const body=lk.dataset.likeAlbum?{album_id:+lk.dataset.likeAlbum}:{track_id:+lk.dataset.likeTrack};
     await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    lk.closest('.card').remove(); await loadStats(); await loadFacets(); await loadLiked(); updateCount();
+    lk.closest('.card').remove(); await loadFacets(); await loadLiked(); updateCount();
   }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));
@@ -307,10 +291,11 @@ async function loadBlocked(){
          <button class="act" data-unblock="${b.band_id}">unblock</button></div>`).join('')
     : '<div class="hint">Nothing blocked yet. Use “⊘ block” on a card.</div>';
 }
-$('#blockedBtn').addEventListener('click',async()=>{ panelOpen=!panelOpen; panel.style.display=panelOpen?'block':'none'; if(panelOpen) await loadBlocked(); });
+$('#blockedBtn').addEventListener('click',async()=>{ panelOpen=!panelOpen; panel.style.display=panelOpen?'block':'none';
+  $('#blockedBtn').classList.toggle('on',panelOpen); if(panelOpen) await loadBlocked(); });
 panel.addEventListener('click',async e=>{ const u=e.target.closest('[data-unblock]'); if(!u)return;
   u.disabled=true; await fetch('/api/blacklist/'+u.dataset.unblock+'/unblock',{method:'POST'});
-  await loadBlocked(); await loadStats(); });
+  await loadBlocked(); });
 
 // ── liked panel ──
 const lpanel=$('#likedPanel'); let lpanelOpen=false;
@@ -324,14 +309,15 @@ async function loadLiked(){
          <button class="act" data-unlike-album="${r.album_id||''}" data-unlike-track="${r.track_id||''}">unlike</button></div>`).join('')
     : '<div class="hint">Nothing liked yet. Use “♥ like” on a card once you\\'ve wishlisted/bought/followed it.</div>';
 }
-$('#likedBtn').addEventListener('click',async()=>{ lpanelOpen=!lpanelOpen; lpanel.style.display=lpanelOpen?'block':'none'; if(lpanelOpen) await loadLiked(); });
+$('#likedBtn').addEventListener('click',async()=>{ lpanelOpen=!lpanelOpen; lpanel.style.display=lpanelOpen?'block':'none';
+  $('#likedBtn').classList.toggle('on',lpanelOpen); if(lpanelOpen) await loadLiked(); });
 lpanel.addEventListener('click',async e=>{ const u=e.target.closest('[data-unlike-album],[data-unlike-track]'); if(!u)return;
   u.disabled=true;
   const body=u.dataset.unlikeAlbum?{album_id:+u.dataset.unlikeAlbum}:{track_id:+u.dataset.unlikeTrack};
   await fetch('/api/likes/unlike',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  await loadLiked(); await loadStats(); });
+  await loadLiked(); });
 
-loadStats(); loadFacets(); loadBlocked(); loadLiked(); loadPage(true);
+loadFacets(); loadBlocked(); loadLiked(); loadPage(true);
 </script>
 </body>
 </html>"""

@@ -180,6 +180,17 @@ async def test_recommendations_count_matches_filters(client: AsyncClient) -> Non
     assert (await client.get("/api/recommendations/count?label_id=99999")).json()["count"] == 0
 
 
+async def test_sort_param(client: AsyncClient) -> None:
+    # every valid sort orders on a real column (score) or a reasons-JSON key
+    # (co_owners / tag_affinity) — all must return the feed, not error.
+    for s in ("score", "neighbours", "affinity"):
+        r = await client.get(f"/api/recommendations?sort={s}")
+        assert r.status_code == 200 and len(r.json()) >= 1
+        assert [x["rank"] for x in r.json()] == list(range(1, len(r.json()) + 1))
+    # unknown sort is rejected
+    assert (await client.get("/api/recommendations?sort=bogus")).status_code == 422
+
+
 async def test_facets(client: AsyncClient) -> None:
     f = (await client.get("/api/facets")).json()
     assert "tags" in f and "labels" in f and "seed_tags" in f
