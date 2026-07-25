@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -113,6 +113,30 @@ def _has_tag(names: list[str]):
     return album_match | track_match
 
 
+def _ilike_escape(s: str) -> str:
+    """Escape LIKE wildcards so a literal `%`/`_`/`\\` in user input stays literal."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _has_tag_like(substrings: list[str]):
+    """EXISTS: the recommendation's album OR track carries a tag whose name contains
+    ANY of these (case-insensitive) substrings, e.g. "psy" matches "psybient"."""
+    cond = or_(*(Tag.name.ilike(f"%{_ilike_escape(s)}%", escape="\\") for s in substrings))
+    album_match = exists(
+        select(1)
+        .select_from(AlbumTag)
+        .join(Tag, Tag.id == AlbumTag.tag_id)
+        .where(AlbumTag.album_id == Recommendation.album_id, cond)
+    )
+    track_match = exists(
+        select(1)
+        .select_from(TrackTag)
+        .join(Tag, Tag.id == TrackTag.tag_id)
+        .where(TrackTag.track_id == Recommendation.track_id, cond)
+    )
+    return album_match | track_match
+
+
 def _rec_order(sort: str):
     """ORDER BY clause for the feed. `co_owners`/`tag_affinity` live in the
     `reasons` JSON (portable extraction via as_integer/as_float); score is a
@@ -132,6 +156,7 @@ def _rec_order(sort: str):
 
 
 def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
+                       tag_contains, exclude_tag_contains,
                        label_id, exclude_label_id):
     """Apply the shared feed filters (item_type / tags / labels) to a query."""
     if item_type:
@@ -143,9 +168,14 @@ def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
     # Include = AND: the item must carry EVERY selected genre (one EXISTS each).
     for t in tag:
         stmt = stmt.where(_has_tag([t]))
-    # Exclude = drop the item if it carries ANY excluded genre.
+    # Same AND semantics for substring filters, e.g. tag_contains=psy&tag_contains=live.
+    for s in tag_contains:
+        stmt = stmt.where(_has_tag_like([s]))
+    # Exclude = drop the item if it carries ANY excluded genre (exact or substring).
     if exclude_tag:
         stmt = stmt.where(~_has_tag(exclude_tag))
+    if exclude_tag_contains:
+        stmt = stmt.where(~_has_tag_like(exclude_tag_contains))
     return stmt
 
 
@@ -199,6 +229,8 @@ async def recommendations(
     item_type: str | None = Query(None, pattern="^(album|track)$"),
     tag: list[str] = Query(default=[]),           # filter by: album has ANY of these tags
     exclude_tag: list[str] = Query(default=[]),   # filter out: album has ANY of these tags
+    tag_contains: list[str] = Query(default=[]),          # filter by: tag name contains this text
+    exclude_tag_contains: list[str] = Query(default=[]),  # filter out: tag name contains this text
     label_id: list[int] = Query(default=[]),      # filter by: recommendation's band
     exclude_label_id: list[int] = Query(default=[]),
     sort: str = Query("score", pattern="^(score|neighbours|affinity)$"),
@@ -229,6 +261,7 @@ async def recommendations(
     )
     stmt = _apply_rec_filters(
         stmt, band_id_col, item_type=item_type, tag=tag, exclude_tag=exclude_tag,
+        tag_contains=tag_contains, exclude_tag_contains=exclude_tag_contains,
         label_id=label_id, exclude_label_id=exclude_label_id,
     )
     stmt = stmt.where(Recommendation.scan_id == sid).limit(limit).offset(offset)
@@ -257,6 +290,8 @@ async def recommendations_count(
     item_type: str | None = Query(None, pattern="^(album|track)$"),
     tag: list[str] = Query(default=[]),
     exclude_tag: list[str] = Query(default=[]),
+    tag_contains: list[str] = Query(default=[]),
+    exclude_tag_contains: list[str] = Query(default=[]),
     label_id: list[int] = Query(default=[]),
     exclude_label_id: list[int] = Query(default=[]),
     scan_id: int | None = Query(None),
@@ -272,6 +307,7 @@ async def recommendations_count(
     )
     stmt = _apply_rec_filters(
         stmt, band_id_col, item_type=item_type, tag=tag, exclude_tag=exclude_tag,
+        tag_contains=tag_contains, exclude_tag_contains=exclude_tag_contains,
         label_id=label_id, exclude_label_id=exclude_label_id,
     )
     stmt = stmt.where(Recommendation.scan_id == sid)
