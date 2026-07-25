@@ -1,0 +1,110 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Scan card</title>
+<style>
+  :root{
+    --bg:#0b0d12;--panel:#141924;--panel2:#1a2030;--line:#293142;--line2:#38425a;
+    --text:#eef1f7;--muted:#9aa4b6;--faint:#6a7488;
+    --teal:#5eead4;--violet:#c4b5fd;--orange:#ffb168;--danger:#fb7185;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(900px 400px at 15% -10%,rgba(94,234,212,.08),transparent 60%),var(--bg);
+    color:var(--text);font:15px/1.5 var(--font);padding:24px}
+  .grid{display:flex;flex-direction:column;gap:12px;max-width:560px}
+  .caption{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--faint);margin-bottom:2px}
+
+  .scan{position:relative;display:flex;gap:14px;align-items:flex-start;
+    background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 40%),var(--panel);
+    border:1px solid var(--line);border-radius:16px;padding:16px 18px;cursor:pointer;
+    transition:border-color .16s,transform .16s,box-shadow .16s;overflow:hidden}
+  .scan:hover{border-color:var(--line2);transform:translateY(-1px);box-shadow:0 16px 36px -20px rgba(0,0,0,.75)}
+  /* status accent bar */
+  .scan::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--faint)}
+  .scan.done::before{background:linear-gradient(var(--teal),#2dd4bf)}
+  .scan.running::before{background:linear-gradient(var(--orange),#f59e42)}
+  .scan.queued::before{background:var(--line2)}
+  .scan.error::before{background:var(--danger)}
+
+  .ico{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;
+    background:var(--panel2);border:1px solid var(--line);font-size:19px}
+  .scan.done .ico{color:var(--teal)} .scan.running .ico{color:var(--orange)}
+  .scan.error .ico{color:var(--danger)} .scan.queued .ico{color:var(--muted)}
+
+  .body{flex:1;min-width:0}
+  .row1{display:flex;align-items:center;gap:10px}
+  .name{font-weight:700;font-size:16px;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .star{color:var(--violet);font-size:12px;flex:none}
+  .badge{flex:none;margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+    font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+    border-radius:999px;padding:3px 10px;border:1px solid var(--line);color:var(--muted);background:var(--panel2)}
+  .badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .badge.done{color:var(--teal);border-color:rgba(94,234,212,.35)}
+  .badge.running{color:var(--orange);border-color:rgba(255,177,104,.4)}
+  .badge.error{color:var(--danger);border-color:rgba(251,113,133,.4)}
+  .badge.running .dot{animation:pulse 1.1s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.25}}
+
+  .meta{color:var(--muted);font-size:13px;margin-top:5px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .meta b{color:var(--text);font-variant-numeric:tabular-nums}
+  .meta .sep{color:var(--faint)}
+  .meta .errtext{color:var(--danger)}
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="caption">Scan card · states</div>
+
+    <div class="scan done">
+      <div class="ico">◎</div>
+      <div class="body">
+        <div class="row1"><span class="name">My collection</span><span class="star">★</span>
+          <span class="badge done"><span class="dot"></span>done</span></div>
+        <div class="meta"><b>3,328</b> recs <span class="sep">·</span> seeded by your collection
+          <span class="sep">·</span> updated 2h ago</div>
+      </div>
+    </div>
+
+    <div class="scan done">
+      <div class="ico">🎯</div>
+      <div class="body">
+        <div class="row1"><span class="name">Deep forest psy dig</span>
+          <span class="badge done"><span class="dot"></span>done</span></div>
+        <div class="meta"><b>412</b> recs <span class="sep">·</span> <b>3</b> seeds
+          <span class="sep">·</span> 41 credits <span class="sep">·</span> ran 10m ago</div>
+      </div>
+    </div>
+
+    <div class="scan running">
+      <div class="ico">🎯</div>
+      <div class="body">
+        <div class="row1"><span class="name">Detroit techno lineage</span>
+          <span class="badge running"><span class="dot"></span>running</span></div>
+        <div class="meta">crawling seeds on your PC… <span class="sep">·</span> <b>2</b> seeds</div>
+      </div>
+    </div>
+
+    <div class="scan queued">
+      <div class="ico">🎯</div>
+      <div class="body">
+        <div class="row1"><span class="name">Ambient / drone starters</span>
+          <span class="badge queued"><span class="dot"></span>queued</span></div>
+        <div class="meta">waiting for your Mac worker <span class="sep">·</span> <b>4</b> seeds</div>
+      </div>
+    </div>
+
+    <div class="scan error">
+      <div class="ico">🎯</div>
+      <div class="body">
+        <div class="row1"><span class="name">Broken seed test</span>
+          <span class="badge error"><span class="dot"></span>error</span></div>
+        <div class="meta"><span class="errtext">ValueError: no HTML returned for album page</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!-- @dsCard group="Pages" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Scans — landing</title>
+<style>
+  :root{
+    --bg:#0b0d12;--panel:#141924;--panel2:#1a2030;--line:#293142;--line2:#38425a;
+    --text:#eef1f7;--muted:#9aa4b6;--faint:#6a7488;
+    --teal:#5eead4;--teal-ink:#04241d;--violet:#c4b5fd;--orange:#ffb168;--danger:#fb7185;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--text);font:15px/1.55 var(--font);
+    background:
+      radial-gradient(1100px 520px at 10% -10%,rgba(94,234,212,.10),transparent 60%),
+      radial-gradient(900px 520px at 100% -4%,rgba(196,181,253,.10),transparent 55%),
+      var(--bg)}
+  .wrap{max-width:760px;margin:0 auto;padding:34px 22px 60px}
+  h1{margin:0;font-size:32px;font-weight:800;letter-spacing:-.025em;line-height:1.05}
+  .hl{background:linear-gradient(95deg,var(--teal),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{margin-top:9px;color:var(--orange);font-size:16px;font-weight:500;opacity:.95}
+
+  .scanhead{display:flex;align-items:center;justify-content:space-between;margin-top:30px;margin-bottom:14px}
+  .vh{margin:0;font-size:15px;text-transform:uppercase;letter-spacing:.13em;color:var(--faint);font-weight:700}
+  .btn{border:0;border-radius:11px;padding:10px 15px;font-weight:700;font-size:13.5px;cursor:pointer}
+  .btn.primary{background:linear-gradient(180deg,var(--teal),#37d3bd);color:var(--teal-ink)}
+
+  .cards{display:flex;flex-direction:column;gap:12px}
+  .scan{position:relative;display:flex;gap:14px;align-items:flex-start;
+    background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 40%),var(--panel);
+    border:1px solid var(--line);border-radius:16px;padding:16px 18px;cursor:pointer;overflow:hidden;
+    transition:border-color .16s,transform .16s,box-shadow .16s}
+  .scan:hover{border-color:var(--line2);transform:translateY(-1px);box-shadow:0 16px 36px -20px rgba(0,0,0,.75)}
+  .scan::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--faint)}
+  .scan.done::before{background:linear-gradient(var(--teal),#2dd4bf)}
+  .scan.running::before{background:linear-gradient(var(--orange),#f59e42)}
+  .scan.queued::before{background:var(--line2)}
+  .ico{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:var(--panel2);border:1px solid var(--line);font-size:19px}
+  .scan.done .ico{color:var(--teal)}.scan.running .ico{color:var(--orange)}.scan.queued .ico{color:var(--muted)}
+  .b{flex:1;min-width:0}
+  .r1{display:flex;align-items:center;gap:10px}
+  .nm{font-weight:700;font-size:16px;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .star{color:var(--violet);font-size:12px}
+  .badge{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.07em;border-radius:999px;padding:3px 10px;border:1px solid var(--line);color:var(--muted);background:var(--panel2)}
+  .badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .badge.done{color:var(--teal);border-color:rgba(94,234,212,.35)}
+  .badge.running{color:var(--orange);border-color:rgba(255,177,104,.4)}
+  .badge.running .dot{animation:pulse 1.1s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.25}}
+  .meta{color:var(--muted);font-size:13px;margin-top:5px}
+  .meta b{color:var(--text);font-variant-numeric:tabular-nums}.meta .sep{color:var(--faint)}
+  .newcard{border:1px dashed var(--line2);background:transparent;color:var(--muted);border-radius:16px;
+    padding:15px 18px;text-align:center;cursor:pointer;font-weight:600;font-size:14px}
+  .newcard:hover{color:var(--teal);border-color:var(--teal)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Bandcamp <span class="hl">suggestions</span></h1>
+  <div class="sub">Discovery runs seeded by albums you love — one recommendation per artist, ranked.</div>
+
+  <div class="scanhead">
+    <h2 class="vh">Your scans</h2>
+    <button class="btn primary">＋ New scan</button>
+  </div>
+
+  <div class="cards">
+    <div class="scan done">
+      <div class="ico">◎</div>
+      <div class="b">
+        <div class="r1"><span class="nm">My collection</span><span class="star">★</span>
+          <span class="badge done"><span class="dot"></span>done</span></div>
+        <div class="meta"><b>3,328</b> recs <span class="sep">·</span> seeded by your collection <span class="sep">·</span> 96 neighbours</div>
+      </div>
+    </div>
+    <div class="scan done">
+      <div class="ico">🎯</div>
+      <div class="b">
+        <div class="r1"><span class="nm">Deep forest psy dig</span>
+          <span class="badge done"><span class="dot"></span>done</span></div>
+        <div class="meta"><b>412</b> recs <span class="sep">·</span> <b>3</b> seeds <span class="sep">·</span> 41 credits <span class="sep">·</span> ran 10m ago</div>
+      </div>
+    </div>
+    <div class="scan running">
+      <div class="ico">🎯</div>
+      <div class="b">
+        <div class="r1"><span class="nm">Detroit techno lineage</span>
+          <span class="badge running"><span class="dot"></span>running</span></div>
+        <div class="meta">crawling seeds on your PC… <span class="sep">·</span> <b>2</b> seeds</div>
+      </div>
+    </div>
+    <div class="newcard">＋  New scan from album URLs</div>
+  </div>
+</div>
+</body>
+</html>
