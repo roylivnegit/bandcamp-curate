@@ -23,6 +23,10 @@ COPY . .
 EXPOSE 8000
 
 # API by default; the worker + migrate services override this in compose.
-# Bind $PORT when the platform injects one (Render/Koyeb/Fly); fall back to 8000
-# locally. `exec` keeps uvicorn as PID 1 so it receives SIGTERM for clean shutdown.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Run migrations to head first (a no-op once applied) so a cloud deploy (Render)
+# brings the managed DB up to schema before serving — a failed migration aborts
+# the start, so the platform keeps the previous version live. Then bind $PORT
+# ($PORT injected by Render/Koyeb/Fly; 8000 locally); `exec` keeps uvicorn as
+# PID 1 for clean SIGTERM shutdown. (Compose overrides this and runs a dedicated
+# `migrate` service instead.)
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
