@@ -110,7 +110,7 @@ async def test_ui_served(client: AsyncClient) -> None:
     r = await client.get("/")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
-    assert "crate" in r.text and "/api/recommendations" in r.text
+    assert "Bandcamp suggestions" in r.text and "/api/recommendations" in r.text
 
 
 async def test_recommendation_has_band_id(client: AsyncClient) -> None:
