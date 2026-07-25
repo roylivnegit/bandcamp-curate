@@ -1,13 +1,10 @@
 """Scan orchestration: create scans from seed URLs and run them.
 
-A scan is a named discovery run seeded by album/track URLs. `run_scan` enqueues the
-scan's seeds into the shared frontier, drains it (bounded by depth + the global
-request budget), resolves each seed to its ingested album, then curates that scan.
-The frontier/graph is shared across scans; only the seeds and resulting
-recommendations are per-scan.
-
-Track seeds are parsed and stored but not yet crawled (they need a track-supporter
-path — a fast follow); `run_scan` skips unresolved track seeds for now.
+A scan is a named discovery run seeded by album and/or track URLs, any mix.
+`run_scan` enqueues the scan's seeds into the shared frontier, drains it (bounded
+by depth + the global request budget), resolves each seed to its ingested
+album/track, then curates that scan. The frontier/graph is shared across scans;
+only the seeds and resulting recommendations are per-scan.
 """
 
 import logging
@@ -19,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.crawl import frontier, runner
 from app.crawl.service import Fetcher
-from app.db.models import Album, Scan, ScanSeed
+from app.db.models import Album, Scan, ScanSeed, Track
 from app.enums import CrawlKind, ItemType, ScanKind, ScanStatus
 
 logger = logging.getLogger("crate_digger.scan")
@@ -39,10 +36,10 @@ def parse_seed_url(url: str) -> tuple[str, str]:
 
 
 async def create_scan(session: AsyncSession, name: str, urls: list[str]) -> Scan:
-    """Create a queued custom scan from a list of seed URLs. Deduplicates URLs.
+    """Create a queued custom scan from a list of seed URLs (album and/or track,
+    any mix). Deduplicates URLs.
 
-    Raises ValueError on an empty name, no valid seeds, or a track URL (track seeds
-    are not crawlable yet)."""
+    Raises ValueError on an empty name or no valid seeds."""
     name = (name or "").strip()
     if not name:
         raise ValueError("scan name is required")
@@ -50,13 +47,11 @@ async def create_scan(session: AsyncSession, name: str, urls: list[str]) -> Scan
     seeds: list[tuple[str, str]] = []
     for u in urls:
         clean, kind = parse_seed_url(u)  # raises on invalid
-        if kind == "track":
-            raise ValueError("track seeds aren't supported yet — use album URLs")
         if clean not in seen:
             seen.add(clean)
             seeds.append((clean, kind))
     if not seeds:
-        raise ValueError("at least one album URL is required")
+        raise ValueError("at least one album or track URL is required")
 
     scan = Scan(name=name, kind=str(ScanKind.CUSTOM), status=str(ScanStatus.QUEUED))
     session.add(scan)
@@ -82,7 +77,7 @@ async def claim_queued_scans(session: AsyncSession) -> list[int]:
 
 
 async def _resolve_seeds(session: AsyncSession, scan_id: int) -> None:
-    """Point each album seed at the album that was ingested for its URL."""
+    """Point each seed at the album/track that was ingested for its URL."""
     seeds = (
         await session.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))
     ).scalars().all()
@@ -95,6 +90,14 @@ async def _resolve_seeds(session: AsyncSession, scan_id: int) -> None:
             ).scalars().first()
             if album is not None:
                 seed.resolved_album_id = album.id
+        elif seed.seed_type == str(ItemType.TRACK) and seed.resolved_track_id is None:
+            track = (
+                await session.execute(
+                    select(Track).where(Track.url == seed.url).order_by(Track.id.desc())
+                )
+            ).scalars().first()
+            if track is not None:
+                seed.resolved_track_id = track.id
     await session.commit()
 
 
@@ -130,12 +133,16 @@ async def run_scan(
         used_before = await runner.requests_used(session)
 
     try:
-        # Enqueue album seeds at the frontier (dedup'd), then drain.
+        # Enqueue seeds at the frontier (dedup'd), then drain.
         async with sessionmaker() as session:
             for url, seed_type in seed_urls:
                 if seed_type == str(ItemType.ALBUM):
                     await frontier.enqueue(
                         session, url, CrawlKind.ALBUM, priority=SEED_PRIORITY, depth=0
+                    )
+                elif seed_type == str(ItemType.TRACK):
+                    await frontier.enqueue(
+                        session, url, CrawlKind.TRACK, priority=SEED_PRIORITY, depth=0
                     )
             await session.commit()
 

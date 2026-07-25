@@ -16,16 +16,27 @@ from app.bandcamp.parse import ParsedBand, ParsedItem, ParsedSupporter
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
-from app.crawl.service import crawl_album, crawl_fan_collection
+from app.crawl.service import crawl_album, crawl_fan_collection, crawl_track
 from app.db.base import Base
-from app.db.models import Album, AlbumSupporter, CrawlFrontier, Fan, FanItem, ProviderUsage
+from app.db.models import (
+    Album,
+    AlbumSupporter,
+    CrawlFrontier,
+    Fan,
+    FanItem,
+    ProviderUsage,
+    Track,
+    TrackSupporter,
+)
 from app.enums import CrawlKind, CrawlStatus
 from app.scraping.base import FetchRequest, FetchResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAN_HTML = (FIXTURES / "fan_page.html").read_text()
 ALBUM_HTML = (FIXTURES / "album_page.html").read_text()
+TRACK_HTML = (FIXTURES / "track_page.html").read_text()
 ALBUM_URL = "https://cerebro-spinal.bandcamp.com/album/panchito"
+TRACK_URL = "https://jscottg.bandcamp.com/track/return-of-the-king-original-mix"
 SEED_URL = "https://bandcamp.com/guron"
 
 
@@ -463,6 +474,70 @@ async def test_crawl_album_at_max_depth_enqueues_nothing(session: AsyncSession) 
     assert outcome.supporters == 3  # still ingested
     assert outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
+
+
+async def test_crawl_track_ingests_supporters_and_enqueues_them(
+    session: AsyncSession,
+) -> None:
+    fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
+    outcome = await crawl_track(
+        session, fetcher, TRACK_URL, supporters_client=FakeSupportersClient()
+    )
+
+    assert outcome.kind == str(CrawlKind.TRACK)
+    assert outcome.supporters == 3
+    assert await _count(session, Track) == 1
+    assert await _count(session, TrackSupporter) == 3
+    assert await _count(session, AlbumSupporter) == 0
+    assert await _count(session, Fan) == 3
+
+    fans = (
+        await session.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
+        )
+    ).scalars().all()
+    assert {f.url for f in fans} == {
+        "https://bandcamp.com/tim-bruisson",
+        "https://bandcamp.com/guron",
+        "https://bandcamp.com/synth_wanderer",
+    }
+
+
+async def test_crawl_track_pages_extra_supporters(session: AsyncSession) -> None:
+    fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
+    client = FakeSupportersClient([_supporter("late_fan")])
+    outcome = await crawl_track(session, fetcher, TRACK_URL, supporters_client=client)
+
+    assert outcome.supporters == 4
+    assert await _count(session, TrackSupporter) == 4
+
+
+async def test_crawl_track_at_max_depth_enqueues_nothing(session: AsyncSession) -> None:
+    fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
+    outcome = await crawl_track(
+        session, fetcher, TRACK_URL, depth=3, max_depth=3,
+        supporters_client=FakeSupportersClient(),
+    )
+    assert outcome.supporters == 3  # still ingested
+    assert outcome.enqueued == 0
+    assert await _count(session, CrawlFrontier) == 0
+
+
+async def test_runner_dispatches_track_kind(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, TRACK_URL, CrawlKind.TRACK)
+        await s.commit()
+
+    outcomes = await runner.run_until_empty(
+        sessionmaker_, fetcher, supporters_client=FakeSupportersClient(),
+    )
+    assert [o.kind for o in outcomes] == [str(CrawlKind.TRACK)]
+    async with sessionmaker_() as s:
+        assert await _count(s, Track) == 1
+        assert await _count(s, TrackSupporter) == 3
 
 
 # ── Runner (end-to-end over the frontier) ───────────────────────────────────────

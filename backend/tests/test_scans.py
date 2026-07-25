@@ -27,6 +27,8 @@ from app.main import app
 FIXTURES = Path(__file__).parent / "fixtures"
 ALBUM_HTML = (FIXTURES / "album_page.html").read_text()
 ALBUM_URL = "https://cerebro-spinal.bandcamp.com/album/panchito"
+TRACK_HTML = (FIXTURES / "track_page.html").read_text()
+TRACK_URL = "https://jscottg.bandcamp.com/track/return-of-the-king-original-mix"
 
 
 # ── unit: URL parsing ──────────────────────────────────────────────────────────
@@ -91,9 +93,18 @@ async def test_create_validation(client: AsyncClient) -> None:
 
     assert (await post("", [ALBUM_URL])).status_code == 400        # empty name
     assert (await post("n", [])).status_code == 400                # no seeds
-    r = await post("n", ["https://x.bandcamp.com/track/t"])        # track not supported yet
-    assert r.status_code == 400 and "track" in r.json()["detail"]
     assert (await post("n", ["https://google.com"])).status_code == 400  # not a release URL
+
+
+async def test_create_scan_with_track_seed(client: AsyncClient) -> None:
+    r = await client.post(
+        "/api/scans",
+        json={"name": "Tracks + albums", "seeds": [ALBUM_URL, "https://x.bandcamp.com/track/t"]},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["seed_count"] == 2
+    assert {s["seed_type"] for s in body["seeds"]} == {"album", "track"}
 
 
 async def test_run_requeues(client: AsyncClient) -> None:
@@ -179,3 +190,28 @@ async def test_run_scan_crawls_resolves_and_curates(sessionmaker_) -> None:  # n
     async with sessionmaker_() as s:
         seed = (await s.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))).scalar_one()
         assert seed.resolved_album_id is not None  # seed resolved to the crawled album
+
+
+async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:  # noqa: ANN001
+    # A scan seeded with BOTH an album URL and a track URL, any mix: both should
+    # be crawled, both resolved, and both contribute taste-neighbours.
+    async with sessionmaker_() as s:
+        s.add(Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True))
+        await s.commit()
+        scan = await create_scan(s, "Mixed dig", [ALBUM_URL, TRACK_URL])
+        scan_id = scan.id
+
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML, TRACK_URL: TRACK_HTML})
+    done = await run_scan(
+        sessionmaker_, fetcher, scan_id,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+    )
+    assert done.status == str(ScanStatus.DONE)
+
+    async with sessionmaker_() as s:
+        seeds = (
+            await s.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))
+        ).scalars().all()
+        by_type = {sd.seed_type: sd for sd in seeds}
+        assert by_type["album"].resolved_album_id is not None
+        assert by_type["track"].resolved_track_id is not None

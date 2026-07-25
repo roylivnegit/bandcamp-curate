@@ -225,11 +225,11 @@ _PAGE = """<!doctype html>
     <button class="btn" id="newScanBtn">＋ New scan</button>
   </div>
   <div class="form" id="scanForm" style="display:none">
-    <div class="fhint">Name it, then paste Bandcamp <b>album</b> URLs to seed discovery. Your Mac runs the crawl; recommendations come from those albums' supporters.</div>
+    <div class="fhint">Name it, then paste Bandcamp <b>album or track</b> URLs to seed discovery — any mix. Your Mac runs the crawl; recommendations come from those albums'/tracks' supporters.</div>
     <label class="lbl">Scan name</label>
     <input class="ti" id="scanName" placeholder="e.g. Deep forest psy dig" autocomplete="off"/>
     <div class="seedadd">
-      <input class="ti" id="seedUrl" placeholder="Paste a Bandcamp album URL, then Add" autocomplete="off"/>
+      <input class="ti" id="seedUrl" placeholder="Paste a Bandcamp album or track URL, then Add" autocomplete="off"/>
       <button class="btn ghost" id="addSeed">Add</button>
     </div>
     <div class="seedlist" id="seedList"></div>
@@ -327,7 +327,7 @@ async function showScans(){
   if(scanId!==null) return;   // user opened a scan mid-fetch - don't yank them back
   $('#scansEmpty').style.display = scans.length ? 'none' : 'block';
   $('#scanCards').innerHTML = scans.map(scanCard).join('') +
-    '<div class="newcard" id="newCard">＋  New scan from album URLs</div>';
+    '<div class="newcard" id="newCard">＋  New scan from album/track URLs</div>';
   const active=scans.some(s=>s.status==='queued'||s.status==='running');
   if(active) pollTimer=setTimeout(showScans, POLL_MS);   // live-refresh while work runs
 }
@@ -351,8 +351,9 @@ function scanCard(s){
 
 // ══ new-scan form ══
 let seeds=[];
+function seedKind(u){ return u.toLowerCase().includes('/track/') ? 'track' : 'album'; }
 function renderSeeds(){ $('#seedList').innerHTML=seeds.map((u,i)=>
-  `<div class="seed"><span class="stag">album</span><span class="u">${esc(u)}</span><span class="rm" data-seed="${i}">×</span></div>`).join(''); }
+  `<div class="seed"><span class="stag">${seedKind(u)}</span><span class="u">${esc(u)}</span><span class="rm" data-seed="${i}">×</span></div>`).join(''); }
 function openForm(){ seeds=[]; renderSeeds(); $('#scanName').value=''; $('#seedUrl').value=''; $('#scanErr').textContent='';
   $('#scanForm').style.display='block'; $('#scanName').focus(); }
 $('#newScanBtn').addEventListener('click',openForm);

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.bandcamp.parse import (
     band_url_from_album_url,
     band_url_from_hints,
@@ -9,10 +11,12 @@ from app.bandcamp.parse import (
     parse_fan_page,
     parse_following_bands_api,
     parse_thumbs_api,
+    parse_track_page,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fan_page.html"
 ALBUM_FIXTURE = Path(__file__).parent / "fixtures" / "album_page.html"
+TRACK_FIXTURE = Path(__file__).parent / "fixtures" / "track_page.html"
 
 
 def test_parse_fan_page_from_fixture() -> None:
@@ -121,6 +125,42 @@ def test_album_tags_html_unescaped() -> None:
     tags = parse_album_page(html_text).tags
     assert "drum & bass" in tags and "d'n'b" in tags
     assert not any("&amp;" in t or "&#39;" in t for t in tags)
+
+
+def test_parse_track_page_from_fixture() -> None:
+    # Fixture trimmed from a live fetch of a real track page (jscottg.bandcamp.com).
+    pt = parse_track_page(TRACK_FIXTURE.read_text())
+
+    assert pt.track_id == 2231778447
+    assert pt.title == "Return Of The King (Original Mix)"
+    assert pt.url == "https://jscottg.bandcamp.com/track/return-of-the-king-original-mix"
+
+    assert pt.band.bandcamp_id == 2864113988
+    assert pt.band.name == "J. Scott G."
+    assert pt.band.url == "https://jscottg.bandcamp.com"
+
+    # The track's parent album is a stub reference (id + derived url), not crawled.
+    assert pt.album_id == 1818018872
+    assert pt.album_url == "https://jscottg.bandcamp.com/album/return-of-the-king"
+
+    assert "electronic" in pt.tags and "portland" in pt.tags  # lowercased
+
+
+def test_parse_track_page_requires_tralbum() -> None:
+    with pytest.raises(ValueError, match="data-tralbum"):
+        parse_track_page("<html><body>no blob here</body></html>")
+
+
+def test_parse_album_supporters_on_track_page() -> None:
+    # parse_album_supporters is tralbum-generic: works on a track page too, and
+    # reports tralbum_type="t" (the track's own id, not its album's).
+    sup = parse_album_supporters(TRACK_FIXTURE.read_text())
+
+    assert sup.tralbum_type == "t"
+    assert sup.album_id == 2231778447  # the track's own bandcamp id
+    assert [s.username for s in sup.supporters] == ["tim-bruisson", "guron", "synth_wanderer"]
+    assert sup.more_available is True
+    assert sup.last_token
 
 
 def test_parse_album_supporters_from_collectors_blob() -> None:

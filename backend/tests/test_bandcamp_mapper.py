@@ -9,8 +9,15 @@ from app.bandcamp.mapper import (
     ingest_album,
     ingest_album_supporters,
     ingest_fan_collection,
+    ingest_track_page,
+    ingest_track_supporters,
 )
-from app.bandcamp.parse import parse_album_page, parse_album_supporters, parse_fan_page
+from app.bandcamp.parse import (
+    parse_album_page,
+    parse_album_supporters,
+    parse_fan_page,
+    parse_track_page,
+)
 from app.db.base import Base
 from app.db.models import (
     Album,
@@ -23,11 +30,13 @@ from app.db.models import (
     Follow,
     Tag,
     Track,
+    TrackSupporter,
     TrackTag,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fan_page.html"
 ALBUM_FIXTURE = Path(__file__).parent / "fixtures" / "album_page.html"
+TRACK_FIXTURE = Path(__file__).parent / "fixtures" / "track_page.html"
 
 
 @pytest_asyncio.fixture
@@ -215,3 +224,72 @@ async def test_supporter_reuses_existing_fan(session: AsyncSession) -> None:
     assert await _count(session, Fan) == fans_before + 2
     me = (await session.execute(select(Fan).where(Fan.bandcamp_fan_id == 9985893))).scalar_one()
     assert me.is_me is True  # existing "me" fan reused, not duplicated
+
+
+async def test_ingest_track_page_populates_graph(session: AsyncSession) -> None:
+    pt = parse_track_page(TRACK_FIXTURE.read_text())
+    counts = await ingest_track_page(session, pt)
+
+    assert await _count(session, Track) == 1
+    assert await _count(session, Band) == 1
+    # A stub Album is created for the track's parent (id/url only, not crawled).
+    assert await _count(session, Album) == 1
+    assert await _count(session, AlbumTag) == 0  # never written for a stub album
+    assert counts.tags == 7
+
+    track = (await session.execute(select(Track))).scalar_one()
+    assert track.bandcamp_id == 2231778447
+    assert track.title == "Return Of The King (Original Mix)"
+    assert track.band_id is not None
+    assert track.album_id is not None
+
+    album = (await session.execute(select(Album))).scalar_one()
+    assert album.bandcamp_id == 1818018872
+    assert album.title is None  # stub — only id/url known
+
+
+async def test_ingest_track_page_tags_band_and_track(session: AsyncSession) -> None:
+    pt = parse_track_page(TRACK_FIXTURE.read_text())  # 7 tags
+    await ingest_track_page(session, pt)
+    assert await _count(session, TrackTag) == 7
+    assert await _count(session, BandTag) == 7
+
+    # Idempotent re-ingest.
+    second = await ingest_track_page(session, pt)
+    assert second.tags == 0
+    assert await _count(session, TrackTag) == 7
+    assert await _count(session, BandTag) == 7
+
+
+async def test_ingest_track_page_without_album(session: AsyncSession) -> None:
+    # A standalone single with no parent album.
+    pt = parse_track_page(TRACK_FIXTURE.read_text())
+    pt.album_id = None
+    pt.album_url = None
+    await ingest_track_page(session, pt)
+    assert await _count(session, Album) == 0
+    track = (await session.execute(select(Track))).scalar_one()
+    assert track.album_id is None
+
+
+async def test_ingest_track_supporters(session: AsyncSession) -> None:
+    pt = parse_track_page(TRACK_FIXTURE.read_text())
+    await ingest_track_page(session, pt)
+    track = (await session.execute(select(Track))).scalar_one()
+
+    sup = parse_album_supporters(TRACK_FIXTURE.read_text())
+    assert sup.tralbum_type == "t"
+    counts = await ingest_track_supporters(session, track, sup)
+
+    assert counts.supporters == 3 and counts.fans == 3
+    assert await _count(session, TrackSupporter) == 3
+    assert await _count(session, AlbumSupporter) == 0  # never an album edge
+    assert await _count(session, Fan) == 3
+
+    guron = (await session.execute(select(Fan).where(Fan.username == "guron"))).scalar_one()
+    assert guron.bandcamp_fan_id == 9985893
+
+    # Idempotent re-ingest creates nothing new.
+    second = await ingest_track_supporters(session, track, sup)
+    assert second.supporters == 0 and second.fans == 0
+    assert await _count(session, TrackSupporter) == 3

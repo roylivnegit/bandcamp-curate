@@ -28,6 +28,7 @@ class TargetType(StrEnum):
 class CrawlKind(StrEnum):
     FAN_COLLECTION = "fan_collection"
     ALBUM = "album"
+    TRACK = "track"
     SUPPORTERS = "supporters"
 
 

@@ -35,6 +35,8 @@ from app.db.models import (
     ScanSeed,
     Tag,
     Track,
+    TrackSupporter,
+    TrackTag,
 )
 from app.enums import ItemType, ScanKind, ScanStatus
 
@@ -103,14 +105,16 @@ async def ensure_collection_scan(session: AsyncSession) -> Scan:
     return scan
 
 
-async def _seed_album_ids(session: AsyncSession, scan: Scan, me: Fan) -> set[int]:
-    """The album ids whose supporters form this scan's taste-neighbour set.
+async def _seed_ids(session: AsyncSession, scan: Scan, me: Fan) -> tuple[set[int], set[int]]:
+    """(seed_album_ids, seed_track_ids) — the ids whose supporters form this
+    scan's taste-neighbour set.
 
-    collection → your owned albums; custom → the scan's resolved album seeds.
-    (Track seeds resolve to track supporters — added in Stage 2.)
+    collection → your owned albums (album-level only — owned standalone tracks
+    don't yet feed neighbours here); custom → the scan's resolved album AND
+    track seeds, any mix.
     """
     if scan.kind == str(ScanKind.COLLECTION):
-        return await _scalar_set(
+        album_ids = await _scalar_set(
             session,
             select(FanItem.album_id).where(
                 FanItem.fan_id == me.id,
@@ -118,12 +122,20 @@ async def _seed_album_ids(session: AsyncSession, scan: Scan, me: Fan) -> set[int
                 FanItem.album_id.isnot(None),
             ),
         )
-    return await _scalar_set(
+        return album_ids, set()
+    album_ids = await _scalar_set(
         session,
         select(ScanSeed.resolved_album_id).where(
             ScanSeed.scan_id == scan.id, ScanSeed.resolved_album_id.isnot(None)
         ),
     )
+    track_ids = await _scalar_set(
+        session,
+        select(ScanSeed.resolved_track_id).where(
+            ScanSeed.scan_id == scan.id, ScanSeed.resolved_track_id.isnot(None)
+        ),
+    )
+    return album_ids, track_ids
 
 
 async def build_exclusions(session: AsyncSession, me: Fan) -> Exclusions:
@@ -212,41 +224,67 @@ async def _tag_names(session: AsyncSession, tag_ids: set[int]) -> dict[int, str]
 
 
 async def _seed_tag_provenance(
-    session: AsyncSession, seed_album_ids: set[int], me: Fan
+    session: AsyncSession, seed_album_ids: set[int], seed_track_ids: set[int], me: Fan
 ) -> tuple[dict[int, set[str]], dict[int, set[str]]]:
-    """Map each candidate → the genre tags of the scan's *seed* albums that generated it.
+    """Map each candidate → the genre tags of the scan's *seed* albums/tracks that
+    generated it.
 
     A candidate is surfaced because a taste-neighbour owns it; that neighbour is in
-    the scan because they support one of its seed albums. So the candidate's "seed
-    genres" are the tags of the seed albums whose supporters own the candidate.
-    Explains *why* something was recommended.
+    the scan because they support one of its seed albums or tracks. So the
+    candidate's "seed genres" are the tags of the seed item (the album's own tags,
+    or a seed track's own tags) whose supporters own the candidate. Explains *why*
+    something was recommended.
     """
-    if not seed_album_ids:
+    if not seed_album_ids and not seed_track_ids:
         return {}, {}
-
-    # For each seed album: its supporters, and everything those supporters own →
-    # (candidate, seed tag) pairs.
-    rows = (
-        await session.execute(
-            select(FanItem.album_id, FanItem.track_id, Tag.name)
-            .select_from(AlbumSupporter)
-            .join(FanItem, FanItem.fan_id == AlbumSupporter.fan_id)
-            .join(AlbumTag, AlbumTag.album_id == AlbumSupporter.album_id)
-            .join(Tag, Tag.id == AlbumTag.tag_id)
-            .where(
-                AlbumSupporter.album_id.in_(seed_album_ids),
-                FanItem.fan_id != me.id,
-            )
-        )
-    ).all()
 
     album_prov: dict[int, set[str]] = {}
     track_prov: dict[int, set[str]] = {}
-    for album_id, track_id, tag_name in rows:
-        if album_id is not None:
-            album_prov.setdefault(album_id, set()).add(tag_name)
-        elif track_id is not None:
-            track_prov.setdefault(track_id, set()).add(tag_name)
+
+    def _collect(rows: list) -> None:
+        for album_id, track_id, tag_name in rows:
+            if album_id is not None:
+                album_prov.setdefault(album_id, set()).add(tag_name)
+            elif track_id is not None:
+                track_prov.setdefault(track_id, set()).add(tag_name)
+
+    # For each seed album: its supporters, and everything those supporters own →
+    # (candidate, seed tag) pairs.
+    if seed_album_ids:
+        _collect(
+            (
+                await session.execute(
+                    select(FanItem.album_id, FanItem.track_id, Tag.name)
+                    .select_from(AlbumSupporter)
+                    .join(FanItem, FanItem.fan_id == AlbumSupporter.fan_id)
+                    .join(AlbumTag, AlbumTag.album_id == AlbumSupporter.album_id)
+                    .join(Tag, Tag.id == AlbumTag.tag_id)
+                    .where(
+                        AlbumSupporter.album_id.in_(seed_album_ids),
+                        FanItem.fan_id != me.id,
+                    )
+                )
+            ).all()
+        )
+
+    # Same, for each seed track: its supporters, tagged with the seed track's own genres.
+    if seed_track_ids:
+        _collect(
+            (
+                await session.execute(
+                    select(FanItem.album_id, FanItem.track_id, Tag.name)
+                    .select_from(TrackSupporter)
+                    .join(FanItem, FanItem.fan_id == TrackSupporter.fan_id)
+                    .join(TrackTag, TrackTag.track_id == TrackSupporter.track_id)
+                    .join(Tag, Tag.id == TrackTag.tag_id)
+                    .where(
+                        TrackSupporter.track_id.in_(seed_track_ids),
+                        FanItem.fan_id != me.id,
+                    )
+                )
+            ).all()
+        )
+
     return album_prov, track_prov
 
 
@@ -261,25 +299,38 @@ async def compute_recommendations(
     """Score unowned albums + tracks for one scan by co-ownership among its
     taste-neighbours (+ tag affinity).
 
-    A scan's **neighbours** are the fans who support its seed albums (collection
-    scan → your owned albums; custom scan → its resolved album seeds). Co-ownership
-    is counted only among those neighbours, so each scan reflects *its* seeds.
-    Exclusions (collection/wishlist/follows/blocked/liked) and the tag profile are
-    shared/global. With `one_per_band` (default) only each band's top item is kept.
+    A scan's **neighbours** are the fans who support its seed albums and/or seed
+    tracks (collection scan → your owned albums; custom scan → its resolved
+    album/track seeds, any mix). Co-ownership is counted only among those
+    neighbours, so each scan reflects *its* seeds. Exclusions (collection/
+    wishlist/follows/blocked/liked) and the tag profile are shared/global. With
+    `one_per_band` (default) only each band's top item is kept.
     """
     me = await get_me(session)
-    seed_album_ids = await _seed_album_ids(session, scan, me)
+    seed_album_ids, seed_track_ids = await _seed_ids(session, scan, me)
     excl = await build_exclusions(session, me)
     tag_profile = await _my_tag_profile(session, me)
-    album_prov, track_prov = await _seed_tag_provenance(session, seed_album_ids, me)
+    album_prov, track_prov = await _seed_tag_provenance(
+        session, seed_album_ids, seed_track_ids, me
+    )
     exclude_seed_tags = exclude_seed_tags or set()
 
-    # This scan's neighbours: fans who support any of its seed albums (not me).
-    neighbours = (
-        select(AlbumSupporter.fan_id)
-        .where(AlbumSupporter.album_id.in_(seed_album_ids), AlbumSupporter.fan_id != me.id)
-        .distinct()
-    )
+    # This scan's neighbours: fans who support any of its seed albums or tracks (not me).
+    neighbours = set()
+    if seed_album_ids:
+        neighbours |= await _scalar_set(
+            session,
+            select(AlbumSupporter.fan_id).where(
+                AlbumSupporter.album_id.in_(seed_album_ids), AlbumSupporter.fan_id != me.id
+            ),
+        )
+    if seed_track_ids:
+        neighbours |= await _scalar_set(
+            session,
+            select(TrackSupporter.fan_id).where(
+                TrackSupporter.track_id.in_(seed_track_ids), TrackSupporter.fan_id != me.id
+            ),
+        )
 
     scored: list[ScoredItem] = []
 

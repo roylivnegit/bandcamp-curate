@@ -22,11 +22,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bandcamp.collection_api import WISHLIST_ITEMS_URL, CollectionApiClient
 from app.bandcamp.follows_api import FollowsApiClient
-from app.bandcamp.mapper import ingest_album, ingest_album_supporters, ingest_fan_collection
-from app.bandcamp.parse import parse_album_page, parse_album_supporters, parse_fan_page
+from app.bandcamp.mapper import (
+    ingest_album,
+    ingest_album_supporters,
+    ingest_fan_collection,
+    ingest_track_page,
+    ingest_track_supporters,
+)
+from app.bandcamp.parse import (
+    parse_album_page,
+    parse_album_supporters,
+    parse_fan_page,
+    parse_track_page,
+)
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl.frontier import enqueue
-from app.db.models import Album
+from app.db.models import Album, Track
 from app.enums import CrawlKind
 from app.scraping.base import FetchRequest, FetchResult
 
@@ -71,6 +82,10 @@ def fan_collection_request(url: str) -> FetchRequest:
 
 def album_request(url: str) -> FetchRequest:
     return FetchRequest(url=url, parser_name="album_page", render=True)
+
+
+def track_request(url: str) -> FetchRequest:
+    return FetchRequest(url=url, parser_name="track_page", render=True)
 
 
 def _within_depth(depth: int, max_depth: int | None) -> bool:
@@ -203,6 +218,63 @@ async def crawl_album(
         url=url,
         kind=str(CrawlKind.ALBUM),
         tracks=acounts.tracks,
+        supporters=scounts.supporters,
+        enqueued=enqueued,
+    )
+
+
+async def crawl_track(
+    session: AsyncSession,
+    fetcher: Fetcher,
+    url: str,
+    *,
+    depth: int = 0,
+    max_depth: int | None = None,
+    supporters_client: SupportersApiClient | None = None,
+) -> CrawlOutcome:
+    """Fetch a standalone track page, ingest track/band/tags/supporters, enqueue
+    supporters. Mirrors `crawl_album` but scoped to one track — its own supporters
+    (people who bought/wishlisted that specific track), not the parent album's; the
+    parent album (if any) is only stubbed, not itself crawled.
+    """
+    result = await fetcher.fetch(track_request(url))
+    if not result.html:
+        raise ValueError(f"no HTML returned for track page {url}")
+
+    pt = parse_track_page(result.html)
+    await ingest_track_page(session, pt)
+
+    track = (
+        await session.execute(select(Track).where(Track.bandcamp_id == pt.track_id))
+    ).scalar_one()
+
+    sup = parse_album_supporters(result.html)  # tralbum-generic; album_id here is the track's id
+
+    # Page through the remaining supporters via the thumbs XHR.
+    if sup.more_available and sup.last_token and sup.album_id:
+        client = supporters_client or SupportersApiClient()
+        seen = {s.username for s in sup.supporters}
+        async for s in client.iter_supporters(
+            sup.album_id, sup.last_token, tralbum_type=sup.tralbum_type
+        ):
+            if s.username not in seen:
+                seen.add(s.username)
+                sup.supporters.append(s)
+
+    scounts = await ingest_track_supporters(session, track, sup)
+
+    enqueued = 0
+    if _within_depth(depth, max_depth):
+        for s in sup.supporters:
+            if s.url and await enqueue(
+                session, s.url, CrawlKind.FAN_COLLECTION, depth=depth + 1
+            ):
+                enqueued += 1
+    await session.commit()
+
+    return CrawlOutcome(
+        url=url,
+        kind=str(CrawlKind.TRACK),
         supporters=scounts.supporters,
         enqueued=enqueued,
     )
