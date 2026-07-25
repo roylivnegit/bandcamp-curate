@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
-from app.enums import BandKind, CrawlKind, CrawlStatus, ItemType, TargetType
+from app.enums import BandKind, CrawlKind, CrawlStatus, ItemType, ScanKind, ScanStatus, TargetType
 
 # JSONB on Postgres; plain JSON elsewhere (e.g. SQLite in tests).
 JSONVariant = JSON().with_variant(JSONB, "postgresql")
@@ -224,15 +224,61 @@ class CurationRule(Base, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
 
 
+class Scan(Base, TimestampMixin):
+    """A named discovery run with its own seed set. Recommendations are per-scan;
+    the exclusion base (collection/wishlist/follows), blocked and liked are shared.
+    The row also acts as the job queue: the Mac poller runs `queued` scans."""
+
+    __tablename__ = "scans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(16), default=ScanKind.CUSTOM, index=True)
+    status: Mapped[str] = mapped_column(String(16), default=ScanStatus.DRAFT, index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    stats: Mapped[dict] = mapped_column(JSONVariant, default=dict)  # credits/counts of last run
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    seeds: Mapped[list["ScanSeed"]] = relationship(
+        back_populates="scan", cascade="all, delete-orphan"
+    )
+
+
+class ScanSeed(Base):
+    """A seed source for a scan — a Bandcamp album or track URL, resolved to an
+    id once crawled."""
+
+    __tablename__ = "scan_seeds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scan_id: Mapped[int] = mapped_column(
+        ForeignKey("scans.id", ondelete="CASCADE"), index=True
+    )
+    url: Mapped[str] = mapped_column(String(512))
+    seed_type: Mapped[str] = mapped_column(String(16))  # ItemType album|track
+    resolved_album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
+    resolved_track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    scan: Mapped["Scan"] = relationship(back_populates="seeds")
+
+
 class Recommendation(Base):
-    """A computed feed entry with an explainable score."""
+    """A computed feed entry with an explainable score. Belongs to one scan."""
 
     __tablename__ = "recommendations"
     __table_args__ = (
-        UniqueConstraint("item_type", "album_id", "track_id", name="uq_recommendation_item"),
+        UniqueConstraint(
+            "scan_id", "item_type", "album_id", "track_id", name="uq_recommendation_item"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    scan_id: Mapped[int] = mapped_column(
+        ForeignKey("scans.id", ondelete="CASCADE"), index=True
+    )
     item_type: Mapped[str] = mapped_column(String(16))  # ItemType
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), index=True)

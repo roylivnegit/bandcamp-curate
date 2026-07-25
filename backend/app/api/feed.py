@@ -4,7 +4,7 @@ recompute. Read endpoints power the UI; recompute re-runs the curation engine.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,13 +23,27 @@ from app.db.models import (
     Follow,
     Like,
     Recommendation,
+    Scan,
     Tag,
     Track,
     TrackTag,
 )
 from app.db.session import get_session
+from app.enums import ScanKind
 
 router = APIRouter(prefix="/api", tags=["feed"])
+
+
+async def _resolve_scan_id(session: AsyncSession, scan_id: int | None) -> int | None:
+    """The scan to scope the feed to: the given id, else the collection scan.
+    Read-only — returns None if no scan exists yet (→ an empty feed)."""
+    if scan_id is not None:
+        return scan_id
+    return (
+        await session.execute(
+            select(Scan.id).where(Scan.kind == str(ScanKind.COLLECTION)).order_by(Scan.id)
+        )
+    ).scalars().first()
 
 
 class Reasons(BaseModel):
@@ -139,7 +153,9 @@ def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
 async def stats(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    scan_id: int | None = Query(None),
 ) -> StatsOut:
+    sid = await _resolve_scan_id(session, scan_id)
     me = (await session.execute(select(Fan.id).where(Fan.is_me.is_(True)))).scalars().first()
     owned = wished = 0
     if me is not None:
@@ -156,7 +172,10 @@ async def stats(
             ),
         )
     return StatsOut(
-        recommendations=await _count(session, select(func.count()).select_from(Recommendation)),
+        recommendations=await _count(
+            session,
+            select(func.count()).select_from(Recommendation).where(Recommendation.scan_id == sid),
+        ),
         fans=await _count(session, select(func.count()).select_from(Fan)),
         neighbours=await _count(
             session, select(func.count()).select_from(Fan).where(Fan.is_me.is_(False))
@@ -183,7 +202,9 @@ async def recommendations(
     label_id: list[int] = Query(default=[]),      # filter by: recommendation's band
     exclude_label_id: list[int] = Query(default=[]),
     sort: str = Query("score", pattern="^(score|neighbours|affinity)$"),
+    scan_id: int | None = Query(None),            # which scan's feed (default: collection)
 ) -> list[RecommendationOut]:
+    sid = await _resolve_scan_id(session, scan_id)
     ab = aliased(Band)
     tb = aliased(Band)
     band_id_col = func.coalesce(Album.band_id, Track.band_id)
@@ -210,7 +231,7 @@ async def recommendations(
         stmt, band_id_col, item_type=item_type, tag=tag, exclude_tag=exclude_tag,
         label_id=label_id, exclude_label_id=exclude_label_id,
     )
-    stmt = stmt.limit(limit).offset(offset)
+    stmt = stmt.where(Recommendation.scan_id == sid).limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
     return [
@@ -238,8 +259,10 @@ async def recommendations_count(
     exclude_tag: list[str] = Query(default=[]),
     label_id: list[int] = Query(default=[]),
     exclude_label_id: list[int] = Query(default=[]),
+    scan_id: int | None = Query(None),
 ) -> dict[str, int]:
     """How many recommendations match the current filters (for the feed's count header)."""
+    sid = await _resolve_scan_id(session, scan_id)
     band_id_col = func.coalesce(Album.band_id, Track.band_id)
     stmt = (
         select(func.count())
@@ -251,18 +274,24 @@ async def recommendations_count(
         stmt, band_id_col, item_type=item_type, tag=tag, exclude_tag=exclude_tag,
         label_id=label_id, exclude_label_id=exclude_label_id,
     )
+    stmt = stmt.where(Recommendation.scan_id == sid)
     return {"count": (await session.execute(stmt)).scalar_one()}
 
 
 @router.get("/facets", response_model=FacetsOut)
-async def facets(session: AsyncSession = Depends(get_session)) -> FacetsOut:
-    """Tags and labels present in the current recommendations, with counts."""
+async def facets(
+    session: AsyncSession = Depends(get_session),
+    scan_id: int | None = Query(None),
+) -> FacetsOut:
+    """Tags and labels present in one scan's recommendations, with counts."""
+    sid = await _resolve_scan_id(session, scan_id)
     tag_rows = (
         await session.execute(
             select(Tag.name, func.count().label("n"))
             .select_from(Recommendation)
             .join(AlbumTag, AlbumTag.album_id == Recommendation.album_id)
             .join(Tag, Tag.id == AlbumTag.tag_id)
+            .where(Recommendation.scan_id == sid)
             .group_by(Tag.name)
             .order_by(func.count().desc(), Tag.name)
         )
@@ -274,6 +303,7 @@ async def facets(session: AsyncSession = Depends(get_session)) -> FacetsOut:
             .outerjoin(Album, Album.id == Recommendation.album_id)
             .outerjoin(Track, Track.id == Recommendation.track_id)
             .join(Band, Band.id == func.coalesce(Album.band_id, Track.band_id))
+            .where(Recommendation.scan_id == sid)
             .group_by(Band.id, Band.name)
             .order_by(func.count().desc(), Band.name)
             .limit(200)
@@ -294,8 +324,14 @@ async def facets(session: AsyncSession = Depends(get_session)) -> FacetsOut:
 async def recompute(
     session: AsyncSession = Depends(get_session),
     exclude_seed_tag: list[str] = Query(default=[]),
+    scan_id: int | None = Query(None),
 ) -> dict[str, Any]:
-    """Recompute the feed. `exclude_seed_tag` drops recs generated from your albums
-    carrying those genres (seed-provenance exclusion)."""
-    scored = await curate(session, exclude_seed_tags=set(exclude_seed_tag))
+    """Recompute one scan's feed (defaults to the collection scan). `exclude_seed_tag`
+    drops recs generated from the scan's seeds carrying those genres."""
+    try:
+        scored = await curate(
+            session, scan_id=scan_id, exclude_seed_tags=set(exclude_seed_tag)
+        )
+    except ValueError as e:  # unknown scan_id → 404, not a 500
+        raise HTTPException(status_code=404, detail=str(e)) from e
     return {"computed": len(scored), "excluded_seed_tags": exclude_seed_tag}

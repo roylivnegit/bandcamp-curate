@@ -9,22 +9,25 @@ from app.curation.engine import curate
 from app.db.base import Base
 from app.db.models import (
     Album,
+    AlbumSupporter,
     AlbumTag,
     Band,
     Fan,
     FanItem,
     Follow,
     Recommendation,
+    Scan,
     Tag,
     Track,
 )
 from app.db.session import get_session
-from app.enums import BandKind, ItemType, TargetType
+from app.enums import BandKind, ItemType, ScanKind, TargetType
 from app.main import app
 
 
 async def _seed(s: AsyncSession) -> None:
-    # me owns A1(B1); neighbour f2 owns A1 + A2(B2) + track T2(B2).
+    # me owns A1(B1); neighbour f2 SUPPORTS A1 (→ f2 is a taste-neighbour of the
+    # collection scan) and owns A1 + A2(B2) + track T2(B2).
     # follow B3 which f2 also owns (A3) → A3 excluded.
     me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
     f2 = Fan(bandcamp_fan_id=2, username="f2", url="https://bandcamp.com/f2")
@@ -46,6 +49,8 @@ async def _seed(s: AsyncSession) -> None:
         FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a3.id),
         FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t2.id),
         Follow(band_id=b3.id, target_type=TargetType.ARTIST),
+        # f2 supports my album A1 → f2 is a neighbour of the collection scan.
+        AlbumSupporter(album_id=a1.id, fan_id=f2.id),
     ])
     # a2 ("Recommend Me") carries two genres → for the AND-filter test.
     rock, jazz = Tag(name="rock"), Tag(name="jazz")
@@ -114,6 +119,12 @@ async def test_recommendations_filter_and_paging(client: AsyncClient) -> None:
 async def test_recompute_endpoint(client: AsyncClient) -> None:
     r = await client.post("/api/recommendations/recompute")
     assert r.status_code == 200 and r.json()["computed"] >= 1
+
+
+async def test_recompute_unknown_scan_404(client: AsyncClient) -> None:
+    # an unknown scan_id is a 404, not a 500 (curate raises, endpoint maps it)
+    r = await client.post("/api/recommendations/recompute?scan_id=999999")
+    assert r.status_code == 404
 
 
 async def test_ui_served(client: AsyncClient) -> None:
@@ -214,7 +225,9 @@ async def test_sort_missing_json_key_sorts_after_real_zero() -> None:
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
         b = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
-        s.add(b)
+        # recs need a scan; the feed defaults to the collection scan.
+        scan = Scan(name="c", kind=str(ScanKind.COLLECTION), status="done")
+        s.add_all([b, scan])
         await s.flush()
         missing, zero, five = (
             Album(bandcamp_id=100 + i, title=t, band_id=b.id)
@@ -224,7 +237,8 @@ async def test_sort_missing_json_key_sorts_after_real_zero() -> None:
         await s.flush()
         def rec(album, reasons):  # noqa: ANN001,ANN202
             return Recommendation(
-                item_type=ItemType.ALBUM, album_id=album.id, score=1.0, reasons=reasons
+                scan_id=scan.id, item_type=ItemType.ALBUM,
+                album_id=album.id, score=1.0, reasons=reasons,
             )
         s.add_all([  # insertion order = id order: missing, zero, five
             rec(missing, {}),

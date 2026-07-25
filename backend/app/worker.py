@@ -16,10 +16,11 @@ mapping jobs onto `runner.process_one`.
 import logging
 from typing import Any
 
+from arq import cron
 from arq.connections import RedisSettings
 
 from app.config import get_settings
-from app.crawl import frontier, runner
+from app.crawl import frontier, runner, scan_service
 from app.crawl.seed import seed_fan_collection
 from app.crawl.service import build_pagination_clients
 from app.db.session import get_sessionmaker
@@ -78,9 +79,34 @@ async def crawl_next(ctx: dict[str, Any]) -> bool:
     return outcome is not None
 
 
+async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
+    """Crawl one scan's seeds and curate it (dispatched by the poller)."""
+    await scan_service.run_scan(
+        ctx["sessionmaker"], ctx["gateway"], scan_id,
+        collection_client=ctx.get("collection_client"),
+        follows_client=ctx.get("follows_client"),
+        supporters_client=ctx.get("supporters_client"),
+        max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
+    )
+    return f"scan {scan_id} complete"
+
+
+async def poll_scans(ctx: dict[str, Any]) -> int:
+    """Cron: claim any `queued` scans and dispatch a `run_scan` job for each.
+    This is how the UI (cloud) triggers a crawl that executes here (the PC)."""
+    async with ctx["sessionmaker"]() as session:
+        ids = await scan_service.claim_queued_scans(session)
+    for scan_id in ids:
+        await ctx["redis"].enqueue_job("run_scan", scan_id)
+    if ids:
+        logger.info("dispatched %d queued scan(s): %s", len(ids), ids)
+    return len(ids)
+
+
 class WorkerSettings:
-    functions = [seed_crawl, crawl_next]
+    functions = [seed_crawl, crawl_next, run_scan]
+    cron_jobs = [cron(poll_scans, second={0, 30}, run_at_startup=True)]
     on_startup = on_startup
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     max_jobs = 4  # keep concurrency modest; the RateLimiter is the real throttle
-    job_timeout = 300
+    job_timeout = 600  # a scan crawl can take a while

@@ -4,7 +4,12 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.curation.engine import compute_recommendations, curate, get_me
+from app.curation.engine import (
+    compute_recommendations,
+    curate,
+    ensure_collection_scan,
+    get_me,
+)
 from app.db.base import Base
 from app.db.models import (
     Album,
@@ -33,9 +38,16 @@ async def session() -> AsyncIterator[AsyncSession]:
     await engine.dispose()
 
 
+async def _recs(s: AsyncSession, **kw):
+    """Compute the collection scan's recommendations (the default feed)."""
+    scan = await ensure_collection_scan(s)
+    return await compute_recommendations(s, scan, **kw)
+
+
 async def _build_graph(s: AsyncSession) -> None:
     """A small world:
       me owns A1(B1, tags rock,jazz) + track T1; wishlists A2; follows B3.
+      F2 & F3 both SUPPORT my A1 → both are collection-scan neighbours.
       F2 owns A1, A2, A3(B3), A4(B4, tag rock), T2.
       F3 owns A4, A5(B5).
     Expected recs: A4 (co=2, tag rock matched) > A5 (co=1); T2 (co=1).
@@ -82,6 +94,9 @@ async def _build_graph(s: AsyncSession) -> None:
         FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t2.id),
         FanItem(fan_id=f3.id, item_type=ItemType.ALBUM, album_id=a4.id),
         FanItem(fan_id=f3.id, item_type=ItemType.ALBUM, album_id=a5.id),
+        # F2 & F3 support my A1 → they're neighbours of the collection scan.
+        AlbumSupporter(album_id=a1.id, fan_id=f2.id),
+        AlbumSupporter(album_id=a1.id, fan_id=f3.id),
     ])
     s.add(Follow(band_id=bands[3].id, target_type=TargetType.ARTIST))  # I follow B3
     await s.commit()
@@ -89,7 +104,7 @@ async def _build_graph(s: AsyncSession) -> None:
 
 async def test_recommendations_exclude_and_rank(session: AsyncSession) -> None:
     await _build_graph(session)
-    scored = await compute_recommendations(session)
+    scored = await _recs(session)
 
     albums = [s for s in scored if s.album_id is not None]
     rec_album_bcids = {}
@@ -125,14 +140,14 @@ async def test_one_recommendation_per_band(session: AsyncSession) -> None:
     ])
     await session.commit()
 
-    deduped = await compute_recommendations(session, one_per_band=True)
+    deduped = await _recs(session, one_per_band=True)
     band_ids = [s.band_id for s in deduped]
     assert len(band_ids) == len(set(band_ids))  # no band appears twice
     # For band 5, the 2-owner album a6 wins over the 1-owner a5.
     b5_rec = next(s for s in deduped if s.band_id == b4.id)
     assert b5_rec.album_id == a6.id
 
-    full = await compute_recommendations(session, one_per_band=False)
+    full = await _recs(session, one_per_band=False)
     assert len(full) > len(deduped)  # dedup actually removed something
 
 
@@ -151,7 +166,7 @@ async def test_blacklist_excludes_candidate(session: AsyncSession) -> None:
     session.add(Blacklist(target_type=str(TargetType.ALBUM), album_id=a4.id, active=True))
     await session.commit()
 
-    scored = await compute_recommendations(session)
+    scored = await _recs(session)
     rec_album_ids = {s.album_id for s in scored if s.album_id}
     assert a4.id not in rec_album_ids  # blacklisted → gone
 
@@ -177,27 +192,23 @@ async def test_follow_by_label_url_excludes_albums_on_that_page(
     session.add(FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a.id))
     await session.commit()
 
-    scored = await compute_recommendations(session)
+    scored = await _recs(session)
     rec_album_ids = {s.album_id for s in scored if s.album_id}
     assert a.id not in rec_album_ids  # excluded via followed label's URL host
 
 
 async def test_seed_tag_provenance_and_exclusion(session: AsyncSession) -> None:
-    # me owns A1 (tagged rock,jazz). f2 supports A1 (album_supporters) and owns A4.
+    # me owns A1 (tagged rock,jazz). f2 supports A1 (from _build_graph) and owns A4.
     # So A4's seed provenance = {rock, jazz}. Excluding "rock" drops A4.
     await _build_graph(session)
     me = (await session.execute(select(Fan).where(Fan.is_me.is_(True)))).scalar_one()
-    a1 = (await session.execute(select(Album).where(Album.bandcamp_id == 1))).scalar_one()
     a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
-    f2 = (await session.execute(select(Fan).where(Fan.username == "f2"))).scalar_one()
-    session.add(AlbumSupporter(album_id=a1.id, fan_id=f2.id))  # f2 supports my A1
-    await session.commit()
 
-    scored = await compute_recommendations(session)
+    scored = await _recs(session)
     a4_rec = next(s for s in scored if s.album_id == a4.id)
     assert set(a4_rec.reasons["seed_tags"]) == {"rock", "jazz"}  # provenance recorded
 
-    filtered = await compute_recommendations(session, exclude_seed_tags={"rock"})
+    filtered = await _recs(session, exclude_seed_tags={"rock"})
     assert a4.id not in {s.album_id for s in filtered}  # generated-from-rock → gone
 
     _ = me  # (me is the seed; used implicitly by the engine)
@@ -222,13 +233,13 @@ async def test_liked_item_excludes_its_band(session: AsyncSession) -> None:
     session.add(FanItem(fan_id=f3.id, item_type=ItemType.ALBUM, album_id=a7.id))
     await session.commit()
 
-    before = {s.album_id for s in await compute_recommendations(session)}
+    before = {s.album_id for s in await _recs(session)}
     assert a4.id in before  # (a7 shares a4's band → deduped to one, but band present)
 
     # Liking a4 excludes its whole band → neither a4 nor its sibling a7 appear.
     session.add(Like(item_type=str(ItemType.ALBUM), album_id=a4.id))
     await session.commit()
-    after = {s.album_id for s in await compute_recommendations(session)}
+    after = {s.album_id for s in await _recs(session)}
     assert a4.id not in after and a7.id not in after
 
 
