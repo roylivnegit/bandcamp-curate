@@ -316,17 +316,24 @@ feed.addEventListener('click',async e=>{
   const tag=e.target.closest('.chip.tag'); if(tag){ tagState[tag.dataset.tag]='by'; refresh(); return; }
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
   const blk=e.target.closest('[data-block]'); if(blk){
-    blk.disabled=true; const c=blk.closest('.card'); c.classList.add('blocking');   // implode + red flash
-    await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
+    blk.disabled=true; const c=blk.closest('.card');
+    let ok=false;                       // gate the UI on the MUTATION only
+    try{ ok=(await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})})).ok; }catch{}
+    if(!ok){ blk.disabled=false; return; }  // failed - keep the card, allow retry
+    c.classList.add('blocking');        // implode + red flash - server confirmed
     setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
-    await loadFacets(); await loadBlocked(); return;
+    try{ await loadFacets(); await loadBlocked(); }catch{}  // best-effort refresh; must not undo the block
+    return;
   }
   const lk=e.target.closest('[data-like-album],[data-like-track]'); if(lk){
-    lk.disabled=true; const c=lk.closest('.card'); c.classList.add('liking');        // swipe-right + teal flash
+    lk.disabled=true; const c=lk.closest('.card');
     const body=lk.dataset.likeAlbum?{album_id:+lk.dataset.likeAlbum}:{track_id:+lk.dataset.likeTrack};
-    await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    let ok=false;
+    try{ ok=(await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).ok; }catch{}
+    if(!ok){ lk.disabled=false; return; }
+    c.classList.add('liking');          // swipe-right + teal flash - server confirmed
     setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
-    await loadFacets(); await loadLiked();
+    try{ await loadFacets(); await loadLiked(); }catch{}
   }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));

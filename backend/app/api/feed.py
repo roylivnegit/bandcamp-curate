@@ -118,14 +118,16 @@ def _rec_order(sort: str):
     `reasons` JSON (portable extraction via as_integer/as_float); score is a
     column. Every option breaks ties on score then id for a stable page order."""
     tie = (Recommendation.score.desc(), Recommendation.id)
-    # COALESCE missing JSON keys to 0 so they sort LAST on DESC — Postgres would
-    # otherwise put NULLs first (NULLS FIRST is the default for DESC).
+    # Order on the reasons-JSON keys. Push rows MISSING the key last via an
+    # `IS NULL` sort key (False<True → non-null first) rather than COALESCE-to-0,
+    # which would conflate a missing key with a legitimate 0. Portable: the
+    # boolean expression sorts 0/1 on both Postgres and SQLite.
     if sort == "neighbours":
-        co = func.coalesce(Recommendation.reasons["co_owners"].as_integer(), 0)
-        return (co.desc(), *tie)
+        co = Recommendation.reasons["co_owners"].as_integer()
+        return (co.is_(None).asc(), co.desc(), *tie)
     if sort == "affinity":
-        aff = func.coalesce(Recommendation.reasons["tag_affinity"].as_float(), 0.0)
-        return (aff.desc(), *tie)
+        aff = Recommendation.reasons["tag_affinity"].as_float()
+        return (aff.is_(None).asc(), aff.desc(), *tie)
     return tie  # "score" (default)
 
 
