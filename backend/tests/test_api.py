@@ -110,7 +110,7 @@ async def test_ui_served(client: AsyncClient) -> None:
     r = await client.get("/")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
-    assert "crate" in r.text and "/api/recommendations" in r.text
+    assert "Bandcamp suggestions" in r.text and "/api/recommendations" in r.text
 
 
 async def test_recommendation_has_band_id(client: AsyncClient) -> None:
@@ -178,6 +178,17 @@ async def test_recommendations_count_matches_filters(client: AsyncClient) -> Non
 
     # a followed band / owned item is excluded, so a bogus label yields 0
     assert (await client.get("/api/recommendations/count?label_id=99999")).json()["count"] == 0
+
+
+async def test_sort_param(client: AsyncClient) -> None:
+    # every valid sort orders on a real column (score) or a reasons-JSON key
+    # (co_owners / tag_affinity) — all must return the feed, not error.
+    for s in ("score", "neighbours", "affinity"):
+        r = await client.get(f"/api/recommendations?sort={s}")
+        assert r.status_code == 200 and len(r.json()) >= 1
+        assert [x["rank"] for x in r.json()] == list(range(1, len(r.json()) + 1))
+    # unknown sort is rejected
+    assert (await client.get("/api/recommendations?sort=bogus")).status_code == 422
 
 
 async def test_facets(client: AsyncClient) -> None:

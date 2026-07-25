@@ -99,6 +99,22 @@ def _has_tag(names: list[str]):
     return album_match | track_match
 
 
+def _rec_order(sort: str):
+    """ORDER BY clause for the feed. `co_owners`/`tag_affinity` live in the
+    `reasons` JSON (portable extraction via as_integer/as_float); score is a
+    column. Every option breaks ties on score then id for a stable page order."""
+    tie = (Recommendation.score.desc(), Recommendation.id)
+    # COALESCE missing JSON keys to 0 so they sort LAST on DESC — Postgres would
+    # otherwise put NULLs first (NULLS FIRST is the default for DESC).
+    if sort == "neighbours":
+        co = func.coalesce(Recommendation.reasons["co_owners"].as_integer(), 0)
+        return (co.desc(), *tie)
+    if sort == "affinity":
+        aff = func.coalesce(Recommendation.reasons["tag_affinity"].as_float(), 0.0)
+        return (aff.desc(), *tie)
+    return tie  # "score" (default)
+
+
 def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
                        label_id, exclude_label_id):
     """Apply the shared feed filters (item_type / tags / labels) to a query."""
@@ -164,6 +180,7 @@ async def recommendations(
     exclude_tag: list[str] = Query(default=[]),   # filter out: album has ANY of these tags
     label_id: list[int] = Query(default=[]),      # filter by: recommendation's band
     exclude_label_id: list[int] = Query(default=[]),
+    sort: str = Query("score", pattern="^(score|neighbours|affinity)$"),
 ) -> list[RecommendationOut]:
     ab = aliased(Band)
     tb = aliased(Band)
@@ -185,7 +202,7 @@ async def recommendations(
         .outerjoin(Track, Track.id == Recommendation.track_id)
         .outerjoin(ab, ab.id == Album.band_id)
         .outerjoin(tb, tb.id == Track.band_id)
-        .order_by(Recommendation.score.desc(), Recommendation.id)
+        .order_by(*_rec_order(sort))
     )
     stmt = _apply_rec_filters(
         stmt, band_id_col, item_type=item_type, tag=tag, exclude_tag=exclude_tag,
