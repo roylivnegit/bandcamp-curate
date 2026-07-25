@@ -159,25 +159,30 @@ _PAGE = """<!doctype html>
   main{ margin:8px 0 60px; }
   .card{ position:relative; display:flex; gap:15px; align-items:flex-start; overflow:hidden;
     background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 40%),var(--panel);
-    border:1px solid var(--line); border-radius:15px; padding:15px 17px; margin-bottom:11px; }
-  .card:hover{ border-color:var(--line2); }
+    border:1px solid var(--line); border-radius:15px; padding:15px 16px 15px 19px; margin-bottom:11px;
+    transition:border-color .16s, transform .16s, box-shadow .16s; }
+  .card:hover{ border-color:var(--line2); transform:translateY(-1px); box-shadow:0 16px 34px -22px rgba(0,0,0,.7); }
+  .card::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background:linear-gradient(var(--accent),#2dd4bf); opacity:.28; transition:opacity .16s; }
+  .card:hover::before{ opacity:.9; }
   @keyframes evaporate-like{
-    0%{ opacity:1; filter:blur(0); transform:translateY(0) scale(1); }
+    0%{ opacity:1; filter:blur(0); transform:translateY(0) scale(1); max-height:400px; }
     15%{ box-shadow:0 0 0 2px var(--accent); }
     60%{ opacity:.28; filter:blur(4px); transform:translateY(-14px) scale(1.015); }
     100%{ opacity:0; filter:blur(11px); transform:translateY(-30px) scale(1.03);
       max-height:0; margin-bottom:0; padding-top:0; padding-bottom:0; border-width:0; } }
   @keyframes evaporate-block{
-    0%{ opacity:1; filter:blur(0); transform:translateY(0) scale(1); }
+    0%{ opacity:1; filter:blur(0); transform:translateY(0) scale(1); max-height:400px; }
     15%{ box-shadow:0 0 0 2px var(--danger); }
     60%{ opacity:.28; filter:blur(4px); transform:translateY(-14px) scale(1.015); }
     100%{ opacity:0; filter:blur(11px); transform:translateY(-30px) scale(1.03);
       max-height:0; margin-bottom:0; padding-top:0; padding-bottom:0; border-width:0; } }
-  .card.liking{ animation:evaporate-like 1.3s ease forwards; pointer-events:none; }
-  .card.blocking{ animation:evaporate-block 1.3s ease forwards; pointer-events:none; }
-  .score{ flex:none; width:58px; text-align:center; padding-top:2px; }
-  .score b{ display:block; font-size:22px; font-weight:800; color:var(--accent); font-variant-numeric:tabular-nums; line-height:1; }
-  .score span{ font-size:9.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--faint); }
+  .card.liking{ animation:evaporate-like 0.8s ease-out forwards; pointer-events:none; }
+  .card.blocking{ animation:evaporate-block 0.8s ease-out forwards; pointer-events:none; }
+  .score{ flex:none; width:60px; height:60px; border-radius:14px; background:var(--panel2); border:1px solid var(--line);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
+  .score b{ font-size:22px; font-weight:800; color:var(--accent); font-variant-numeric:tabular-nums; line-height:1; }
+  .score span{ font-size:9px; text-transform:uppercase; letter-spacing:.09em; color:var(--faint); }
   .body{ flex:1; min-width:0; }
   .title{ font-weight:700; font-size:15.5px; }
   .title .type{ font-size:9.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent2);
@@ -189,6 +194,7 @@ _PAGE = """<!doctype html>
   .meta{ margin-top:9px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
   .chip{ background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:2px 10px; color:var(--text); }
   .chip.tag{ color:var(--accent); cursor:pointer; }
+  .chip.signal{ color:var(--accent); border-color:rgba(94,234,212,.32); background:rgba(94,234,212,.07); font-weight:600; }
   .actions{ margin-top:13px; display:flex; gap:8px; align-items:center; justify-content:flex-end; }
   .act{ background:none; border:1px solid var(--line); color:var(--muted); border-radius:9px;
     padding:6px 13px; font-size:13px; font-weight:500; cursor:pointer; line-height:1; }
@@ -444,9 +450,8 @@ function card(r){
       <div class="title">${esc(r.title)||'-'}<span class="type">${r.item_type}</span></div>
       <div class="band" data-label="${r.band_id||''}" data-name="${esc(r.band_name)}">${esc(r.band_name)||'unknown artist'}${hnd?`<span class="handle">${esc(hnd)}</span>`:''}</div>
       <div class="meta">
-        <span class="chip">${co} neighbour${co===1?'':'s'} own this</span>
+        <span class="chip signal">◈ ${co} neighbour${co===1?'':'s'} own this</span>
         ${tags}
-        ${(r.reasons.seed_tags||[]).length?`<span class="chip" title="genres of the scan seeds that surfaced this">via ${esc((r.reasons.seed_tags||[]).slice(0,3).join(', '))}</span>`:''}
       </div>
       <div class="actions">
         <button class="act like" data-like-album="${r.album_id||''}" data-like-track="${r.track_id||''}">♥ like</button>
@@ -505,7 +510,7 @@ feed.addEventListener('click',async e=>{
     try{ ok=(await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})})).ok; }catch{}
     if(!ok){ blk.disabled=false; return; }
     c.classList.add('blocking');
-    setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
+    setTimeout(()=>{ c.remove(); updateCount(); }, 800);
     try{ await loadFacets(); await loadBlocked(); }catch{}
     return;
   }
@@ -516,7 +521,7 @@ feed.addEventListener('click',async e=>{
     try{ ok=(await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).ok; }catch{}
     if(!ok){ lk.disabled=false; return; }
     c.classList.add('liking');
-    setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
+    setTimeout(()=>{ c.remove(); updateCount(); }, 800);
     try{ await loadFacets(); await loadLiked(); }catch{}
   }
 });
