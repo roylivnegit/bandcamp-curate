@@ -1,0 +1,106 @@
+<!-- @dsCard group="Pages" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Scan feed</title>
+<style>
+  :root{
+    --bg:#0b0d12;--panel:#141924;--panel2:#1a2030;--line:#293142;--line2:#38425a;
+    --text:#eef1f7;--muted:#9aa4b6;--faint:#6a7488;
+    --teal:#5eead4;--teal-ink:#04241d;--violet:#c4b5fd;--orange:#ffb168;--danger:#fb7185;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--text);font:15px/1.5 var(--font);
+    background:radial-gradient(1000px 460px at 12% -10%,rgba(94,234,212,.08),transparent 60%),var(--bg)}
+  .wrap{max-width:760px;margin:0 auto;padding:26px 22px 60px}
+  .nav{display:flex;align-items:center;gap:12px}
+  .back{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:10px;padding:8px 13px;font-size:13px;cursor:pointer}
+  .back:hover{color:var(--text);border-color:var(--line2)}
+  .title{font-size:21px;font-weight:800;letter-spacing:-.02em}
+  .title .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--teal);
+    border:1px solid rgba(94,234,212,.3);border-radius:999px;padding:2px 9px;margin-left:8px;vertical-align:middle}
+
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:20px}
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+  .seg button{background:none;border:0;color:var(--muted);padding:9px 17px;font-size:13.5px;cursor:pointer}
+  .seg button.on{background:var(--panel2);color:var(--teal)}
+  .btn{border:0;border-radius:11px;padding:9px 15px;font-weight:600;font-size:13.5px;cursor:pointer;background:var(--panel);color:var(--muted);border:1px solid var(--line)}
+  .spacer{flex:1}
+  .count{color:var(--muted);font-size:13px;margin:16px 0 12px}.count b{color:var(--text);font-size:16px}
+
+  .card{position:relative;display:flex;gap:15px;align-items:flex-start;
+    background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 40%),var(--panel);
+    border:1px solid var(--line);border-radius:15px;padding:15px 17px;margin-bottom:11px;overflow:hidden}
+  .card:hover{border-color:var(--line2)}
+  .score{flex:none;width:58px;text-align:center;padding-top:2px}
+  .score b{display:block;font-size:22px;font-weight:800;color:var(--teal);font-variant-numeric:tabular-nums;line-height:1}
+  .score span{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--faint)}
+  .bd{flex:1;min-width:0}
+  .ttl{font-weight:700;font-size:15.5px}
+  .ttl .type{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--violet);
+    border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:8px}
+  .band{color:var(--muted);font-size:13px;margin-top:3px}
+  .band .handle{color:var(--violet);opacity:.9}.band .handle::before{content:"·";margin:0 6px;color:var(--faint)}
+  .meta{margin-top:9px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--text)}
+  .chip.tag{color:var(--teal)}
+  .actions{margin-top:13px;display:flex;gap:8px;justify-content:flex-end}
+  .act{background:none;border:1px solid var(--line);color:var(--muted);border-radius:9px;padding:6px 13px;font-size:13px;font-weight:500;cursor:pointer}
+  .act.like:hover{border-color:var(--teal);color:var(--teal)}.act.block:hover{border-color:var(--danger);color:var(--danger)}
+  .listen{color:var(--teal);text-decoration:none;font-weight:700;border:1px solid var(--teal);border-radius:9px;padding:6px 13px;font-size:13px}
+  .listen:hover{background:var(--teal);color:var(--teal-ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="nav">
+    <button class="back">← Scans</button>
+    <span class="title">Deep forest psy dig <span class="tag">custom</span></span>
+  </div>
+
+  <div class="controls">
+    <div class="seg"><button class="on">All</button><button>Albums</button><button>Tracks</button></div>
+    <button class="btn">Sort · Top score ▾</button>
+    <div class="spacer"></div>
+    <button class="btn">♥ Liked (51)</button>
+    <button class="btn">Blocked (7)</button>
+  </div>
+
+  <div class="count"><b>412</b> results</div>
+
+  <div class="card">
+    <div class="score"><b>4.0</b><span>score</span></div>
+    <div class="bd">
+      <div class="ttl">Ou-Topos — Album<span class="type">album</span></div>
+      <div class="band">Inpsyde Out<span class="handle">digitalshamansrecords</span></div>
+      <div class="meta"><span class="chip">2 neighbours own this</span>
+        <span class="chip tag">psytrance</span><span class="chip tag">forest</span>
+        <span class="chip">via ambient, downtempo</span></div>
+      <div class="actions">
+        <button class="act like">♥ like</button>
+        <button class="act block">⊘ block</button>
+        <a class="listen">Bandcamp ↗</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="score"><b>3.8</b><span>score</span></div>
+    <div class="bd">
+      <div class="ttl">True Tone<span class="type">album</span></div>
+      <div class="band">Spectrum Vision<span class="handle">spectrumvision</span></div>
+      <div class="meta"><span class="chip">2 neighbours own this</span>
+        <span class="chip tag">psybient</span><span class="chip tag">downtempo</span></div>
+      <div class="actions">
+        <button class="act like">♥ like</button>
+        <button class="act block">⊘ block</button>
+        <a class="listen">Bandcamp ↗</a>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

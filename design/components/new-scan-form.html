@@ -1,0 +1,68 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>New scan form</title>
+<style>
+  :root{
+    --bg:#0b0d12;--panel:#141924;--panel2:#1a2030;--line:#293142;--line2:#38425a;
+    --text:#eef1f7;--muted:#9aa4b6;--faint:#6a7488;
+    --teal:#5eead4;--teal-ink:#04241d;--violet:#c4b5fd;--danger:#fb7185;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--font);padding:24px}
+  .card{max-width:520px;background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 40%),var(--panel);
+    border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:0 18px 40px -22px rgba(0,0,0,.75)}
+  .hdr{font-weight:700;font-size:16px;margin-bottom:2px}
+  .hint{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);margin:0 0 6px;font-weight:700}
+  .ti{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:10px;padding:11px 13px;font-size:14px;outline:none;transition:border-color .15s}
+  .ti:focus{border-color:var(--teal)}
+  .ti::placeholder{color:var(--faint)}
+  .seedadd{display:flex;gap:8px;margin-top:14px}
+  .seedadd .ti{flex:1}
+  .btn{border:0;border-radius:10px;padding:11px 16px;font-weight:700;font-size:13.5px;cursor:pointer;white-space:nowrap}
+  .btn.primary{background:linear-gradient(180deg,var(--teal),#37d3bd);color:var(--teal-ink)}
+  .btn.ghost{background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .btn.ghost:hover{color:var(--text);border-color:var(--line2)}
+  .seedlist{margin:12px 0 4px;display:flex;flex-direction:column;gap:7px}
+  .seed{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:8px 12px;font-size:13px}
+  .seed .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--teal);
+    border:1px solid rgba(94,234,212,.3);border-radius:6px;padding:1px 6px;flex:none}
+  .seed .u{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+  .seed .rm{cursor:pointer;color:var(--faint);padding:0 4px;font-size:16px}
+  .seed .rm:hover{color:var(--danger)}
+  .foot{display:flex;justify-content:space-between;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="hdr">New scan</div>
+    <div class="hint">Name it, then paste the Bandcamp <b>album</b> URLs to seed discovery from. Your Mac runs the crawl; recommendations come from those albums' supporters.</div>
+
+    <label>Scan name</label>
+    <input class="ti" value="Deep forest psy dig" />
+
+    <div class="seedadd">
+      <input class="ti" placeholder="Paste a Bandcamp album URL, then Add" />
+      <button class="btn ghost">Add</button>
+    </div>
+
+    <div class="seedlist">
+      <div class="seed"><span class="tag">album</span><span class="u">https://cerebro-spinal.bandcamp.com/album/panchito</span><span class="rm">×</span></div>
+      <div class="seed"><span class="tag">album</span><span class="u">https://digitalshamansrecords.bandcamp.com/album/ou-topos</span><span class="rm">×</span></div>
+      <div class="seed"><span class="tag">album</span><span class="u">https://spectrumvision.bandcamp.com/album/true-tone</span><span class="rm">×</span></div>
+    </div>
+
+    <div class="foot">
+      <button class="btn ghost">Cancel</button>
+      <button class="btn primary">Create &amp; queue</button>
+    </div>
+  </div>
+</body>
+</html>
