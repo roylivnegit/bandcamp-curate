@@ -423,7 +423,9 @@ async def curate(
     else:
         scan = (
             await session.execute(select(Scan).where(Scan.id == scan_id))
-        ).scalar_one()
+        ).scalar_one_or_none()
+        if scan is None:
+            raise ValueError("scan not found")
     scored = await compute_recommendations(
         session, scan, limit=limit, exclude_seed_tags=exclude_seed_tags
     )

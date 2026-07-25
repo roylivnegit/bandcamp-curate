@@ -4,7 +4,7 @@ recompute. Read endpoints power the UI; recompute re-runs the curation engine.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -326,7 +326,10 @@ async def recompute(
 ) -> dict[str, Any]:
     """Recompute one scan's feed (defaults to the collection scan). `exclude_seed_tag`
     drops recs generated from the scan's seeds carrying those genres."""
-    scored = await curate(
-        session, scan_id=scan_id, exclude_seed_tags=set(exclude_seed_tag)
-    )
+    try:
+        scored = await curate(
+            session, scan_id=scan_id, exclude_seed_tags=set(exclude_seed_tag)
+        )
+    except ValueError as e:  # unknown scan_id → 404, not a 500
+        raise HTTPException(status_code=404, detail=str(e)) from e
     return {"computed": len(scored), "excluded_seed_tags": exclude_seed_tag}

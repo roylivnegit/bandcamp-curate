@@ -119,6 +119,12 @@ async def test_recompute_endpoint(client: AsyncClient) -> None:
     assert r.status_code == 200 and r.json()["computed"] >= 1
 
 
+async def test_recompute_unknown_scan_404(client: AsyncClient) -> None:
+    # an unknown scan_id is a 404, not a 500 (curate raises, endpoint maps it)
+    r = await client.post("/api/recommendations/recompute?scan_id=999999")
+    assert r.status_code == 404
+
+
 async def test_ui_served(client: AsyncClient) -> None:
     r = await client.get("/")
     assert r.status_code == 200

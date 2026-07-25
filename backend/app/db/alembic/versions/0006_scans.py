@@ -21,6 +21,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from app.db.models import JSONVariant  # JSONB on Postgres, JSON elsewhere
+
 revision: str = "0006_scans"
 down_revision: str | None = "0005_url_not_unique"
 branch_labels: str | Sequence[str] | None = None
@@ -47,7 +49,7 @@ def upgrade() -> None:
             sa.Column("kind", sa.String(length=16), nullable=False, server_default="custom"),
             sa.Column("status", sa.String(length=16), nullable=False, server_default="draft"),
             sa.Column("error", sa.Text()),
-            sa.Column("stats", sa.JSON()),
+            sa.Column("stats", JSONVariant),
             sa.Column("last_run_at", sa.DateTime(timezone=True)),
             sa.Column(
                 "created_at", sa.DateTime(timezone=True),
@@ -67,7 +69,8 @@ def upgrade() -> None:
             sa.Column("id", sa.Integer(), primary_key=True),
             sa.Column(
                 "scan_id", sa.Integer(),
-                sa.ForeignKey("scans.id", ondelete="CASCADE"), index=True,
+                sa.ForeignKey("scans.id", ondelete="CASCADE"),
+                nullable=False, index=True,
             ),
             sa.Column("url", sa.String(length=512), nullable=False),
             sa.Column("seed_type", sa.String(length=16), nullable=False),
