@@ -239,11 +239,13 @@ async def test_sort_missing_json_key_sorts_after_real_zero() -> None:
 
     app.dependency_overrides[get_session] = _override
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://t") as c:
-        rows = (await c.get("/api/recommendations?sort=affinity")).json()
-    app.dependency_overrides.clear()
-    await engine.dispose()
-    assert [r["title"] for r in rows] == ["five", "zero", "missing"]
+    try:
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            rows = (await c.get("/api/recommendations?sort=affinity")).json()
+        assert [r["title"] for r in rows] == ["five", "zero", "missing"]
+    finally:  # guarantee teardown even if the request/assert raises
+        app.dependency_overrides.clear()
+        await engine.dispose()
 
 
 async def test_facets(client: AsyncClient) -> None:

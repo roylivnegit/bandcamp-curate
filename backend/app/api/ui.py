@@ -317,25 +317,23 @@ feed.addEventListener('click',async e=>{
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
   const blk=e.target.closest('[data-block]'); if(blk){
     blk.disabled=true; const c=blk.closest('.card');
-    try{
-      const resp=await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
-      if(!resp.ok) throw new Error('block '+resp.status);
-      c.classList.add('blocking');   // implode + red flash - only after the server confirms
-      setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
-      await loadFacets(); await loadBlocked();
-    }catch(err){ blk.disabled=false; console.error('block failed:', err); }
+    let ok=false;                       // gate the UI on the MUTATION only
+    try{ ok=(await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})})).ok; }catch{}
+    if(!ok){ blk.disabled=false; return; }  // failed - keep the card, allow retry
+    c.classList.add('blocking');        // implode + red flash - server confirmed
+    setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
+    try{ await loadFacets(); await loadBlocked(); }catch{}  // best-effort refresh; must not undo the block
     return;
   }
   const lk=e.target.closest('[data-like-album],[data-like-track]'); if(lk){
     lk.disabled=true; const c=lk.closest('.card');
     const body=lk.dataset.likeAlbum?{album_id:+lk.dataset.likeAlbum}:{track_id:+lk.dataset.likeTrack};
-    try{
-      const resp=await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      if(!resp.ok) throw new Error('like '+resp.status);
-      c.classList.add('liking');     // swipe-right + teal flash - only after the server confirms
-      setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
-      await loadFacets(); await loadLiked();
-    }catch(err){ lk.disabled=false; console.error('like failed:', err); }
+    let ok=false;
+    try{ ok=(await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).ok; }catch{}
+    if(!ok){ lk.disabled=false; return; }
+    c.classList.add('liking');          // swipe-right + teal flash - server confirmed
+    setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
+    try{ await loadFacets(); await loadLiked(); }catch{}
   }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));
