@@ -316,17 +316,26 @@ feed.addEventListener('click',async e=>{
   const tag=e.target.closest('.chip.tag'); if(tag){ tagState[tag.dataset.tag]='by'; refresh(); return; }
   const band=e.target.closest('.band'); if(band && band.dataset.label){ labelFilter={id:band.dataset.label,name:band.dataset.name}; refresh(); return; }
   const blk=e.target.closest('[data-block]'); if(blk){
-    blk.disabled=true; const c=blk.closest('.card'); c.classList.add('blocking');   // implode + red flash
-    await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
-    setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
-    await loadFacets(); await loadBlocked(); return;
+    blk.disabled=true; const c=blk.closest('.card');
+    try{
+      const resp=await fetch('/api/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_id:+blk.dataset.block})});
+      if(!resp.ok) throw new Error('block '+resp.status);
+      c.classList.add('blocking');   // implode + red flash - only after the server confirms
+      setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
+      await loadFacets(); await loadBlocked();
+    }catch(err){ blk.disabled=false; console.error('block failed:', err); }
+    return;
   }
   const lk=e.target.closest('[data-like-album],[data-like-track]'); if(lk){
-    lk.disabled=true; const c=lk.closest('.card'); c.classList.add('liking');        // swipe-right + teal flash
+    lk.disabled=true; const c=lk.closest('.card');
     const body=lk.dataset.likeAlbum?{album_id:+lk.dataset.likeAlbum}:{track_id:+lk.dataset.likeTrack};
-    await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
-    await loadFacets(); await loadLiked();
+    try{
+      const resp=await fetch('/api/likes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!resp.ok) throw new Error('like '+resp.status);
+      c.classList.add('liking');     // swipe-right + teal flash - only after the server confirms
+      setTimeout(()=>{ c.remove(); updateCount(); }, 1300);
+      await loadFacets(); await loadLiked();
+    }catch(err){ lk.disabled=false; console.error('like failed:', err); }
   }
 });
 moreBtn.addEventListener('click',()=>loadPage(false));
