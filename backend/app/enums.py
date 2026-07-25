@@ -36,3 +36,16 @@ class CrawlStatus(StrEnum):
     IN_PROGRESS = "in_progress"
     DONE = "done"
     ERROR = "error"
+
+
+class ScanKind(StrEnum):
+    COLLECTION = "collection"  # seeds = your own collection (the original run)
+    CUSTOM = "custom"          # seeds = user-supplied album/track URLs
+
+
+class ScanStatus(StrEnum):
+    DRAFT = "draft"        # created, not yet queued
+    QUEUED = "queued"      # waiting for the Mac poller to pick it up
+    RUNNING = "running"    # a crawl is executing on the PC
+    DONE = "done"          # crawl + curation finished
+    ERROR = "error"        # crawl failed (see scans.error)

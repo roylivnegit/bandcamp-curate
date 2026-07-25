@@ -7,14 +7,25 @@ from sqlalchemy.pool import StaticPool
 
 from app.curation.engine import curate
 from app.db.base import Base
-from app.db.models import Album, AlbumTag, Band, Fan, FanItem, Follow, Tag, Track
+from app.db.models import (
+    Album,
+    AlbumSupporter,
+    AlbumTag,
+    Band,
+    Fan,
+    FanItem,
+    Follow,
+    Tag,
+    Track,
+)
 from app.db.session import get_session
 from app.enums import BandKind, ItemType, TargetType
 from app.main import app
 
 
 async def _seed(s: AsyncSession) -> None:
-    # me owns A1(B1); neighbour f2 owns A1 + A2(B2) + track T2(B2).
+    # me owns A1(B1); neighbour f2 SUPPORTS A1 (→ f2 is a taste-neighbour of the
+    # collection scan) and owns A1 + A2(B2) + track T2(B2).
     # follow B3 which f2 also owns (A3) → A3 excluded.
     me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
     f2 = Fan(bandcamp_fan_id=2, username="f2", url="https://bandcamp.com/f2")
@@ -36,6 +47,8 @@ async def _seed(s: AsyncSession) -> None:
         FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a3.id),
         FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t2.id),
         Follow(band_id=b3.id, target_type=TargetType.ARTIST),
+        # f2 supports my album A1 → f2 is a neighbour of the collection scan.
+        AlbumSupporter(album_id=a1.id, fan_id=f2.id),
     ])
     # a2 ("Recommend Me") carries two genres → for the AND-filter test.
     rock, jazz = Tag(name="rock"), Tag(name="jazz")

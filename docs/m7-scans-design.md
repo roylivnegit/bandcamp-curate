@@ -93,12 +93,11 @@ re-fetched — the graph is shared; only curation is re-scoped.
   custom-seed crawl path. Tests + a live single-scan run.
 - **Stage 3 — UI:** scan list, new-scan flow, drill-in wiring, status polling.
 
-## Open questions
-1. **Track seeds** — for a pasted *track* URL, crawl that track's own supporters
-   (`tralbum_type='t'`), or resolve to its parent album and use album supporters? (I lean: use the
-   track's own supporters — truest to what you pasted.)
-2. **Budget** — keep one global `crawl_max_requests` cap for now, or a per-scan cap? (I lean: global
-   now, per-scan later.)
-3. **Poller cadence / packaging** — a standalone `scripts/scan_worker.py` loop (simple, run it in a
-   terminal/login item) vs folding into the existing ARQ worker? (I lean: standalone loop — no Redis
-   needed, matches the Redis-free crawl path.)
+## Resolved decisions (2026-07-25)
+1. **Track seeds** — crawl the pasted **track's own supporters** (`tralbum_type='t'`), not the
+   parent album's. Truest to what the user pasted.
+2. **Budget** — keep **one global** `crawl_max_requests` cap across all scans for now; per-scan caps
+   can come later.
+3. **Poller** — **fold into the existing ARQ worker** (`app/worker.py`) via an ARQ `cron` job that
+   periodically claims + runs `queued` scans. Implies the Mac runs Redis + the arq worker (as the
+   crawl worker already does). Stage 2 adds the `poll_scans` cron job + `run_scan` job.
