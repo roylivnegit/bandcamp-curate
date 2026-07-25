@@ -133,9 +133,37 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   (`arq app.worker.WorkerSettings`). Dockerfile fixed (was `pip install .` before copying `app/` →
   build failed); baked image = a real deployable (no host source needed). `docker-compose.dev.yml`
   overlay bind-mounts source + adds `--reload` for dev. Verified live: all services healthy, api
-  serves the real data in-container, worker connected to Redis. **Cloud target (Fly/Railway/VPS)
-  not wired yet** — the compose stack is the artifact; a cloud deploy would push this image + a
-  managed Postgres/Redis.
+  serves the real data in-container, worker connected to Redis.
+- **M6 cloud deploy — Option A (free, in progress 2026-07-25):** hosted **read** API on Neon, crawl
+  stays **local**. Architecture: **Neon** (managed Postgres, eu-central-1, free) holds the data; a
+  free **Render** web service (Frankfurt, Docker) reads Neon and serves the feed UI anywhere (phone);
+  **crawls run on the Mac** on-demand and write to Neon (you control Nimble spend, using the local
+  key). **No Redis, no 24/7 worker** — on-demand crawl uses the Redis-free `runner.run_until_empty`,
+  and the API only reads Postgres.
+  - **DB URL normalizer** (`app/db/url.normalized_async_url`, wired into `get_engine` + alembic env):
+    managed providers hand you `postgresql://…?sslmode=require&channel_binding=require` with no
+    `+asyncpg` — the normalizer forces the async driver, maps `sslmode`→asyncpg's `ssl` connect arg,
+    strips libpq-only params; no-ops for local/sqlite URLs. Use Neon's **DIRECT** (non-pooled)
+    endpoint — the `-pooler` one is PgBouncer/txn-mode and breaks asyncpg prepared statements.
+  - **`.env` quoting:** the Neon URL contains `&`, so it MUST be single-quoted in `.env` or
+    `set -a && . ../.env` backgrounds on the ampersand and silently falls back to the config default
+    (localhost). Bit me once — quoted now.
+  - **Data migrated** (2026-07-25): `pg_dump` local compose PG → restore into Neon via the postgres
+    container's `psql` (`--no-owner --no-privileges`, direct endpoint). Row counts match exactly
+    (fans 97 / bands 5,252 / albums 15,938 / tracks 42,269 / fan_items 22,606 / album_tags 35,156),
+    schema at `0005`. `.env` `DATABASE_URL` now points at Neon direct → host scripts/uvicorn hit Neon.
+  - **Deployable validated:** `render.yaml` (free Frankfurt web service, `backend/Dockerfile`,
+    `/health`, `DATABASE_URL` set in-dashboard). Dockerfile CMD binds `${PORT:-8000}` (Render injects
+    PORT; compose still overrides to 8000). Built the image and ran it with `PORT=10000` +
+    `DATABASE_URL=<neon>` → `/health`, UI, and `/api/stats` all serve **live Neon data**. Hosted API
+    needs only `DATABASE_URL` (all config fields have safe defaults; no Nimble key / Redis on cloud).
+  - **Remaining (user click-ops, browser OAuth — can't automate):** push repo to GitHub (private ok;
+    `.env` is gitignored so no secrets leak), then Render → New → Blueprint → pick repo → set
+    `DATABASE_URL` = Neon direct url → deploy. Then the feed is live on the Render URL.
+  - **Going-forward workflow:** crawl locally (`cd backend && . .venv/bin/activate && set -a &&
+    . ../.env && set +a && python -m scripts.crawl run <N>`) → writes Neon; recompute via the hosted
+    API's `POST /api/recommendations/recompute` (or `scripts.curate` locally); browse on the Render
+    URL. (Fly/Railway/VPS still an option; compose remains the fully-local alternative.)
 
 ## Local infra — docker-compose (canonical, set up 2026-07-24)
 Postgres 16 + Redis 7 + api + worker run via `docker-compose.yml`. Docker runtime is **colima**
