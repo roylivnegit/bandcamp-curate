@@ -23,4 +23,6 @@ COPY . .
 EXPOSE 8000
 
 # API by default; the worker + migrate services override this in compose.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Bind $PORT when the platform injects one (Render/Koyeb/Fly); fall back to 8000
+# locally. `exec` keeps uvicorn as PID 1 so it receives SIGTERM for clean shutdown.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -1,0 +1,29 @@
+# Render Blueprint — free, EU (Frankfurt) read API for the feed UI.
+# One-time: push this repo to GitHub, then Render → New → Blueprint → pick the
+# repo. Render reads this file, builds backend/Dockerfile, and deploys.
+#
+# The service only READS Neon (serves the feed + recompute) — no Nimble key, no
+# Redis. Crawling stays on your Mac (writes to Neon). Set DATABASE_URL in the
+# Render dashboard (sync:false = not stored in git): paste Neon's DIRECT (non-
+# pooled) connection URL, e.g.
+#   postgresql://neondb_owner:...@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require
+#
+# Free plan spins the service down after ~15 min idle; the first request after
+# that cold-starts (~30–60s) and also wakes Neon (~1s). Fine for a personal feed.
+services:
+  - type: web
+    name: crate-digger-api
+    runtime: docker
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL   # Neon DIRECT url — set in dashboard, not in git
+        sync: false
+      - key: BANDCAMP_FAN_URL  # optional; is_me is already flagged in the DB
+        sync: false
