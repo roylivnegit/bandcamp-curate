@@ -167,6 +167,18 @@ class AlbumSupporter(Base):
     )
 
 
+class TrackSupporter(Base):
+    """Supporter edge: a fan supports (bought) a standalone track."""
+
+    __tablename__ = "track_supporters"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id"), primary_key=True)
+    fan_id: Mapped[int] = mapped_column(ForeignKey("fans.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 # ── Curation & control ───────────────────────────────────────────────────────
 
 

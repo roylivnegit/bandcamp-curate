@@ -22,10 +22,13 @@ from app.db.models import (
     Follow,
     Like,
     Recommendation,
+    Scan,
+    ScanSeed,
     Tag,
     Track,
+    TrackSupporter,
 )
-from app.enums import BandKind, ItemType, TargetType
+from app.enums import BandKind, ItemType, ScanKind, ScanStatus, TargetType
 
 
 @pytest_asyncio.fixture
@@ -241,6 +244,97 @@ async def test_liked_item_excludes_its_band(session: AsyncSession) -> None:
     await session.commit()
     after = {s.album_id for s in await _recs(session)}
     assert a4.id not in after and a7.id not in after
+
+
+async def test_custom_scan_track_seed_finds_neighbours(session: AsyncSession) -> None:
+    # A custom scan seeded by a TRACK (not an album): its neighbours must come
+    # from TrackSupporter, or the scan would silently produce zero recs.
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    neighbour = Fan(bandcamp_fan_id=2, username="neighbour", url="https://bandcamp.com/neighbour")
+    seed_band = Band(bandcamp_id=10, name="SeedBand", kind=BandKind.ARTIST)
+    rec_band = Band(bandcamp_id=20, name="RecBand", kind=BandKind.ARTIST)
+    session.add_all([me, neighbour, seed_band, rec_band])
+    await session.flush()
+
+    seed_track = Track(
+        bandcamp_id=100, title="Seed Track", band_id=seed_band.id,
+        url="https://seedband.bandcamp.com/track/seed-track",
+    )
+    rec_album = Album(
+        bandcamp_id=200, title="Rec Album", band_id=rec_band.id,
+        url="https://recband.bandcamp.com/album/rec-album",
+    )
+    session.add_all([seed_track, rec_album])
+    await session.flush()
+
+    session.add(TrackSupporter(track_id=seed_track.id, fan_id=neighbour.id))
+    session.add(FanItem(fan_id=neighbour.id, item_type=ItemType.ALBUM, album_id=rec_album.id))
+
+    scan = Scan(name="track scan", kind=str(ScanKind.CUSTOM), status=str(ScanStatus.RUNNING))
+    session.add(scan)
+    await session.flush()
+    session.add(ScanSeed(
+        scan_id=scan.id, url=seed_track.url, seed_type="track",
+        resolved_track_id=seed_track.id,
+    ))
+    await session.commit()
+
+    scored = await compute_recommendations(session, scan)
+    assert len(scored) == 1
+    assert scored[0].album_id == rec_album.id
+    assert scored[0].reasons["co_owners"] == 1
+
+
+async def test_custom_scan_mixed_album_and_track_seeds_union_neighbours(
+    session: AsyncSession,
+) -> None:
+    # One neighbour found via an album seed, another via a track seed — both
+    # must count toward co-ownership.
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    album_neighbour = Fan(bandcamp_fan_id=2, username="an", url="https://bandcamp.com/an")
+    track_neighbour = Fan(bandcamp_fan_id=3, username="tn", url="https://bandcamp.com/tn")
+    seed_band_a = Band(bandcamp_id=10, name="SeedBandA", kind=BandKind.ARTIST)
+    seed_band_t = Band(bandcamp_id=11, name="SeedBandT", kind=BandKind.ARTIST)
+    rec_band = Band(bandcamp_id=20, name="RecBand", kind=BandKind.ARTIST)
+    session.add_all([me, album_neighbour, track_neighbour, seed_band_a, seed_band_t, rec_band])
+    await session.flush()
+
+    seed_album = Album(
+        bandcamp_id=100, title="Seed Album", band_id=seed_band_a.id,
+        url="https://seedbanda.bandcamp.com/album/seed-album",
+    )
+    seed_track = Track(
+        bandcamp_id=101, title="Seed Track", band_id=seed_band_t.id,
+        url="https://seedbandt.bandcamp.com/track/seed-track",
+    )
+    rec_album = Album(
+        bandcamp_id=200, title="Rec Album", band_id=rec_band.id,
+        url="https://recband.bandcamp.com/album/rec-album",
+    )
+    session.add_all([seed_album, seed_track, rec_album])
+    await session.flush()
+
+    session.add(AlbumSupporter(album_id=seed_album.id, fan_id=album_neighbour.id))
+    session.add(TrackSupporter(track_id=seed_track.id, fan_id=track_neighbour.id))
+    session.add_all([
+        FanItem(fan_id=album_neighbour.id, item_type=ItemType.ALBUM, album_id=rec_album.id),
+        FanItem(fan_id=track_neighbour.id, item_type=ItemType.ALBUM, album_id=rec_album.id),
+    ])
+
+    scan = Scan(name="mixed scan", kind=str(ScanKind.CUSTOM), status=str(ScanStatus.RUNNING))
+    session.add(scan)
+    await session.flush()
+    session.add_all([
+        ScanSeed(scan_id=scan.id, url=seed_album.url, seed_type="album",
+                 resolved_album_id=seed_album.id),
+        ScanSeed(scan_id=scan.id, url=seed_track.url, seed_type="track",
+                 resolved_track_id=seed_track.id),
+    ])
+    await session.commit()
+
+    scored = await compute_recommendations(session, scan)
+    assert len(scored) == 1
+    assert scored[0].reasons["co_owners"] == 2  # both neighbours counted
 
 
 async def test_get_me_requires_seed(session: AsyncSession) -> None:

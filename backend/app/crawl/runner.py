@@ -15,7 +15,13 @@ from app.bandcamp.collection_api import CollectionApiClient
 from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier
-from app.crawl.service import CrawlOutcome, Fetcher, crawl_album, crawl_fan_collection
+from app.crawl.service import (
+    CrawlOutcome,
+    Fetcher,
+    crawl_album,
+    crawl_fan_collection,
+    crawl_track,
+)
 from app.db.models import CrawlFrontier, ProviderUsage
 from app.enums import CrawlKind
 
@@ -61,6 +67,11 @@ async def process_entry(
         )
     if entry.kind == CrawlKind.ALBUM:
         return await crawl_album(
+            session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
+            supporters_client=supporters_client,
+        )
+    if entry.kind == CrawlKind.TRACK:
+        return await crawl_track(
             session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
             supporters_client=supporters_client,
         )

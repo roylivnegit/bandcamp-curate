@@ -16,6 +16,7 @@ from app.bandcamp.parse import (
     ParsedAlbum,
     ParsedBand,
     ParsedItem,
+    ParsedTrackPage,
 )
 from app.db.models import (
     Album,
@@ -28,6 +29,7 @@ from app.db.models import (
     Follow,
     Tag,
     Track,
+    TrackSupporter,
     TrackTag,
 )
 from app.enums import BandKind, ItemType, TargetType
@@ -50,6 +52,11 @@ class AlbumIngestCounts:
 class SupporterIngestCounts:
     supporters: int = 0  # new supporter edges created this ingest
     fans: int = 0  # new fan rows created this ingest
+
+
+@dataclass(slots=True)
+class TrackIngestCounts:
+    tags: int = 0  # new track↔tag edges created this ingest
 
 
 async def get_or_create_band(session: AsyncSession, pb: ParsedBand) -> Band | None:
@@ -279,14 +286,17 @@ async def _add_album_tag(session: AsyncSession, album: Album, tag: Tag) -> bool:
     return True
 
 
-async def _link_tag(session: AsyncSession, model, id_col, obj_id: int, tag_id: int) -> None:
-    """Idempotently link a band/track to a tag (composite-PK association)."""
+async def _link_tag(session: AsyncSession, model, id_col, obj_id: int, tag_id: int) -> bool:
+    """Idempotently link a band/track to a tag (composite-PK association).
+    True if a new edge was created."""
     exists = (
         await session.execute(select(model).where(id_col == obj_id, model.tag_id == tag_id))
     ).scalar_one_or_none()
-    if exists is None:
-        session.add(model(**{id_col.key: obj_id, "tag_id": tag_id}))
-        await session.flush()
+    if exists is not None:
+        return False
+    session.add(model(**{id_col.key: obj_id, "tag_id": tag_id}))
+    await session.flush()
+    return True
 
 
 async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCounts:
@@ -324,6 +334,37 @@ async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCou
             await _link_tag(session, BandTag, BandTag.band_id, band.id, tag.id)
         for track in tracks:
             await _link_tag(session, TrackTag, TrackTag.track_id, track.id, tag.id)
+
+    await session.commit()
+    return counts
+
+
+async def ingest_track_page(session: AsyncSession, pt: ParsedTrackPage) -> TrackIngestCounts:
+    """Upsert a standalone track (its own `/track/` page), its band, and genre tags.
+
+    Unlike `ingest_album`, there's no `trackinfo[]` sibling list to walk — just this
+    one track. If it belongs to an album we only record a stub `Album` row (id/url,
+    from the track page's `current.album_id`/`album_url`) so the two can be linked
+    later; that album's own page isn't crawled here, so no album_tags are written
+    for it — only track_tags (and band_tags, same as `ingest_album`).
+    """
+    counts = TrackIngestCounts()
+    band = await get_or_create_band(session, pt.band)
+    album = None
+    if pt.album_id is not None:
+        album = await get_or_create_album(
+            session, bandcamp_id=pt.album_id, url=pt.album_url, band=band
+        )
+    track = await get_or_create_track(
+        session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title, band=band, album=album
+    )
+
+    for name in pt.tags:
+        tag = await get_or_create_tag(session, name)
+        if await _link_tag(session, TrackTag, TrackTag.track_id, track.id, tag.id):
+            counts.tags += 1
+        if band is not None:
+            await _link_tag(session, BandTag, BandTag.band_id, band.id, tag.id)
 
     await session.commit()
     return counts
@@ -396,6 +437,42 @@ async def ingest_album_supporters(
         if created:
             counts.fans += 1
         if await _add_album_supporter(session, album, fan):
+            counts.supporters += 1
+    await session.commit()
+    return counts
+
+
+async def _add_track_supporter(session: AsyncSession, track: Track, fan: Fan) -> bool:
+    """Record a fan↔track supporter edge if absent. True if newly created."""
+    exists = (
+        await session.execute(
+            select(TrackSupporter).where(
+                TrackSupporter.track_id == track.id, TrackSupporter.fan_id == fan.id
+            )
+        )
+    ).scalar_one_or_none()
+    if exists is not None:
+        return False
+    session.add(TrackSupporter(track_id=track.id, fan_id=fan.id))
+    await session.flush()
+    return True
+
+
+async def ingest_track_supporters(
+    session: AsyncSession, track: Track, supporters: AlbumSupporters
+) -> SupporterIngestCounts:
+    """Upsert supporter fans and their support edges for a known track.
+
+    Takes the same `AlbumSupporters` shape `parse_album_supporters` returns for a
+    track page (it's tralbum-generic — see its `tralbum_type` field)."""
+    counts = SupporterIngestCounts()
+    for ps in supporters.supporters:
+        fan, created = await get_or_create_supporter_fan(
+            session, username=ps.username, fan_id=ps.fan_id, name=ps.name
+        )
+        if created:
+            counts.fans += 1
+        if await _add_track_supporter(session, track, fan):
             counts.supporters += 1
     await session.commit()
     return counts

@@ -92,6 +92,22 @@ class ParsedAlbum:
 
 
 @dataclass(slots=True)
+class ParsedTrackPage:
+    """A standalone track page (`/track/<slug>`), as opposed to a track entry
+    within an album's `trackinfo[]` (see `ParsedTrack`)."""
+
+    track_id: int
+    band: ParsedBand
+    title: str | None = None
+    url: str | None = None
+    tags: list[str] = field(default_factory=list)
+    # The parent album, if this track belongs to one (absent for standalone
+    # singles) — a stub reference only; the album page itself isn't crawled here.
+    album_id: int | None = None
+    album_url: str | None = None
+
+
+@dataclass(slots=True)
 class ParsedSupporter:
     username: str
     fan_id: int | None = None
@@ -261,12 +277,36 @@ def parse_collection_items_api(payload: dict) -> tuple[list[ParsedItem], str | N
     return items, payload.get("last_token"), bool(payload.get("more_available"))
 
 
+def _parse_tags(page_html: str) -> list[str]:
+    """Genre tags: HTML-unescaped (the anchor text carries entities like `&amp;`),
+    normalized to lowercase, de-duped, order preserved."""
+    seen: set[str] = set()
+    tags: list[str] = []
+    for raw in _TAG_RE.findall(page_html):
+        tag = html.unescape(raw).strip().lower()
+        if tag and tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
+    return tags
+
+
+def _parse_tralbum_band(tralbum: dict, band_blob: dict, url: str | None) -> ParsedBand:
+    current = tralbum.get("current") or {}
+    return ParsedBand(
+        bandcamp_id=band_blob.get("id") or current.get("band_id"),
+        name=band_blob.get("name") or tralbum.get("artist"),
+        url=band_url_from_album_url(url),
+    )
+
+
 def parse_album_page(page_html: str) -> ParsedAlbum:
-    """Parse an album (or track) page's `data-tralbum` + `data-band` + tag links.
+    """Parse an album page's `data-tralbum` + `data-band` + tag links.
 
     Bandcamp embeds the album in `data-tralbum` (id, url, item_type, `current.title`,
     `trackinfo[]`) and the band in `data-band` (id, name). Genre tags are plain DOM
     anchors (`<a class="tag">`). The band's page URL is derived from the album URL.
+    For a standalone track page (`item_type == "track"`), use `parse_track_page`
+    instead — its `trackinfo[]` holds only that one track, not a real album.
     """
     tralbum = _decode_attr(_TRALBUM_RE.search(page_html))
     if tralbum is None:
@@ -275,11 +315,7 @@ def parse_album_page(page_html: str) -> ParsedAlbum:
     current = tralbum.get("current") or {}
 
     url = tralbum.get("url")
-    band = ParsedBand(
-        bandcamp_id=band_blob.get("id") or current.get("band_id"),
-        name=band_blob.get("name") or tralbum.get("artist"),
-        url=band_url_from_album_url(url),
-    )
+    band = _parse_tralbum_band(tralbum, band_blob, url)
 
     base = band.url
     tracks: list[ParsedTrack] = []
@@ -298,24 +334,46 @@ def parse_album_page(page_html: str) -> ParsedAlbum:
             )
         )
 
-    # Genre tags: HTML-unescaped (the anchor text carries entities like `&amp;`),
-    # normalized to lowercase, de-duped, order preserved.
-    seen: set[str] = set()
-    tags: list[str] = []
-    for raw in _TAG_RE.findall(page_html):
-        tag = html.unescape(raw).strip().lower()
-        if tag and tag not in seen:
-            seen.add(tag)
-            tags.append(tag)
-
     return ParsedAlbum(
         album_id=tralbum["id"],
         band=band,
         title=current.get("title") or tralbum.get("artist"),
         url=url,
         art_id=tralbum.get("art_id"),
-        tags=tags,
+        tags=_parse_tags(page_html),
         tracks=tracks,
+    )
+
+
+def parse_track_page(page_html: str) -> ParsedTrackPage:
+    """Parse a standalone track page's `data-tralbum` + `data-band` + tag links.
+
+    Same embed shape as an album page, but `item_type == "track"`, `id` is the
+    track's own id, and `trackinfo[]` holds just that one entry. The parent album
+    (if any — singles have none) is a stub reference: top-level `album_url` is a
+    path relative to the band's site, `current.album_id` its Bandcamp id.
+    """
+    tralbum = _decode_attr(_TRALBUM_RE.search(page_html))
+    if tralbum is None:
+        raise ValueError("no data-tralbum blob found in HTML")
+    band_blob = _decode_attr(_BAND_RE.search(page_html)) or {}
+    current = tralbum.get("current") or {}
+
+    url = tralbum.get("url")
+    band = _parse_tralbum_band(tralbum, band_blob, url)
+
+    album_rel = tralbum.get("album_url")
+    album_bandcamp_id = current.get("album_id")
+    album_url = f"{band.url}{album_rel}" if band.url and album_rel else None
+
+    return ParsedTrackPage(
+        track_id=tralbum["id"],
+        band=band,
+        title=current.get("title") or tralbum.get("artist"),
+        url=url,
+        tags=_parse_tags(page_html),
+        album_id=album_bandcamp_id,
+        album_url=album_url,
     )
 
 
