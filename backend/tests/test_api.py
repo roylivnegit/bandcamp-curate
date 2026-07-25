@@ -7,7 +7,17 @@ from sqlalchemy.pool import StaticPool
 
 from app.curation.engine import curate
 from app.db.base import Base
-from app.db.models import Album, AlbumTag, Band, Fan, FanItem, Follow, Tag, Track
+from app.db.models import (
+    Album,
+    AlbumTag,
+    Band,
+    Fan,
+    FanItem,
+    Follow,
+    Recommendation,
+    Tag,
+    Track,
+)
 from app.db.session import get_session
 from app.enums import BandKind, ItemType, TargetType
 from app.main import app
@@ -189,6 +199,53 @@ async def test_sort_param(client: AsyncClient) -> None:
         assert [x["rank"] for x in r.json()] == list(range(1, len(r.json()) + 1))
     # unknown sort is rejected
     assert (await client.get("/api/recommendations?sort=bogus")).status_code == 422
+
+
+async def test_sort_missing_json_key_sorts_after_real_zero() -> None:
+    # A rec whose reasons lacks tag_affinity must sort AFTER a rec with a real 0
+    # (the old COALESCE-to-0 conflated them). Insert missing-key first (lower id)
+    # so an id tie-break alone wouldn't produce the right order.
+    engine = create_async_engine(
+        "sqlite+aiosqlite://", poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        b = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
+        s.add(b)
+        await s.flush()
+        missing, zero, five = (
+            Album(bandcamp_id=100 + i, title=t, band_id=b.id)
+            for i, t in enumerate(("missing", "zero", "five"))
+        )
+        s.add_all([missing, zero, five])
+        await s.flush()
+        def rec(album, reasons):  # noqa: ANN001,ANN202
+            return Recommendation(
+                item_type=ItemType.ALBUM, album_id=album.id, score=1.0, reasons=reasons
+            )
+        s.add_all([  # insertion order = id order: missing, zero, five
+            rec(missing, {}),
+            rec(zero, {"tag_affinity": 0.0}),
+            rec(five, {"tag_affinity": 5.0}),
+        ])
+        await s.commit()
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with maker() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            rows = (await c.get("/api/recommendations?sort=affinity")).json()
+        assert [r["title"] for r in rows] == ["five", "zero", "missing"]
+    finally:  # guarantee teardown even if the request/assert raises
+        app.dependency_overrides.clear()
+        await engine.dispose()
 
 
 async def test_facets(client: AsyncClient) -> None:
