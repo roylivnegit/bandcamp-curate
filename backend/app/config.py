@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     def auth_configured(self) -> bool:
         return bool(self.auth_secret_key)
 
+    @property
+    def cors_origins(self) -> list[str]:
+        """Origins allowed to call the API. Blank entries are dropped: a
+        dashboard-managed FRONTEND_ORIGIN that's declared but left empty arrives
+        as "", and passing [""] to CORSMiddleware matches nothing while looking
+        configured — a confusing way to lose every cross-origin request."""
+        return [o for o in (self.frontend_origin.strip(),) if o]
+
 
 @lru_cache
 def get_settings() -> Settings:

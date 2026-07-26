@@ -1,8 +1,10 @@
-# Render Blueprint — free, EU (Frankfurt) read API for the feed UI.
+# Render Blueprint — two free EU (Frankfurt) services:
+#   crate-digger-api       Docker, the FastAPI JSON API reading Neon
+#   crate-digger-web       static, the React app that talks to it
 # One-time: push this repo to GitHub, then Render → New → Blueprint → pick the
-# repo. Render reads this file, builds backend/Dockerfile, and deploys.
+# repo. Render reads this file and deploys both.
 #
-# The service only READS Neon (serves the feed + recompute) — no Nimble key, no
+# The API only READS Neon (serves the feed + recompute) — no Nimble key, no
 # Redis. Crawling stays on your Mac (writes to Neon). Set DATABASE_URL in the
 # Render dashboard (sync:false = not stored in git): paste Neon's DIRECT (non-
 # pooled) connection URL, e.g.
@@ -39,5 +41,30 @@ services:
         generateValue: true
       - key: AUTH_INVITE_CODE  # required at signup — set in dashboard
         sync: false
-      # FRONTEND_ORIGIN (CORS) is added in Phase B, once the React app has a URL.
-      # Until then the config default (the Vite dev server) applies and is unused.
+      # CORS: only this origin may call the API. Must be scheme-qualified
+      # (https://crate-digger-web-xxxx.onrender.com) — an Origin header always
+      # carries the scheme. Can't use fromService: it yields a bare host, and a
+      # blank value here would override the config default and break CORS, so
+      # set it in the dashboard once the web service below has its URL.
+      - key: FRONTEND_ORIGIN
+        sync: false
+
+  # ── the React app ─────────────────────────────────────────────────────────
+  # Static build; `rewrites` sends unknown paths to index.html so client-side
+  # routes (/login, /scans/3) survive a refresh or a shared link instead of 404ing.
+  - type: web
+    name: crate-digger-web
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: ./frontend/dist
+    autoDeploy: true
+    envVars:
+      # The API's origin, scheme included — it's concatenated onto request paths.
+      # Dashboard-set for the same reason as FRONTEND_ORIGIN above. Baked in at
+      # build time (Vite inlines VITE_* vars), so changing it needs a redeploy.
+      - key: VITE_API_BASE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
