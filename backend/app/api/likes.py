@@ -9,7 +9,8 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Album, Band, Like, Recommendation, Track
+from app.auth.security import get_current_user
+from app.db.models import Album, Band, Like, Recommendation, Scan, Track, User
 from app.db.session import get_session
 from app.enums import ItemType
 
@@ -37,7 +38,7 @@ class LikeOut(BaseModel):
     url: str | None
 
 
-async def _like_rows(session: AsyncSession) -> list[LikeOut]:
+async def _like_rows(session: AsyncSession, user_id: int) -> list[LikeOut]:
     ab = Band.__table__.alias("ab")
     tb = Band.__table__.alias("tb")
     rows = (
@@ -51,6 +52,7 @@ async def _like_rows(session: AsyncSession) -> list[LikeOut]:
             .outerjoin(Track, Track.id == Like.track_id)
             .outerjoin(ab, ab.c.id == Album.band_id)
             .outerjoin(tb, tb.c.id == Track.band_id)
+            .where(Like.user_id == user_id)
             .order_by(Like.id.desc())
         )
     ).all()
@@ -64,16 +66,24 @@ async def _like_rows(session: AsyncSession) -> list[LikeOut]:
 
 
 @router.get("", response_model=list[LikeOut])
-async def list_likes(session: AsyncSession = Depends(get_session)) -> list[LikeOut]:
-    return await _like_rows(session)
+async def list_likes(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[LikeOut]:
+    return await _like_rows(session, current_user.id)
 
 
 @router.post("", response_model=LikeOut)
-async def like(payload: LikeIn, session: AsyncSession = Depends(get_session)) -> LikeOut:
+async def like(
+    payload: LikeIn,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> LikeOut:
     item_type = str(ItemType.ALBUM if payload.album_id is not None else ItemType.TRACK)
     existing = (
         await session.execute(
             select(Like).where(
+                Like.user_id == current_user.id,
                 Like.item_type == item_type,
                 Like.album_id == payload.album_id,
                 Like.track_id == payload.track_id,
@@ -82,10 +92,14 @@ async def like(payload: LikeIn, session: AsyncSession = Depends(get_session)) ->
     ).scalar_one_or_none()
     if existing is None:
         session.add(
-            Like(item_type=item_type, album_id=payload.album_id, track_id=payload.track_id)
+            Like(
+                user_id=current_user.id, item_type=item_type,
+                album_id=payload.album_id, track_id=payload.track_id,
+            )
         )
     # Drop the whole band from the current feed immediately (curation excludes the
     # liked item's band, so keep the live feed consistent — not just this one item).
+    # Scoped to the current user's OWN scans — liking is per-tenant.
     if payload.album_id is not None:
         band_id = (
             await session.execute(select(Album.band_id).where(Album.id == payload.album_id))
@@ -94,24 +108,26 @@ async def like(payload: LikeIn, session: AsyncSession = Depends(get_session)) ->
         band_id = (
             await session.execute(select(Track.band_id).where(Track.id == payload.track_id))
         ).scalar_one_or_none()
+    user_scan_ids = select(Scan.id).where(Scan.user_id == current_user.id)
     if band_id is not None:
         album_ids = select(Album.id).where(Album.band_id == band_id)
         track_ids = select(Track.id).where(Track.band_id == band_id)
         await session.execute(
             delete(Recommendation).where(
-                Recommendation.album_id.in_(album_ids)
-                | Recommendation.track_id.in_(track_ids)
+                Recommendation.scan_id.in_(user_scan_ids),
+                Recommendation.album_id.in_(album_ids) | Recommendation.track_id.in_(track_ids),
             )
         )
     else:  # no band — fall back to pruning just the item
         await session.execute(
             delete(Recommendation).where(
+                Recommendation.scan_id.in_(user_scan_ids),
                 Recommendation.album_id == payload.album_id,
                 Recommendation.track_id == payload.track_id,
             )
         )
     await session.commit()
-    rows = await _like_rows(session)
+    rows = await _like_rows(session, current_user.id)
     match = next(
         (r for r in rows if r.album_id == payload.album_id and r.track_id == payload.track_id),
         None,
@@ -122,11 +138,16 @@ async def like(payload: LikeIn, session: AsyncSession = Depends(get_session)) ->
 
 
 @router.post("/unlike")
-async def unlike(payload: LikeIn, session: AsyncSession = Depends(get_session)) -> dict:
+async def unlike(
+    payload: LikeIn,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     existing = (
         await session.execute(
             select(Like).where(
-                Like.album_id == payload.album_id, Like.track_id == payload.track_id
+                Like.user_id == current_user.id,
+                Like.album_id == payload.album_id, Like.track_id == payload.track_id,
             )
         )
     ).scalar_one_or_none()

@@ -6,6 +6,11 @@ Usage:
 Recomputes the `recommendations` table (excludes owned/wishlisted/followed/
 blacklisted) and prints the highest-scoring albums/tracks with their reasons.
 Read-only against Bandcamp — no scraping, no credits.
+
+Operator-only tool: curates the first `User` row's collection scan. Now that
+scans are per-user, a real deployment with multiple signups should use the
+`/api/recommendations/recompute` endpoint (scoped by the authenticated caller)
+instead of this script.
 """
 
 import asyncio
@@ -14,7 +19,7 @@ import sys
 from sqlalchemy import select
 
 from app.curation.engine import curate
-from app.db.models import Album, Band, Track
+from app.db.models import Album, Band, Track, User
 from app.db.session import get_sessionmaker
 
 
@@ -22,7 +27,11 @@ async def main() -> int:
     top_n = int(sys.argv[1]) if len(sys.argv) > 1 else 25
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        scored = await curate(session)
+        user = (await session.execute(select(User).order_by(User.id))).scalars().first()
+        if user is None:
+            print("no users yet — sign up first (POST /api/auth/signup)")
+            return 1
+        scored = await curate(session, user=user)
         print(f"computed {len(scored)} recommendations; top {min(top_n, len(scored))}:\n")
 
         for i, s in enumerate(scored[:top_n], 1):

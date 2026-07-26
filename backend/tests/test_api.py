@@ -5,6 +5,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.auth.security import get_current_user
 from app.curation.engine import curate
 from app.db.base import Base
 from app.db.models import (
@@ -19,21 +20,26 @@ from app.db.models import (
     Scan,
     Tag,
     Track,
+    User,
 )
 from app.db.session import get_session
 from app.enums import BandKind, ItemType, ScanKind, TargetType
 from app.main import app
 
 
-async def _seed(s: AsyncSession) -> None:
+async def _seed(s: AsyncSession) -> User:
     # me owns A1(B1); neighbour f2 SUPPORTS A1 (→ f2 is a taste-neighbour of the
     # collection scan) and owns A1 + A2(B2) + track T2(B2).
     # follow B3 which f2 also owns (A3) → A3 excluded.
+    # Returns the User whose fan_id is `me` (the authenticated caller).
     me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
     f2 = Fan(bandcamp_fan_id=2, username="f2", url="https://bandcamp.com/f2")
     b1, b2, b3, b4 = (Band(bandcamp_id=n, name=f"Band{n}", kind=BandKind.ARTIST)
                       for n in (1, 2, 3, 4))
     s.add_all([me, f2, b1, b2, b3, b4])
+    await s.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    s.add(user)
     await s.flush()
     a1 = Album(bandcamp_id=11, title="Owned", band_id=b1.id)
     a2 = Album(bandcamp_id=12, title="Recommend Me",
@@ -48,7 +54,7 @@ async def _seed(s: AsyncSession) -> None:
         FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a2.id),
         FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a3.id),
         FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t2.id),
-        Follow(band_id=b3.id, target_type=TargetType.ARTIST),
+        Follow(fan_id=me.id, band_id=b3.id, target_type=TargetType.ARTIST),
         # f2 supports my album A1 → f2 is a neighbour of the collection scan.
         AlbumSupporter(album_id=a1.id, fan_id=f2.id),
     ])
@@ -58,6 +64,7 @@ async def _seed(s: AsyncSession) -> None:
     await s.flush()
     s.add_all([AlbumTag(album_id=a2.id, tag_id=rock.id), AlbumTag(album_id=a2.id, tag_id=jazz.id)])
     await s.commit()
+    return user
 
 
 @pytest_asyncio.fixture
@@ -70,14 +77,15 @@ async def client() -> AsyncIterator[AsyncClient]:
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
-        await _seed(s)
-        await curate(s)  # populate recommendations
+        user = await _seed(s)
+        await curate(s, user=user)  # populate recommendations
 
     async def _override() -> AsyncIterator[AsyncSession]:
         async with maker() as s:
             yield s
 
     app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as c:
         yield c
@@ -127,11 +135,11 @@ async def test_recompute_unknown_scan_404(client: AsyncClient) -> None:
     assert r.status_code == 404
 
 
-async def test_ui_served(client: AsyncClient) -> None:
-    r = await client.get("/")
-    assert r.status_code == 200
-    assert "text/html" in r.headers["content-type"]
-    assert "Bandcamp suggestions" in r.text and "/api/recommendations" in r.text
+async def test_legacy_ui_route_is_not_served(client: AsyncClient) -> None:
+    # The old server-rendered feed is unregistered (see app/main.py): its fetch()
+    # calls carry no bearer token, so it would render and then silently 401 on
+    # every request. A clean 404 until the React app lands.
+    assert (await client.get("/")).status_code == 404
 
 
 async def test_recommendation_has_band_id(client: AsyncClient) -> None:
@@ -244,9 +252,12 @@ async def test_sort_missing_json_key_sorts_after_real_zero() -> None:
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
         b = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
-        # recs need a scan; the feed defaults to the collection scan.
-        scan = Scan(name="c", kind=str(ScanKind.COLLECTION), status="done")
-        s.add_all([b, scan])
+        user = User(username="me", password_hash="!")
+        s.add_all([b, user])
+        await s.flush()
+        # recs need a scan; the feed defaults to the caller's collection scan.
+        scan = Scan(user_id=user.id, name="c", kind=str(ScanKind.COLLECTION), status="done")
+        s.add(scan)
         await s.flush()
         missing, zero, five = (
             Album(bandcamp_id=100 + i, title=t, band_id=b.id)
@@ -271,6 +282,7 @@ async def test_sort_missing_json_key_sorts_after_real_zero() -> None:
             yield s
 
     app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
     transport = ASGITransport(app=app)
     try:
         async with AsyncClient(transport=transport, base_url="http://t") as c:

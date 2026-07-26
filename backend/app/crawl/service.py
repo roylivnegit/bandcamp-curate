@@ -67,6 +67,7 @@ class CrawlOutcome:
     tracks: int = 0  # tracks ingested (album)
     supporters: int = 0  # supporter edges ingested (album)
     enqueued: int = 0  # new frontier rows added
+    fan_id: int | None = None  # the ingested Fan's id (fan collection only)
 
 
 def fan_collection_request(url: str) -> FetchRequest:
@@ -161,6 +162,7 @@ async def crawl_fan_collection(
         kind=str(CrawlKind.FAN_COLLECTION),
         items=counts.fan_items,
         enqueued=enqueued,
+        fan_id=counts.fan_id,
     )
 
 

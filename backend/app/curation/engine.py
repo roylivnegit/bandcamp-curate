@@ -9,9 +9,8 @@ genres you already collect. Everything already in your world is excluded first:
   * followed   — items whose band is in `follows`
   * blacklisted — active `blacklist` rows
 
-"You" is the `is_me` fan (set from BANDCAMP_FAN_URL at seed time) — i.e. the original
-collection we started crawling from. Recommendations are recomputed wholesale
-(clear + insert) so re-running is idempotent.
+"You" is `user.fan_id`'s Fan — the account whose collection scan seeded the crawl.
+Recommendations are recomputed wholesale (clear + insert) so re-running is idempotent.
 """
 
 import re
@@ -37,6 +36,7 @@ from app.db.models import (
     Track,
     TrackSupporter,
     TrackTag,
+    User,
 )
 from app.enums import ItemType, ScanKind, ScanStatus
 
@@ -72,12 +72,14 @@ def _url_host(url: str | None) -> str | None:
     return m.group(1).lower() if m else None
 
 
-async def get_me(session: AsyncSession) -> Fan:
-    me = (
-        await session.execute(select(Fan).where(Fan.is_me.is_(True)))
-    ).scalars().first()
+async def get_me(session: AsyncSession, user: User) -> Fan:
+    """The Fan row that IS `user` — set once their collection scan has crawled
+    their own fan page (see `scan_service.run_scan`'s collection-kind branch)."""
+    if user.fan_id is None:
+        raise ValueError("collection not yet crawled — no fan_id set for this user")
+    me = await session.get(Fan, user.fan_id)
     if me is None:
-        raise ValueError("no is_me fan — seed and crawl your own collection first")
+        raise ValueError("user.fan_id points at a Fan row that no longer exists")
     return me
 
 
@@ -85,17 +87,19 @@ async def _scalar_set(session: AsyncSession, stmt) -> set[int]:
     return {r for r in (await session.execute(stmt)).scalars() if r is not None}
 
 
-async def ensure_collection_scan(session: AsyncSession) -> Scan:
-    """Get-or-create the "My collection" scan (kind=collection) — Scan 1, whose
-    seeds are your own owned albums. A fresh DB has no scan rows (metadata builds
-    only tables), so we create it lazily here on first curate."""
+async def ensure_collection_scan(session: AsyncSession, user: User) -> Scan:
+    """Get-or-create `user`'s "My collection" scan (kind=collection). Signup now
+    creates this eagerly (`scan_service.create_collection_scan`) — this is a
+    defensive fallback for anywhere that still calls `curate()` without a scan_id."""
     scan = (
         await session.execute(
-            select(Scan).where(Scan.kind == str(ScanKind.COLLECTION)).order_by(Scan.id)
+            select(Scan).where(Scan.user_id == user.id, Scan.kind == str(ScanKind.COLLECTION))
+            .order_by(Scan.id)
         )
     ).scalars().first()
     if scan is None:
         scan = Scan(
+            user_id=user.id,
             name="My collection",
             kind=str(ScanKind.COLLECTION),
             status=str(ScanStatus.DONE),
@@ -138,8 +142,11 @@ async def _seed_ids(session: AsyncSession, scan: Scan, me: Fan) -> tuple[set[int
     return album_ids, track_ids
 
 
-async def build_exclusions(session: AsyncSession, me: Fan) -> Exclusions:
-    """Everything already in your world — never recommend these."""
+async def build_exclusions(session: AsyncSession, me: Fan, user: User) -> Exclusions:
+    """Everything already in your world — never recommend these. `blacklist`
+    and `likes` are scoped by `user` (per-tenant); `fan_items`/`follows` by `me`
+    (per-Bandcamp-fan) — mixing them up would leak one tenant's preferences
+    into another's feed."""
     # Owned + wishlisted (both live in your fan_items).
     my_albums = await _scalar_set(
         session, select(FanItem.album_id).where(FanItem.fan_id == me.id)
@@ -148,35 +155,45 @@ async def build_exclusions(session: AsyncSession, me: Fan) -> Exclusions:
         session, select(FanItem.track_id).where(FanItem.fan_id == me.id)
     )
     # Bands you follow (by id and by URL host — a followed label and an album's
-    # artist can differ by band_id but share the label's subdomain).
-    followed = await _scalar_set(session, select(Follow.band_id))
+    # artist can differ by band_id but share the label's subdomain). Scoped to
+    # `me` — Follow rows are per-fan, not global (a leak here would cross tenants).
+    followed = await _scalar_set(
+        session, select(Follow.band_id).where(Follow.fan_id == me.id)
+    )
     followed_urls = (
         await session.execute(
-            select(Band.url).select_from(Follow).join(Band, Band.id == Follow.band_id)
+            select(Band.url).select_from(Follow)
+            .join(Band, Band.id == Follow.band_id)
+            .where(Follow.fan_id == me.id)
         )
     ).scalars()
     band_hosts = {h for h in (_url_host(u) for u in followed_urls) if h}
-    # Active blacklist.
-    bl_albums = await _scalar_set(
-        session, select(Blacklist.album_id).where(Blacklist.active.is_(True))
+    # Active blacklist — per-user (blocking a band is a per-tenant preference).
+    bl_where = (Blacklist.user_id == user.id, Blacklist.active.is_(True))
+    bl_albums = await _scalar_set(session, select(Blacklist.album_id).where(*bl_where))
+    bl_tracks = await _scalar_set(session, select(Blacklist.track_id).where(*bl_where))
+    bl_bands = await _scalar_set(session, select(Blacklist.band_id).where(*bl_where))
+    # Liked/acted-on items (positive dismissal, per-user). A like excludes the item
+    # AND its band — liking one release of an artist means you've engaged with that
+    # artist, so the whole band drops from the feed (else one-per-band dedup would
+    # just re-surface it via another release).
+    liked_albums = await _scalar_set(
+        session, select(Like.album_id).where(Like.user_id == user.id)
     )
-    bl_tracks = await _scalar_set(
-        session, select(Blacklist.track_id).where(Blacklist.active.is_(True))
+    liked_tracks = await _scalar_set(
+        session, select(Like.track_id).where(Like.user_id == user.id)
     )
-    bl_bands = await _scalar_set(
-        session, select(Blacklist.band_id).where(Blacklist.active.is_(True))
-    )
-    # Liked/acted-on items (positive dismissal). A like excludes the item AND its
-    # band — liking one release of an artist means you've engaged with that artist,
-    # so the whole band drops from the feed (else one-per-band dedup would just
-    # re-surface it via another release).
-    liked_albums = await _scalar_set(session, select(Like.album_id))
-    liked_tracks = await _scalar_set(session, select(Like.track_id))
     liked_album_bands = await _scalar_set(
-        session, select(Album.band_id).select_from(Like).join(Album, Album.id == Like.album_id)
+        session,
+        select(Album.band_id).select_from(Like)
+        .join(Album, Album.id == Like.album_id)
+        .where(Like.user_id == user.id),
     )
     liked_track_bands = await _scalar_set(
-        session, select(Track.band_id).select_from(Like).join(Track, Track.id == Like.track_id)
+        session,
+        select(Track.band_id).select_from(Like)
+        .join(Track, Track.id == Like.track_id)
+        .where(Like.user_id == user.id),
     )
     return Exclusions(
         album_ids=my_albums | bl_albums | liked_albums,
@@ -291,6 +308,7 @@ async def _seed_tag_provenance(
 async def compute_recommendations(
     session: AsyncSession,
     scan: Scan,
+    user: User,
     *,
     limit: int | None = None,
     one_per_band: bool = True,
@@ -303,12 +321,12 @@ async def compute_recommendations(
     tracks (collection scan → your owned albums; custom scan → its resolved
     album/track seeds, any mix). Co-ownership is counted only among those
     neighbours, so each scan reflects *its* seeds. Exclusions (collection/
-    wishlist/follows/blocked/liked) and the tag profile are shared/global. With
-    `one_per_band` (default) only each band's top item is kept.
+    wishlist/follows/blocked/liked) and the tag profile are per-`user` (via their
+    own `me` Fan). With `one_per_band` (default) only each band's top item is kept.
     """
-    me = await get_me(session)
+    me = await get_me(session, user)
     seed_album_ids, seed_track_ids = await _seed_ids(session, scan, me)
-    excl = await build_exclusions(session, me)
+    excl = await build_exclusions(session, me, user)
     tag_profile = await _my_tag_profile(session, me)
     album_prov, track_prov = await _seed_tag_provenance(
         session, seed_album_ids, seed_track_ids, me
@@ -464,32 +482,39 @@ async def store_recommendations(
 
 
 async def curate(
-    session: AsyncSession, *, scan_id: int | None = None, limit: int | None = None,
-    exclude_seed_tags: set[str] | None = None,
+    session: AsyncSession, *, scan_id: int | None = None, user: User | None = None,
+    limit: int | None = None, exclude_seed_tags: set[str] | None = None,
 ) -> list[ScoredItem]:
-    """Compute + persist recommendations for one scan (defaults to the collection
-    scan). Returns the stored, ranked list."""
+    """Compute + persist recommendations for one scan. Given `scan_id`, the owning
+    user is resolved from the scan itself (so this stays self-sufficient from just
+    an id); with `scan_id` omitted, `user` is required and their collection scan
+    is used (get-or-created). Returns the stored, ranked list."""
     if scan_id is None:
-        scan = await ensure_collection_scan(session)
+        if user is None:
+            raise ValueError("user is required when scan_id is not given")
+        scan = await ensure_collection_scan(session, user)
     else:
         scan = (
             await session.execute(select(Scan).where(Scan.id == scan_id))
         ).scalar_one_or_none()
         if scan is None:
             raise ValueError("scan not found")
+        user = await session.get(User, scan.user_id)
+        if user is None:
+            raise ValueError("scan's owning user not found")
     scored = await compute_recommendations(
-        session, scan, limit=limit, exclude_seed_tags=exclude_seed_tags
+        session, scan, user, limit=limit, exclude_seed_tags=exclude_seed_tags
     )
     await store_recommendations(session, scored, scan.id)
     return scored
 
 
-async def seed_tags(session: AsyncSession) -> list[tuple[str, int]]:
+async def seed_tags(session: AsyncSession, user: User) -> list[tuple[str, int]]:
     """Genres of your own crawled albums (the seeds), with how many albums carry each.
 
     These are the values the "exclude by seed genre" filter offers.
     """
-    me = await get_me(session)
+    me = await get_me(session, user)
     rows = (
         await session.execute(
             select(Tag.name, func.count(func.distinct(AlbumTag.album_id)))

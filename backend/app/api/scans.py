@@ -10,8 +10,9 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.security import get_current_user
 from app.crawl.scan_service import create_scan
-from app.db.models import Recommendation, Scan, ScanSeed
+from app.db.models import Recommendation, Scan, ScanSeed, User
 from app.db.session import get_session
 from app.enums import ScanKind, ScanStatus
 
@@ -68,9 +69,9 @@ def _to_out(scan: Scan, seed_count: int, rec_count: int) -> ScanOut:
     )
 
 
-async def _detail(session: AsyncSession, scan_id: int) -> ScanDetailOut:
+async def _detail(session: AsyncSession, scan_id: int, user_id: int) -> ScanDetailOut:
     scan = await session.get(Scan, scan_id)
-    if scan is None:
+    if scan is None or scan.user_id != user_id:
         raise HTTPException(status_code=404, detail="scan not found")
     seeds = (
         await session.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))
@@ -94,10 +95,14 @@ async def _detail(session: AsyncSession, scan_id: int) -> ScanDetailOut:
 
 
 @router.get("", response_model=list[ScanOut])
-async def list_scans(session: AsyncSession = Depends(get_session)) -> list[ScanOut]:
+async def list_scans(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[ScanOut]:
     rows = (
         await session.execute(
             select(Scan, _seed_count().label("sc"), _rec_count().label("rc"))
+            .where(Scan.user_id == current_user.id)
             .order_by(Scan.id)
         )
     ).all()
@@ -106,42 +111,50 @@ async def list_scans(session: AsyncSession = Depends(get_session)) -> list[ScanO
 
 @router.post("", response_model=ScanDetailOut, status_code=201)
 async def create(
-    payload: ScanCreateIn, session: AsyncSession = Depends(get_session)
+    payload: ScanCreateIn,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> ScanDetailOut:
     try:
-        scan = await create_scan(session, payload.name, payload.seeds)
+        scan = await create_scan(session, current_user.id, payload.name, payload.seeds)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return await _detail(session, scan.id)
+    return await _detail(session, scan.id, current_user.id)
 
 
 @router.get("/{scan_id}", response_model=ScanDetailOut)
 async def get_scan(
-    scan_id: int, session: AsyncSession = Depends(get_session)
+    scan_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> ScanDetailOut:
-    return await _detail(session, scan_id)
+    return await _detail(session, scan_id, current_user.id)
 
 
 @router.post("/{scan_id}/run", response_model=ScanDetailOut)
 async def run_scan(
-    scan_id: int, session: AsyncSession = Depends(get_session)
+    scan_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> ScanDetailOut:
     """Re-queue a scan for the poller (re-crawl its seeds + recompute)."""
     scan = await session.get(Scan, scan_id)
-    if scan is None:
+    if scan is None or scan.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="scan not found")
     scan.status = str(ScanStatus.QUEUED)
     scan.error = None
     await session.commit()
-    return await _detail(session, scan_id)
+    return await _detail(session, scan_id, current_user.id)
 
 
 @router.delete("/{scan_id}")
 async def delete_scan(
-    scan_id: int, session: AsyncSession = Depends(get_session)
+    scan_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
     scan = await session.get(Scan, scan_id)
-    if scan is None:
+    if scan is None or scan.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="scan not found")
     if scan.kind == str(ScanKind.COLLECTION):
         raise HTTPException(status_code=400, detail="the collection scan can't be deleted")

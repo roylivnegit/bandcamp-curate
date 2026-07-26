@@ -12,14 +12,16 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
+from app.auth.security import get_current_user
 from app.crawl.scan_service import (
     claim_queued_scans,
+    create_collection_scan,
     create_scan,
     parse_seed_url,
     run_scan,
 )
 from app.db.base import Base
-from app.db.models import Fan, Scan, ScanSeed
+from app.db.models import Fan, FanItem, Scan, ScanSeed, User
 from app.db.session import get_session
 from app.enums import ScanKind, ScanStatus
 from app.main import app
@@ -29,6 +31,8 @@ ALBUM_HTML = (FIXTURES / "album_page.html").read_text()
 ALBUM_URL = "https://cerebro-spinal.bandcamp.com/album/panchito"
 TRACK_HTML = (FIXTURES / "track_page.html").read_text()
 TRACK_URL = "https://jscottg.bandcamp.com/track/return-of-the-king-original-mix"
+FAN_HTML = (FIXTURES / "fan_page.html").read_text()
+FAN_URL = "https://bandcamp.com/guron"  # the fan the fixture describes
 
 
 # ── unit: URL parsing ──────────────────────────────────────────────────────────
@@ -59,11 +63,20 @@ async def client() -> AsyncIterator[AsyncClient]:
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
+    async with maker() as s:
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
+        await s.commit()
+
     async def _override() -> AsyncIterator[AsyncSession]:
         async with maker() as s:
             yield s
 
     app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as c:
         yield c
@@ -157,9 +170,14 @@ async def sessionmaker_() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 async def test_claim_queued_scans(sessionmaker_) -> None:  # noqa: ANN001
     async with sessionmaker_() as s:
+        user = User(username="me", password_hash="!")
+        s.add(user)
+        await s.flush()
         s.add_all([
-            Scan(name="a", kind=str(ScanKind.CUSTOM), status=str(ScanStatus.QUEUED)),
-            Scan(name="b", kind=str(ScanKind.CUSTOM), status=str(ScanStatus.DONE)),
+            Scan(user_id=user.id, name="a",
+                 kind=str(ScanKind.CUSTOM), status=str(ScanStatus.QUEUED)),
+            Scan(user_id=user.id, name="b",
+                 kind=str(ScanKind.CUSTOM), status=str(ScanStatus.DONE)),
         ])
         await s.commit()
         ids = await claim_queued_scans(s)
@@ -172,11 +190,15 @@ async def test_run_scan_crawls_resolves_and_curates(sessionmaker_) -> None:  # n
     # A custom scan seeded with the album fixture: run_scan should crawl it, resolve
     # the seed to the ingested album, curate, and mark the scan done.
     async with sessionmaker_() as s:
-        # curation needs the is_me fan as the shared exclusion base (a prior
-        # collection crawl would have created it).
-        s.add(Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True))
+        # curation needs a User linked to a Fan as the exclusion base (a prior
+        # collection crawl would have created both).
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
         await s.commit()
-        scan = await create_scan(s, "Panchito dig", [ALBUM_URL])
+        scan = await create_scan(s, user.id, "Panchito dig", [ALBUM_URL])
         scan_id = scan.id
 
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML, "/album/": ALBUM_HTML})
@@ -196,9 +218,13 @@ async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:
     # A scan seeded with BOTH an album URL and a track URL, any mix: both should
     # be crawled, both resolved, and both contribute taste-neighbours.
     async with sessionmaker_() as s:
-        s.add(Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True))
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
         await s.commit()
-        scan = await create_scan(s, "Mixed dig", [ALBUM_URL, TRACK_URL])
+        scan = await create_scan(s, user.id, "Mixed dig", [ALBUM_URL, TRACK_URL])
         scan_id = scan.id
 
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML, TRACK_URL: TRACK_HTML})
@@ -215,3 +241,95 @@ async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:
         by_type = {sd.seed_type: sd for sd in seeds}
         assert by_type["album"].resolved_album_id is not None
         assert by_type["track"].resolved_track_id is not None
+
+
+# ── collection-scan onboarding (a fresh signup's own crawl) ─────────────────────
+
+
+class FakeCollectionClient:
+    """The collection/wishlist XHRs return nothing extra beyond the embedded page."""
+
+    async def iter_items(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+        return
+        yield  # pragma: no cover
+
+
+class FakeFollowsClient:
+    async def iter_bands(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+        return
+        yield  # pragma: no cover
+
+
+async def _run_collection_scan(sessionmaker_, user_id: int, scan_id: int):  # noqa: ANN001,ANN202
+    fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
+    return await run_scan(
+        sessionmaker_, fetcher, scan_id,
+        collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+    )
+
+
+async def test_collection_scan_crawls_the_users_own_fan_page(sessionmaker_) -> None:  # noqa: ANN001
+    """A fresh signup: no Fan row yet, a queued kind=collection scan with no seeds.
+    run_scan must crawl the user's own fan page, link user.fan_id to the ingested
+    Fan, enqueue their owned albums, and curate — the whole onboarding path."""
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        user_id, scan_id = user.id, scan.id
+        assert user.fan_id is None  # nothing crawled yet
+
+    done = await _run_collection_scan(sessionmaker_, user_id, scan_id)
+    assert done.status == str(ScanStatus.DONE)
+
+    async with sessionmaker_() as s:
+        user = await s.get(User, user_id)
+        assert user.fan_id is not None  # linked to the ingested Fan
+        fan = await s.get(Fan, user.fan_id)
+        assert fan.username == "guron" and fan.is_me is True
+        # Their owned items were ingested and their albums enqueued for the walk.
+        owned = (
+            await s.execute(select(FanItem).where(FanItem.fan_id == fan.id))
+        ).scalars().all()
+        assert owned
+
+
+async def test_collection_scan_rerun_is_idempotent(sessionmaker_) -> None:  # noqa: ANN001
+    """Re-running the collection scan (the "refresh my collection" path) must not
+    duplicate the Fan/ownership rows or change which Fan the user points at."""
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        user_id, scan_id = user.id, scan.id
+
+    await _run_collection_scan(sessionmaker_, user_id, scan_id)
+    async with sessionmaker_() as s:
+        first_fan_id = (await s.get(User, user_id)).fan_id
+        fans_before = len((await s.execute(select(Fan))).scalars().all())
+        items_before = len((await s.execute(select(FanItem))).scalars().all())
+
+    await _run_collection_scan(sessionmaker_, user_id, scan_id)
+    async with sessionmaker_() as s:
+        assert (await s.get(User, user_id)).fan_id == first_fan_id
+        assert len((await s.execute(select(Fan))).scalars().all()) == fans_before
+        assert len((await s.execute(select(FanItem))).scalars().all()) == items_before
+
+
+async def test_collection_scan_without_a_fan_url_errors_cleanly(sessionmaker_) -> None:  # noqa: ANN001
+    async with sessionmaker_() as s:
+        user = User(username="nourl", password_hash="!", bandcamp_fan_url=None)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        user_id, scan_id = user.id, scan.id
+
+    with pytest.raises(ValueError, match="bandcamp_fan_url"):
+        await _run_collection_scan(sessionmaker_, user_id, scan_id)
+
+    async with sessionmaker_() as s:  # failure recorded on the scan, not swallowed
+        scan = await s.get(Scan, scan_id)
+        assert scan.status == str(ScanStatus.ERROR) and "bandcamp_fan_url" in scan.error

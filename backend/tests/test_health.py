@@ -3,11 +3,12 @@ from starlette.testclient import TestClient
 from app.main import app
 
 
-def test_root_serves_ui() -> None:
+def test_root_is_not_served() -> None:
+    # The legacy server-rendered UI is unregistered while the API is auth-only —
+    # see the note in app/main.py. The React frontend takes over GET / next.
     with TestClient(app) as client:
         resp = client.get("/")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
+    assert resp.status_code == 404
 
 
 def test_info() -> None:
