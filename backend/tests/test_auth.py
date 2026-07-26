@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -400,3 +401,96 @@ async def test_get_me_rejects_a_dangling_fan_id(maker) -> None:  # noqa: ANN001
         await s.flush()
         with pytest.raises(ValueError, match="no longer exists"):
             await get_me(s, user)
+
+
+async def test_every_read_endpoint_survives_a_fresh_signup(client: AsyncClient) -> None:
+    """The first page a new user loads, before their collection has been crawled.
+    /api/facets used to 500 here (seed_tags -> get_me raises on a null fan_id)."""
+    token = await _signup(client, "alice")
+    for path in ("/api/stats", "/api/recommendations", "/api/recommendations/count",
+                 "/api/facets", "/api/likes", "/api/blacklist", "/api/scans"):
+        r = await client.get(path, headers=_auth(token))
+        assert r.status_code == 200, f"{path} -> {r.status_code}: {r.text[:200]}"
+
+    facets = (await client.get("/api/facets", headers=_auth(token))).json()
+    assert facets["seed_tags"] == []  # nothing crawled yet, but not an error
+
+
+# ── misconfiguration / hostile input (must not 500) ───────────────────────────
+
+
+def _unconfigured() -> Settings:
+    return Settings(auth_secret_key="", auth_invite_code=INVITE)
+
+
+async def test_auth_routes_503_when_no_signing_key_is_set(maker) -> None:  # noqa: ANN001
+    """PyJWT refuses an empty HMAC key, so without this guard signup would commit
+    the user + scan and *then* fail — leaving an account nobody can log into."""
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with maker() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_settings] = _unconfigured
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/api/auth/signup", json={
+                "username": "alice", "password": "pw", "invite_code": INVITE,
+                "bandcamp_fan_url": "https://bandcamp.com/alice",
+            })
+            assert r.status_code == 503
+            assert (await c.post(
+                "/api/auth/login", json={"username": "alice", "password": "pw"}
+            )).status_code == 503
+    finally:
+        app.dependency_overrides.clear()
+
+    # Critically: nothing was persisted, so a later correctly-configured signup works.
+    async with maker() as s:
+        assert (await s.execute(select(User))).scalars().all() == []
+
+
+async def test_token_with_a_non_integer_subject_is_401_not_500(client: AsyncClient) -> None:
+    await _signup(client, "alice")
+    for bad_sub in ("not-a-number", None, {"nested": 1}):
+        token = jwt.encode({"sub": bad_sub}, SECRET, algorithm=ALGORITHM)
+        r = await client.get("/api/auth/me", headers=_auth(token))
+        assert r.status_code == 401, f"sub={bad_sub!r} -> {r.status_code}"
+
+
+async def test_signup_maps_a_db_uniqueness_violation_to_409(
+    client: AsyncClient, maker, monkeypatch,  # noqa: ANN001
+) -> None:
+    """The SELECT pre-check races: under concurrent signups the DB constraint is
+    what actually rejects the duplicate, and that surfaces as IntegrityError on
+    flush. Forced directly here — a real race can't be reproduced against SQLite's
+    single shared test connection. Must be 409, and must not half-create a user."""
+    import app.api.auth as auth_module
+
+    async def _boom(session, user):  # noqa: ANN001,ANN202
+        raise IntegrityError("INSERT INTO users ...", {}, Exception("duplicate key"))
+
+    monkeypatch.setattr(auth_module, "create_collection_scan", _boom)
+
+    r = await client.post("/api/auth/signup", json={
+        "username": "alice", "password": "pw12345", "invite_code": INVITE,
+        "bandcamp_fan_url": "https://bandcamp.com/alice",
+    })
+    assert r.status_code == 409, f"got {r.status_code}: {r.text[:200]}"
+
+    async with maker() as s:  # rolled back — no orphaned account left behind
+        assert (await s.execute(select(User))).scalars().all() == []
+
+
+# ── token lifetime is configurable ────────────────────────────────────────────
+
+
+def test_token_ttl_comes_from_settings() -> None:
+    short = Settings(auth_secret_key=SECRET, auth_token_ttl_days=1)
+    long = Settings(auth_secret_key=SECRET, auth_token_ttl_days=90)
+    exp_short = jwt.decode(
+        create_access_token(1, short), SECRET, algorithms=[ALGORITHM]
+    )["exp"]
+    exp_long = jwt.decode(create_access_token(1, long), SECRET, algorithms=[ALGORITHM])["exp"]
+    assert exp_long - exp_short == pytest.approx(89 * 86400, abs=5)

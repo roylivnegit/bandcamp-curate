@@ -24,6 +24,11 @@ a real one; use `scripts/set_password.py` right after migrating to set a real
 password (and `PATCH`-equivalent update of `bandcamp_fan_url` isn't needed here
 since that Fan is already crawled).
 
+If a populated DB can't be backfilled (rows exist but no `is_me` fan does), this
+ABORTS rather than leaving NULL owners behind — see `_lock_not_null`. An unowned
+row would be permanently invisible to the app's ownership scoping, which is a
+worse outcome than a failed migration the operator can fix and re-run.
+
 Revision ID: 0008_users_and_ownership
 Revises: 0007_track_supporters
 Create Date: 2026-07-26
@@ -76,6 +81,25 @@ def _drop_unique(table: str, columns: list[str]) -> None:
         op.drop_index(name, table_name=table)
 
 
+def _lock_not_null(table: str, col: str, *, fix: str) -> None:
+    """Make `table.col` NOT NULL, refusing to continue if any row is still NULL.
+
+    Leaving NULLs behind would be worse than failing: the app scopes everything by
+    these columns, so an unowned row becomes permanently invisible — no user can
+    see it, and nothing surfaces that it exists. An empty table locks down fine;
+    only a populated-but-unbackfillable one aborts, with `fix` telling the
+    operator how to unblock."""
+    remaining = op.get_bind().execute(
+        sa.text(f"SELECT count(*) FROM {table} WHERE {col} IS NULL")  # noqa: S608
+    ).scalar()
+    if remaining:
+        raise RuntimeError(
+            f"migration 0008 cannot continue: {remaining} row(s) in `{table}` have a "
+            f"NULL `{col}` and could not be backfilled. {fix}"
+        )
+    op.alter_column(table, col, nullable=False)
+
+
 def upgrade() -> None:
     bind = op.get_bind()
 
@@ -109,13 +133,12 @@ def upgrade() -> None:
             bind.execute(
                 sa.text("UPDATE follows SET fan_id = :me WHERE fan_id IS NULL"), {"me": me_id}
             )
-        # Only lock non-null if every row actually got backfilled (true unless
-        # follows exist with no is_me fan at all — shouldn't happen in practice).
-        still_null = bind.execute(
-            sa.text("SELECT count(*) FROM follows WHERE fan_id IS NULL")
-        ).scalar()
-        if still_null == 0:
-            op.alter_column("follows", "fan_id", nullable=False)
+        _lock_not_null(
+            "follows", "fan_id",
+            fix="No `fans` row is flagged is_me, so there's no fan to attribute existing "
+                "follows to. Flag the right fan (UPDATE fans SET is_me = true WHERE ...) "
+                "and re-run, or delete the orphaned follows if they're stale.",
+        )
         op.create_foreign_key("fk_follows_fan_id", "follows", "fans", ["fan_id"], ["id"])
         op.create_index("ix_follows_fan_id", "follows", ["fan_id"])
         _drop_unique("follows", ["band_id"])
@@ -147,11 +170,13 @@ def upgrade() -> None:
                 sa.text(f"UPDATE {table} SET user_id = :uid WHERE user_id IS NULL"),  # noqa: S608
                 {"uid": operator_user_id},
             )
-        still_null = bind.execute(
-            sa.text(f"SELECT count(*) FROM {table} WHERE user_id IS NULL")  # noqa: S608
-        ).scalar()
-        if still_null == 0:
-            op.alter_column(table, "user_id", nullable=False)
+        _lock_not_null(
+            table, "user_id",
+            fix="No operator user could be created (no `fans` row is flagged is_me, and "
+                "`users` was empty), so there's nobody to attribute these rows to. Flag "
+                "the right fan (UPDATE fans SET is_me = true WHERE ...) and re-run, or "
+                f"clear the stale `{table}` rows.",
+        )
         op.create_foreign_key(f"fk_{table}_user_id", table, "users", ["user_id"], ["id"])
         op.create_index(f"ix_{table}_user_id", table, ["user_id"])
 

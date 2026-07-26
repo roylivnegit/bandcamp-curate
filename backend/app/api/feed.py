@@ -367,7 +367,10 @@ async def facets(
             .limit(200)
         )
     ).all()
-    seed = await seed_tag_genres(session, current_user)
+    # Seed genres come from the caller's own crawled collection. A brand-new user
+    # has none yet (fan_id unset) — an empty facet list, not an error: this is the
+    # first page they see after signing up.
+    seed = [] if current_user.fan_id is None else await seed_tag_genres(session, current_user)
     return FacetsOut(
         tags=[Facet(value=n, label=n, count=c) for n, c in tag_rows],
         labels=[

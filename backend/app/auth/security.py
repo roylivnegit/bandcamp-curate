@@ -18,9 +18,19 @@ from app.db.models import User
 from app.db.session import get_session
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE = timedelta(days=30)
 
 _bearer = HTTPBearer(auto_error=False)
+
+
+def require_auth_configured(settings: Settings) -> None:
+    """503 unless a signing key is configured. Call this BEFORE any DB write in an
+    auth route: PyJWT rejects an empty HMAC key, so issuing a token would fail
+    after the write and leave behind an account that can never be logged into."""
+    if not settings.auth_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="authentication is not configured on this server",
+        )
 
 
 def hash_password(password: str) -> str:
@@ -38,7 +48,8 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 def create_access_token(user_id: int, settings: Settings) -> str:
     now = datetime.now(UTC)
-    payload = {"sub": str(user_id), "iat": now, "exp": now + ACCESS_TOKEN_EXPIRE}
+    ttl = timedelta(days=settings.auth_token_ttl_days)
+    payload = {"sub": str(user_id), "iat": now, "exp": now + ttl}
     return jwt.encode(payload, settings.auth_secret_key, algorithm=ALGORITHM)
 
 
@@ -60,10 +71,13 @@ async def get_current_user(
         )
     except jwt.InvalidTokenError as exc:
         raise unauthorized from exc
-    user_id = payload.get("sub")
-    if user_id is None:
-        raise unauthorized
-    user = await session.get(User, int(user_id))
+    # `sub` is ours (str(user_id)), but a validly-signed token from elsewhere could
+    # carry anything — a bad subject is an auth failure, not a server error.
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise unauthorized from exc
+    user = await session.get(User, user_id)
     if user is None:
         raise unauthorized
     return user

@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     # Auth: JWT signing secret. Read here and nowhere else, same discipline as
     # nimble_api_key — never logged or serialized.
     auth_secret_key: str = ""
+    # How long an issued access token stays valid. Long by default: this is a
+    # personal-scale app with no refresh-token flow, so a short TTL would just
+    # mean re-logging in constantly. Lower it if that tradeoff changes.
+    auth_token_ttl_days: int = 30
     # Shared invite code required at signup (gates who can queue crawls against
     # this deployment's Nimble budget). Empty disables signup entirely.
     auth_invite_code: str = ""

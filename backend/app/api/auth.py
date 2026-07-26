@@ -11,9 +11,16 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.security import create_access_token, get_current_user, hash_password, verify_password
+from app.auth.security import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_auth_configured,
+    verify_password,
+)
 from app.config import Settings, get_settings
 from app.crawl.scan_service import create_collection_scan
 from app.db.models import Scan, User
@@ -59,6 +66,9 @@ async def signup(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> TokenOut:
+    # Before any DB write: a missing signing key would fail at token creation and
+    # leave an account behind that could never be logged into.
+    require_auth_configured(settings)
     if not settings.auth_invite_code:
         raise HTTPException(status_code=403, detail="signup is currently disabled")
     if not secrets.compare_digest(payload.invite_code, settings.auth_invite_code):
@@ -70,11 +80,12 @@ async def signup(
     if not payload.bandcamp_fan_url.strip():
         raise HTTPException(status_code=400, detail="bandcamp_fan_url is required")
 
+    taken = HTTPException(status_code=409, detail="username is already taken")
     existing = (
         await session.execute(select(User).where(User.username == username))
     ).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status_code=409, detail="username is already taken")
+        raise taken
 
     try:
         password_hash = hash_password(payload.password)
@@ -87,9 +98,14 @@ async def signup(
         bandcamp_fan_url=payload.bandcamp_fan_url.strip(),
     )
     session.add(user)
-    await session.flush()
-    await create_collection_scan(session, user)
-    await session.commit()
+    try:
+        await session.flush()
+        await create_collection_scan(session, user)
+    except IntegrityError as exc:
+        # The pre-check above races: uniqueness is ultimately the DB's call, so a
+        # concurrent signup for the same name lands here. Same answer either way.
+        await session.rollback()
+        raise taken from exc
 
     return TokenOut(access_token=create_access_token(user.id, settings))
 
@@ -100,6 +116,7 @@ async def login(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> TokenOut:
+    require_auth_configured(settings)
     invalid = HTTPException(status_code=401, detail="invalid username or password")
     user = (
         await session.execute(select(User).where(User.username == payload.username.strip()))
