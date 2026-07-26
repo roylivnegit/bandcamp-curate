@@ -15,8 +15,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.crawl import frontier, runner
-from app.crawl.service import Fetcher
-from app.db.models import Album, Scan, ScanSeed, Track
+from app.crawl.service import Fetcher, crawl_fan_collection
+from app.db.models import Album, Scan, ScanSeed, Track, User
 from app.enums import CrawlKind, ItemType, ScanKind, ScanStatus
 
 logger = logging.getLogger("crate_digger.scan")
@@ -35,9 +35,9 @@ def parse_seed_url(url: str) -> tuple[str, str]:
     return m.group(1), m.group(2).lower()
 
 
-async def create_scan(session: AsyncSession, name: str, urls: list[str]) -> Scan:
-    """Create a queued custom scan from a list of seed URLs (album and/or track,
-    any mix). Deduplicates URLs.
+async def create_scan(session: AsyncSession, user_id: int, name: str, urls: list[str]) -> Scan:
+    """Create a queued custom scan owned by `user_id`, from a list of seed URLs
+    (album and/or track, any mix). Deduplicates URLs.
 
     Raises ValueError on an empty name or no valid seeds."""
     name = (name or "").strip()
@@ -53,11 +53,24 @@ async def create_scan(session: AsyncSession, name: str, urls: list[str]) -> Scan
     if not seeds:
         raise ValueError("at least one album or track URL is required")
 
-    scan = Scan(name=name, kind=str(ScanKind.CUSTOM), status=str(ScanStatus.QUEUED))
+    scan = Scan(
+        user_id=user_id, name=name, kind=str(ScanKind.CUSTOM), status=str(ScanStatus.QUEUED)
+    )
     session.add(scan)
     await session.flush()
     for clean, kind in seeds:
         session.add(ScanSeed(scan_id=scan.id, url=clean, seed_type=kind))
+    await session.commit()
+    return scan
+
+
+async def create_collection_scan(session: AsyncSession, user: User) -> Scan:
+    """Create the one queued `collection`-kind scan for a newly signed-up user —
+    no `ScanSeed` rows; `run_scan` special-cases this kind to seed from the user's
+    own `bandcamp_fan_url` directly instead of walking pre-set seeds."""
+    scan = Scan(user_id=user.id, name="My collection", kind=str(ScanKind.COLLECTION),
+                status=str(ScanStatus.QUEUED))
+    session.add(scan)
     await session.commit()
     return scan
 
@@ -131,8 +144,29 @@ async def run_scan(
         ).scalars().all()
         seed_urls = [(s.url, s.seed_type) for s in seeds]
         used_before = await runner.requests_used(session)
+        scan_kind, scan_user_id = scan.kind, scan.user_id
 
     try:
+        # A `collection` scan has no ScanSeed rows — it seeds from the owning
+        # user's own Bandcamp fan page directly (their collection/wishlist/follows
+        # + owned albums enqueued at depth 1), then falls into the same
+        # frontier-drain + curate steps as any custom scan below.
+        if scan_kind == str(ScanKind.COLLECTION):
+            async with sessionmaker() as session:
+                user = await session.get(User, scan_user_id)
+                if user is None:
+                    raise ValueError("scan's owning user not found")
+                if not user.bandcamp_fan_url:
+                    raise ValueError("no bandcamp_fan_url set for this user")
+                outcome = await crawl_fan_collection(
+                    session, fetcher, user.bandcamp_fan_url, is_me=True,
+                    collection_client=collection_client, follows_client=follows_client,
+                    depth=0, max_depth=max_depth,
+                )
+                if outcome.fan_id is not None:
+                    user.fan_id = outcome.fan_id
+                await session.commit()
+
         # Enqueue seeds at the frontier (dedup'd), then drain.
         async with sessionmaker() as session:
             for url, seed_type in seed_urls:

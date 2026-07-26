@@ -11,6 +11,11 @@ BANDCAMP_FAN_URL and kicks off the chain.
 The crawl logic lives in `app.crawl` (Redis-free and unit-tested); this module is
 just the ARQ adaptor — building the gateway/sessionmaker once on startup and
 mapping jobs onto `runner.process_one`.
+
+`seed_crawl`/`crawl_next` are legacy, operator-only tooling from the single-tenant
+era — they still key off the global BANDCAMP_FAN_URL. Every signed-up user's
+collection is onboarded through `scan_service.run_scan`'s `kind=collection`
+branch instead (dispatched by `poll_scans` below, same as any other scan).
 """
 
 import logging

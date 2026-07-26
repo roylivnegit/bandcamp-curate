@@ -48,12 +48,25 @@ class Settings(BaseSettings):
     # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
     crawl_max_requests: int = 5000
 
-    # Seed
+    # Seed (legacy operator-only bootstrap — see scripts/crawl.py)
     bandcamp_fan_url: str = ""
+
+    # Auth: JWT signing secret. Read here and nowhere else, same discipline as
+    # nimble_api_key — never logged or serialized.
+    auth_secret_key: str = ""
+    # Shared invite code required at signup (gates who can queue crawls against
+    # this deployment's Nimble budget). Empty disables signup entirely.
+    auth_invite_code: str = ""
+    # The deployed React app's origin, for CORS (the frontend is a separate service).
+    frontend_origin: str = "http://localhost:5173"
 
     @property
     def nimble_configured(self) -> bool:
         return bool(self.nimble_api_key)
+
+    @property
+    def auth_configured(self) -> bool:
+        return bool(self.auth_secret_key)
 
 
 @lru_cache

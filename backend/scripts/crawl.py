@@ -8,6 +8,10 @@ Usage:
 Each `run` fetches live pages through the ScraperGateway and costs Nimble credits,
 so it's bounded by `max_iters` (default 5). The ARQ worker (`app.worker`) is the
 production path; this is the manual equivalent.
+
+Legacy, operator-only: keys off the global BANDCAMP_FAN_URL, from before
+per-user collection scans existed (see `scan_service.run_scan`'s `kind=collection`
+branch, which is how every signed-up user's own collection gets crawled now).
 """
 
 import asyncio

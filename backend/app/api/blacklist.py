@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Album, Band, Blacklist, Recommendation, Track
+from app.auth.security import get_current_user
+from app.db.models import Album, Band, Blacklist, Recommendation, Scan, Track, User
 from app.db.session import get_session
 from app.enums import BandKind, TargetType
 
@@ -29,12 +30,19 @@ class BlacklistOut(BaseModel):
 
 
 @router.get("", response_model=list[BlacklistOut])
-async def list_blocked(session: AsyncSession = Depends(get_session)) -> list[BlacklistOut]:
+async def list_blocked(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[BlacklistOut]:
     rows = (
         await session.execute(
             select(Blacklist.id, Blacklist.band_id, Band.name, Band.url, Blacklist.reason)
             .join(Band, Band.id == Blacklist.band_id)
-            .where(Blacklist.active.is_(True), Blacklist.band_id.isnot(None))
+            .where(
+                Blacklist.user_id == current_user.id,
+                Blacklist.active.is_(True),
+                Blacklist.band_id.isnot(None),
+            )
             .order_by(Band.name)
         )
     ).all()
@@ -45,7 +53,11 @@ async def list_blocked(session: AsyncSession = Depends(get_session)) -> list[Bla
 
 
 @router.post("", response_model=BlacklistOut)
-async def block(payload: BlockIn, session: AsyncSession = Depends(get_session)) -> BlacklistOut:
+async def block(
+    payload: BlockIn,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> BlacklistOut:
     band = (
         await session.execute(select(Band).where(Band.id == payload.band_id))
     ).scalar_one_or_none()
@@ -53,23 +65,33 @@ async def block(payload: BlockIn, session: AsyncSession = Depends(get_session)) 
         raise HTTPException(status_code=404, detail="band not found")
 
     entry = (
-        await session.execute(select(Blacklist).where(Blacklist.band_id == band.id))
+        await session.execute(
+            select(Blacklist).where(
+                Blacklist.user_id == current_user.id, Blacklist.band_id == band.id
+            )
+        )
     ).scalar_one_or_none()
     target = band.kind if band.kind in (BandKind.ARTIST, BandKind.LABEL) else str(TargetType.ARTIST)
     if entry is None:
-        entry = Blacklist(band_id=band.id, target_type=target, active=True, reason=payload.reason)
+        entry = Blacklist(
+            user_id=current_user.id, band_id=band.id, target_type=target,
+            active=True, reason=payload.reason,
+        )
         session.add(entry)
     else:
         entry.active = True
         if payload.reason:
             entry.reason = payload.reason
 
-    # Prune current recommendations for this band so the feed updates now.
+    # Prune this band's recs from the current user's OWN scans only — blocking
+    # is per-user and must never touch another tenant's feed.
     album_ids = select(Album.id).where(Album.band_id == band.id)
     track_ids = select(Track.id).where(Track.band_id == band.id)
+    user_scan_ids = select(Scan.id).where(Scan.user_id == current_user.id)
     await session.execute(
         delete(Recommendation).where(
-            Recommendation.album_id.in_(album_ids) | Recommendation.track_id.in_(track_ids)
+            Recommendation.scan_id.in_(user_scan_ids),
+            Recommendation.album_id.in_(album_ids) | Recommendation.track_id.in_(track_ids),
         )
     )
     await session.flush()
@@ -80,10 +102,18 @@ async def block(payload: BlockIn, session: AsyncSession = Depends(get_session)) 
 
 
 @router.post("/{band_id}/unblock")
-async def unblock(band_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+async def unblock(
+    band_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     entry = (
         await session.execute(
-            select(Blacklist).where(Blacklist.band_id == band_id, Blacklist.active.is_(True))
+            select(Blacklist).where(
+                Blacklist.user_id == current_user.id,
+                Blacklist.band_id == band_id,
+                Blacklist.active.is_(True),
+            )
         )
     ).scalar_one_or_none()
     if entry is None:

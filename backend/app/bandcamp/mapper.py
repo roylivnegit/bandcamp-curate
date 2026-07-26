@@ -40,6 +40,7 @@ class IngestCounts:
     fan_items: int = 0  # new ownership edges created this ingest
     wishlist_items: int = 0  # new wishlist edges created this ingest
     follows: int = 0  # new follows created this ingest (is_me only)
+    fan_id: int | None = None  # the ingested Fan's id (matching by url is fragile)
 
 
 @dataclass(slots=True)
@@ -215,14 +216,16 @@ async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
             counts.fan_items += 1
 
 
-async def upsert_follow(session: AsyncSession, band: Band) -> bool:
+async def upsert_follow(session: AsyncSession, band: Band, *, fan_id: int) -> bool:
     existing = (
-        await session.execute(select(Follow).where(Follow.band_id == band.id))
+        await session.execute(
+            select(Follow).where(Follow.fan_id == fan_id, Follow.band_id == band.id)
+        )
     ).scalar_one_or_none()
     if existing is not None:
         return False
     target = band.kind if band.kind in (BandKind.ARTIST, BandKind.LABEL) else TargetType.ARTIST
-    session.add(Follow(band_id=band.id, target_type=target))
+    session.add(Follow(fan_id=fan_id, band_id=band.id, target_type=target))
     await session.flush()
     return True
 
@@ -235,6 +238,7 @@ async def ingest_fan_collection(
     fan = await get_or_create_fan(
         session, fc.fan.fan_id, fc.fan.username, name=fc.fan.name, url=fc.fan.url, is_me=is_me
     )
+    counts.fan_id = fan.id
 
     for item in fc.items:
         await ingest_item(session, fan, item, counts)
@@ -249,7 +253,7 @@ async def ingest_fan_collection(
 
         for pb in fc.follows:
             band = await get_or_create_band(session, pb)
-            if band and await upsert_follow(session, band):
+            if band and await upsert_follow(session, band, fan_id=fan.id):
                 counts.follows += 1
 
     await session.commit()

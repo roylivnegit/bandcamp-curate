@@ -122,7 +122,9 @@ class TrackTag(Base):
 
 
 class Fan(Base, TimestampMixin):
-    """A Bandcamp fan (collector). Your own account is flagged `is_me`."""
+    """A Bandcamp fan (collector). `is_me` is legacy bookkeeping from the single-tenant
+    era — the source of truth for "which Fan is this app-user's own account" is now
+    `User.fan_id`, not this flag."""
 
     __tablename__ = "fans"
 
@@ -179,17 +181,38 @@ class TrackSupporter(Base):
     )
 
 
+# ── App accounts ─────────────────────────────────────────────────────────────
+
+
+class User(Base, TimestampMixin):
+    """An app login. `fan_id` points at the Bandcamp `Fan` row that IS this user
+    (set once their collection scan has crawled their fan page) — this is the
+    per-tenant replacement for the old global `Fan.is_me` flag. `bandcamp_fan_url`
+    is what their collection scan seeds from."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    fan_id: Mapped[int | None] = mapped_column(ForeignKey("fans.id"), unique=True, index=True)
+    bandcamp_fan_url: Mapped[str | None] = mapped_column(String(512))
+
+
 # ── Curation & control ───────────────────────────────────────────────────────
 
 
 class Follow(Base, TimestampMixin):
-    """An artist/label you already follow — excluded/down-weighted in curation."""
+    """An artist/label a fan already follows — excluded/down-weighted in curation.
+    Scoped per-fan: one tenant following a label must not suppress it for another."""
 
     __tablename__ = "follows"
+    __table_args__ = (UniqueConstraint("fan_id", "band_id", name="uq_follow_fan_band"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    fan_id: Mapped[int] = mapped_column(ForeignKey("fans.id"), index=True)
     target_type: Mapped[str] = mapped_column(String(16))  # TargetType artist|label
-    band_id: Mapped[int] = mapped_column(ForeignKey("bands.id"), unique=True, index=True)
+    band_id: Mapped[int] = mapped_column(ForeignKey("bands.id"), index=True)
 
 
 class Like(Base):
@@ -199,10 +222,11 @@ class Like(Base):
 
     __tablename__ = "likes"
     __table_args__ = (
-        UniqueConstraint("item_type", "album_id", "track_id", name="uq_like_item"),
+        UniqueConstraint("user_id", "item_type", "album_id", "track_id", name="uq_like_item"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     item_type: Mapped[str] = mapped_column(String(16))  # ItemType
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), index=True)
@@ -217,6 +241,7 @@ class Blacklist(Base, TimestampMixin):
     __tablename__ = "blacklist"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     target_type: Mapped[str] = mapped_column(String(16), index=True)  # TargetType
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
@@ -244,6 +269,7 @@ class Scan(Base, TimestampMixin):
     __tablename__ = "scans"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     kind: Mapped[str] = mapped_column(String(16), default=ScanKind.CUSTOM, index=True)
     status: Mapped[str] = mapped_column(String(16), default=ScanStatus.DRAFT, index=True)
@@ -369,6 +395,7 @@ __all__ = [
     "Fan",
     "FanItem",
     "AlbumSupporter",
+    "User",
     "Follow",
     "Like",
     "Blacklist",

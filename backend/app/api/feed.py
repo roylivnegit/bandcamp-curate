@@ -10,6 +10,7 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.auth.security import get_current_user
 from app.config import Settings, get_settings
 from app.crawl.runner import requests_used
 from app.curation.engine import curate
@@ -27,6 +28,7 @@ from app.db.models import (
     Tag,
     Track,
     TrackTag,
+    User,
 )
 from app.db.session import get_session
 from app.enums import ScanKind
@@ -34,14 +36,25 @@ from app.enums import ScanKind
 router = APIRouter(prefix="/api", tags=["feed"])
 
 
-async def _resolve_scan_id(session: AsyncSession, scan_id: int | None) -> int | None:
-    """The scan to scope the feed to: the given id, else the collection scan.
-    Read-only — returns None if no scan exists yet (→ an empty feed)."""
+async def _resolve_scan_id(
+    session: AsyncSession, user_id: int, scan_id: int | None
+) -> int | None:
+    """The scan to scope the feed to: the given id (must belong to `user_id` — 404s
+    otherwise, never leaking another tenant's scan), else the user's own collection
+    scan. Returns None only when no scan_id was given and they have no scans yet
+    (→ an empty feed, not an error)."""
     if scan_id is not None:
+        owner = (
+            await session.execute(select(Scan.user_id).where(Scan.id == scan_id))
+        ).scalars().first()
+        if owner is None or owner != user_id:
+            raise HTTPException(status_code=404, detail="scan not found")
         return scan_id
     return (
         await session.execute(
-            select(Scan.id).where(Scan.kind == str(ScanKind.COLLECTION)).order_by(Scan.id)
+            select(Scan.id)
+            .where(Scan.user_id == user_id, Scan.kind == str(ScanKind.COLLECTION))
+            .order_by(Scan.id)
         )
     ).scalars().first()
 
@@ -183,11 +196,12 @@ def _apply_rec_filters(stmt, band_id_col, *, item_type, tag, exclude_tag,
 async def stats(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    current_user: User = Depends(get_current_user),
     scan_id: int | None = Query(None),
 ) -> StatsOut:
-    sid = await _resolve_scan_id(session, scan_id)
-    me = (await session.execute(select(Fan.id).where(Fan.is_me.is_(True)))).scalars().first()
-    owned = wished = 0
+    sid = await _resolve_scan_id(session, current_user.id, scan_id)
+    me = current_user.fan_id  # the Fan that IS this user, once their collection is crawled
+    owned = wished = follows = 0
     if me is not None:
         owned = await _count(
             session,
@@ -200,6 +214,9 @@ async def stats(
             select(func.count()).select_from(FanItem).where(
                 FanItem.fan_id == me, FanItem.is_wishlist.is_(True)
             ),
+        )
+        follows = await _count(
+            session, select(func.count()).select_from(Follow).where(Follow.fan_id == me)
         )
     return StatsOut(
         recommendations=await _count(
@@ -214,8 +231,10 @@ async def stats(
         tracks=await _count(session, select(func.count()).select_from(Track)),
         my_owned=owned,
         my_wishlist=wished,
-        follows=await _count(session, select(func.count()).select_from(Follow)),
-        liked=await _count(session, select(func.count()).select_from(Like)),
+        follows=follows,
+        liked=await _count(
+            session, select(func.count()).select_from(Like).where(Like.user_id == current_user.id)
+        ),
         requests_used=await requests_used(session),
         request_budget=settings.crawl_max_requests,
     )
@@ -224,6 +243,7 @@ async def stats(
 @router.get("/recommendations", response_model=list[RecommendationOut])
 async def recommendations(
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     item_type: str | None = Query(None, pattern="^(album|track)$"),
@@ -236,7 +256,7 @@ async def recommendations(
     sort: str = Query("score", pattern="^(score|neighbours|affinity)$"),
     scan_id: int | None = Query(None),            # which scan's feed (default: collection)
 ) -> list[RecommendationOut]:
-    sid = await _resolve_scan_id(session, scan_id)
+    sid = await _resolve_scan_id(session, current_user.id, scan_id)
     ab = aliased(Band)
     tb = aliased(Band)
     band_id_col = func.coalesce(Album.band_id, Track.band_id)
@@ -287,6 +307,7 @@ async def recommendations(
 @router.get("/recommendations/count")
 async def recommendations_count(
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
     item_type: str | None = Query(None, pattern="^(album|track)$"),
     tag: list[str] = Query(default=[]),
     exclude_tag: list[str] = Query(default=[]),
@@ -297,7 +318,7 @@ async def recommendations_count(
     scan_id: int | None = Query(None),
 ) -> dict[str, int]:
     """How many recommendations match the current filters (for the feed's count header)."""
-    sid = await _resolve_scan_id(session, scan_id)
+    sid = await _resolve_scan_id(session, current_user.id, scan_id)
     band_id_col = func.coalesce(Album.band_id, Track.band_id)
     stmt = (
         select(func.count())
@@ -317,10 +338,11 @@ async def recommendations_count(
 @router.get("/facets", response_model=FacetsOut)
 async def facets(
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
     scan_id: int | None = Query(None),
 ) -> FacetsOut:
     """Tags and labels present in one scan's recommendations, with counts."""
-    sid = await _resolve_scan_id(session, scan_id)
+    sid = await _resolve_scan_id(session, current_user.id, scan_id)
     tag_rows = (
         await session.execute(
             select(Tag.name, func.count().label("n"))
@@ -345,7 +367,7 @@ async def facets(
             .limit(200)
         )
     ).all()
-    seed = await seed_tag_genres(session)
+    seed = await seed_tag_genres(session, current_user)
     return FacetsOut(
         tags=[Facet(value=n, label=n, count=c) for n, c in tag_rows],
         labels=[
@@ -359,15 +381,22 @@ async def facets(
 @router.post("/recommendations/recompute")
 async def recompute(
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
     exclude_seed_tag: list[str] = Query(default=[]),
     scan_id: int | None = Query(None),
 ) -> dict[str, Any]:
     """Recompute one scan's feed (defaults to the collection scan). `exclude_seed_tag`
     drops recs generated from the scan's seeds carrying those genres."""
+    if scan_id is not None:
+        owner = (
+            await session.execute(select(Scan.user_id).where(Scan.id == scan_id))
+        ).scalars().first()
+        if owner is None or owner != current_user.id:
+            raise HTTPException(status_code=404, detail="scan not found")
     try:
         scored = await curate(
-            session, scan_id=scan_id, exclude_seed_tags=set(exclude_seed_tag)
+            session, scan_id=scan_id, user=current_user, exclude_seed_tags=set(exclude_seed_tag)
         )
-    except ValueError as e:  # unknown scan_id → 404, not a 500
+    except ValueError as e:  # e.g. collection not yet crawled → 404, not a 500
         raise HTTPException(status_code=404, detail=str(e)) from e
     return {"computed": len(scored), "excluded_seed_tags": exclude_seed_tag}
