@@ -287,6 +287,40 @@ async def test_stats_are_scoped_to_the_caller(client: AsyncClient, maker) -> Non
     assert bob_stats["my_owned"] == 0 and bob_stats["my_wishlist"] == 0
 
 
+async def test_neighbour_count_does_not_exclude_other_tenants(
+    client: AsyncClient, maker,  # noqa: ANN001
+) -> None:
+    """Regression: neighbours was `count(Fan where is_me == False)`. Each tenant's
+    own collection crawl sets THEIR fan is_me=True, so that predicate dropped every
+    other user's fan — under-counting by one per tenant. Neighbours means "every
+    crawled collector but me", so only the caller's own fan should be excluded."""
+    alice = await _signup(client, "alice")
+    await _signup(client, "bob")
+    async with maker() as s:
+        users = {
+            u.username: u for u in (await s.execute(select(User))).scalars().all()
+        }
+        # Both tenants get crawled: each ends up with an is_me=True fan of their own.
+        for name in ("alice", "bob"):
+            fan = Fan(bandcamp_fan_id=hash(name) % 10000, username=f"{name}_bc",
+                      url=f"https://bandcamp.com/{name}_bc", is_me=True)
+            s.add(fan)
+            await s.flush()
+            users[name].fan_id = fan.id
+        # Plus one ordinary crawled collector who belongs to nobody.
+        s.add(Fan(bandcamp_fan_id=999, username="stranger",
+                  url="https://bandcamp.com/stranger", is_me=False))
+        await s.commit()
+
+    stats = (await client.get("/api/stats", headers=_auth(alice))).json()
+    # 3 fans total (alice_bc, bob_bc, stranger); from Alice's seat 2 are neighbours.
+    assert stats["fans"] == 3
+    assert stats["neighbours"] == 2, (
+        "bob's fan was excluded because it carries is_me=True — the old global "
+        "is_me predicate is back"
+    )
+
+
 async def test_one_users_follows_do_not_suppress_anothers_feed(maker) -> None:  # noqa: ANN001
     """Regression: `follows` had no fan scoping (globally unique on band_id), so one
     user following a label silently removed it from every other user's feed."""

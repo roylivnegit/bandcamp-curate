@@ -201,6 +201,13 @@ async def stats(
 ) -> StatsOut:
     sid = await _resolve_scan_id(session, current_user.id, scan_id)
     me = current_user.fan_id  # the Fan that IS this user, once their collection is crawled
+    # Every crawled collector except your own account. Must NOT filter on
+    # `Fan.is_me`: that flag is set on each tenant's own fan, so excluding all of
+    # them would drop other users' fans from your count even though they're
+    # perfectly good neighbours in your graph.
+    neighbours_stmt = select(func.count()).select_from(Fan)
+    if me is not None:
+        neighbours_stmt = neighbours_stmt.where(Fan.id != me)
     owned = wished = follows = 0
     if me is not None:
         owned = await _count(
@@ -224,9 +231,7 @@ async def stats(
             select(func.count()).select_from(Recommendation).where(Recommendation.scan_id == sid),
         ),
         fans=await _count(session, select(func.count()).select_from(Fan)),
-        neighbours=await _count(
-            session, select(func.count()).select_from(Fan).where(Fan.is_me.is_(False))
-        ),
+        neighbours=await _count(session, neighbours_stmt),
         albums=await _count(session, select(func.count()).select_from(Album)),
         tracks=await _count(session, select(func.count()).select_from(Track)),
         my_owned=owned,
