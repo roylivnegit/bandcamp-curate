@@ -135,11 +135,11 @@ async def test_recompute_unknown_scan_404(client: AsyncClient) -> None:
     assert r.status_code == 404
 
 
-async def test_ui_served(client: AsyncClient) -> None:
-    r = await client.get("/")
-    assert r.status_code == 200
-    assert "text/html" in r.headers["content-type"]
-    assert "Bandcamp suggestions" in r.text and "/api/recommendations" in r.text
+async def test_legacy_ui_route_is_not_served(client: AsyncClient) -> None:
+    # The old server-rendered feed is unregistered (see app/main.py): its fetch()
+    # calls carry no bearer token, so it would render and then silently 401 on
+    # every request. A clean 404 until the React app lands.
+    assert (await client.get("/")).status_code == 404
 
 
 async def test_recommendation_has_band_id(client: AsyncClient) -> None:

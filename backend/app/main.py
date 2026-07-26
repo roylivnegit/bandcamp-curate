@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, blacklist, feed, health, likes, scans, ui
+from app.api import auth, blacklist, feed, health, likes, scans
 from app.config import get_settings
 
 settings = get_settings()
@@ -44,10 +44,14 @@ app.include_router(feed.router)  # /api/stats, /api/recommendations, /api/facets
 app.include_router(blacklist.router)  # /api/blacklist (list/block/unblock)
 app.include_router(likes.router)  # /api/likes (like/list/unlike)
 app.include_router(scans.router)  # /api/scans (list/create/get/run/delete)
-app.include_router(ui.router)  # GET / — the feed UI (legacy; dropped once the React app is live)
+# NOTE: app/api/ui.py (the old server-rendered feed at GET /) is deliberately NOT
+# registered. Its fetch() calls are unauthenticated, so every one of them 401s now
+# that routes require a bearer token — it would load and then silently fail, which
+# is worse than a clean 404. The React frontend replaces it; the file is kept for
+# reference until that lands, then removed.
 # Later milestones: rules, jobs, usage.
 
 
 @app.get("/api/info", tags=["root"])
 async def info() -> dict:
-    return {"name": "crate-digger", "docs": "/docs", "health": "/health", "ui": "/"}
+    return {"name": "crate-digger", "docs": "/docs", "health": "/health"}
