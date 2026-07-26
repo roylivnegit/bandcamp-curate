@@ -1,0 +1,122 @@
+.dd {
+  position: relative;
+}
+
+.ddpanel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.ddlist {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: var(--s-2);
+}
+
+.ddlist::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ddlist::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+
+.ddrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px var(--s-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ddrow:hover {
+  background: var(--surface-2);
+}
+
+.ddrow.sel {
+  color: var(--accent);
+}
+
+/* checkbox-style marker for multi-select rows */
+.ddrow .box {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-micro);
+  color: transparent;
+}
+
+.ddrow.sel .box {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* tick-style marker for single-select rows */
+.ddrow .tick {
+  width: 14px;
+  flex: none;
+  color: transparent;
+  font-size: var(--fs-label);
+}
+
+.ddrow.sel .tick {
+  color: var(--accent);
+}
+
+.ddrow .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ddrow .cnt {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: var(--fs-tiny);
+}
+
+.ddempty {
+  color: var(--muted);
+  font-size: var(--fs-tiny);
+  padding: 10px var(--s-2);
+}
+
+.ddfoot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--line);
+}
+
+.ddfoot .btn {
+  padding: 7px 14px;
+}

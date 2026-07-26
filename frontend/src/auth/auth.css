@@ -1,0 +1,77 @@
+.authpage {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-10) var(--s-5);
+}
+
+.authbox {
+  width: 100%;
+  max-width: 420px;
+}
+
+.authbrand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-8);
+}
+
+.authbrand-name {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.authtitle {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+.authblurb {
+  margin: var(--s-2) 0 var(--s-5);
+  color: var(--muted);
+  font-size: 14px;
+  max-width: 38ch;
+}
+
+.authcard {
+  padding: var(--s-5);
+}
+
+.field + .field {
+  margin-top: var(--s-4);
+}
+
+.field-hint {
+  margin: var(--s-2) 0 0;
+  color: var(--faint);
+  font-size: var(--fs-tiny);
+}
+
+.authsubmit {
+  margin-top: var(--s-5);
+}
+
+.authfoot {
+  margin: var(--s-5) 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.authfoot a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.authfoot a:hover {
+  text-decoration: underline;
+}
