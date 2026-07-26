@@ -45,6 +45,11 @@
   padding: var(--s-5);
 }
 
+.authnotice {
+  margin: 0 0 var(--s-3);
+  font-size: var(--fs-sm);
+}
+
 .field + .field {
   margin-top: var(--s-4);
 }

@@ -1,11 +1,24 @@
 /* The single place that talks to the API.
  *
- * Auth is a bearer token in localStorage (the frontend is a separate origin from
- * the API, so cookies would need SameSite=None + credentialed CORS — a bearer
- * header sidesteps that entirely).
- *
  * A 401 anywhere means the token is gone or stale, so it's handled centrally:
  * clear it and notify listeners, rather than making every caller check.
+ *
+ * ── On keeping the token in localStorage ──────────────────────────────────
+ * This is a known trade, not an oversight. localStorage is readable by any
+ * script on this origin, so an XSS or a compromised dependency could exfiltrate
+ * the token and use it until it expires (auth_token_ttl_days, 30 by default).
+ *
+ * The stronger alternative is an httpOnly cookie, which script can't read — but
+ * that needs the API on the same site as this app, or SameSite=None + Secure +
+ * credentialed CORS, plus CSRF protection that bearer tokens don't need. The
+ * frontend and API are deliberately separate services here, which is what made
+ * a bearer token the right fit in the first place.
+ *
+ * What actually bounds the risk today: no third-party scripts are loaded, the
+ * dependency surface is small, sign-up is invite-gated, and the data is a music
+ * recommendation feed rather than anything sensitive. If any of that changes —
+ * especially loading third-party script — revisit this, because the mitigation
+ * (same-site cookies) is an architecture change, not a patch.
  */
 
 import type {

@@ -6,7 +6,7 @@ import { AuthLayout } from './AuthLayout'
 import { useAuth } from './context'
 
 export function LoginPage() {
-  const { login } = useAuth()
+  const { login, authError } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -43,6 +43,11 @@ export function LoginPage() {
         </>
       }
     >
+      {authError && !error && (
+        <p className="banner queued authnotice">
+          {authError} Your sign-in wasn&rsquo;t lost — try again in a moment.
+        </p>
+      )}
       <form onSubmit={submit} noValidate>
         <div className="field">
           <label className="label" htmlFor="username">

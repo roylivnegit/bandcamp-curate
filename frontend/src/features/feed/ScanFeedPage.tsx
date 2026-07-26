@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail } from '../../api/types'
+import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS } from '../../config'
 import { count, plural } from '../../lib/format'
 import { FeedCard } from './FeedCard'
 import { FilterBar } from './FilterBar'
@@ -10,15 +11,15 @@ import { BlockedPanel, LikedPanel } from './SidePanels'
 import { useFeedFilters } from './useFeedFilters'
 import './feed.css'
 
-const LIMIT = 50
-const POLL_MS = 4000
-/** Matches the CSS evaporate animation, so the row leaves as the animation ends. */
-const EXIT_MS = 800
+const LIMIT = FEED_PAGE_SIZE
 
 export function ScanFeedPage() {
   const { scanId: raw } = useParams()
-  const scanId = Number(raw)
-  const filters = useFeedFilters(Number.isFinite(scanId) ? scanId : null)
+  // A hand-typed or stale URL can put anything here. Number('abc') is NaN, which
+  // would otherwise be sent as literal /api/scans/NaN.
+  const parsed = Number(raw)
+  const scanId = Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  const filters = useFeedFilters(scanId)
 
   const [scan, setScan] = useState<ScanDetail | null>(null)
   const [rows, setRows] = useState<Recommendation[]>([])
@@ -38,6 +39,7 @@ export function ScanFeedPage() {
 
   // ── scan metadata, polled while the crawl is still in flight ──────────────
   const loadScan = useCallback(async () => {
+    if (scanId === null) return
     try {
       setScan(await api.getScan(scanId))
     } catch (err) {
@@ -51,7 +53,7 @@ export function ScanFeedPage() {
 
   useEffect(() => {
     if (!scan || scan.status === 'done' || scan.status === 'error') return
-    pollTimer.current = window.setTimeout(loadScan, POLL_MS)
+    pollTimer.current = window.setTimeout(loadScan, SCAN_POLL_MS)
     return () => window.clearTimeout(pollTimer.current)
   }, [scan, loadScan])
 
@@ -141,7 +143,7 @@ export function ScanFeedPage() {
         return next
       })
       setTotal((t) => (t === null ? t : Math.max(0, t - 1)))
-    }, EXIT_MS)
+    }, CARD_EXIT_MS)
   }
 
   async function like(rec: Recommendation) {
@@ -192,6 +194,19 @@ export function ScanFeedPage() {
       ? 'albums'
       : 'tracks'
     : 'results'
+
+  if (scanId === null) {
+    return (
+      <div className="wrap feedpage">
+        <nav className="feednav">
+          <Link to="/scans" className="back">
+            ← Scans
+          </Link>
+        </nav>
+        <p className="empty">That isn&rsquo;t a valid scan address.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="wrap feedpage">

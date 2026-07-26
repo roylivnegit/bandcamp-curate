@@ -8,7 +8,7 @@ import { ago, count, plural } from '../../lib/format'
 import { NewScanForm } from './NewScanForm'
 import './scans.css'
 
-const POLL_MS = 4000
+import { SCAN_POLL_MS } from '../../config'
 
 export function ScanListPage() {
   const { me, refresh } = useAuth()
@@ -39,7 +39,7 @@ export function ScanListPage() {
     timer.current = window.setTimeout(async () => {
       await load()
       await refresh()
-    }, POLL_MS)
+    }, SCAN_POLL_MS)
     return () => window.clearTimeout(timer.current)
   }, [active, scans, load, refresh])
 

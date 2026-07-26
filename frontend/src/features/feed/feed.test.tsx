@@ -105,6 +105,19 @@ describe('scan feed', () => {
     expect(await screen.findByText(/✓ include/)).toBeInTheDocument()
   })
 
+  it('rejects a non-numeric scan id instead of requesting /api/scans/NaN', async () => {
+    const fetchMock = mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/not-a-number')
+
+    expect(await screen.findByText(/isn’t a valid scan address/i)).toBeInTheDocument()
+    const urls = fetchMock.mock.calls.map(([u]) => String(u))
+    expect(urls.some((u) => u.includes('NaN'))).toBe(false)
+  })
+
   it('filters to one artist when the band name is clicked', async () => {
     mockFetch(feedRoutes())
     renderApp('/scans/1')

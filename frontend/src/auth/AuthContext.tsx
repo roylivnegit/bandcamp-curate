@@ -7,13 +7,14 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
-import { api, getToken, setToken, setUnauthorizedHandler } from '../api/client'
+import { ApiError, api, getToken, setToken, setUnauthorizedHandler } from '../api/client'
 import type { Me } from '../api/types'
 import { AuthContext } from './context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authError, setAuthError] = useState('')
 
   const logout = useCallback(() => {
     setToken(null)
@@ -38,8 +39,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((m) => {
         if (!cancelled) setMe(m)
       })
-      .catch(() => {
-        if (!cancelled) setToken(null) // stale/invalid — start logged out
+      .catch((err: unknown) => {
+        if (cancelled) return
+        // ONLY a 401 means the token is actually bad — and the client has
+        // already discarded it by then. A network failure or a 5xx says nothing
+        // about the session, and throwing it away would sign people out every
+        // time the API is briefly unreachable (the free tier cold-starts for
+        // ~30-60s, so that is the common case, not the rare one).
+        if (err instanceof ApiError && err.status !== 401) {
+          setAuthError(err.message)
+        } else if (!(err instanceof ApiError)) {
+          setAuthError('Could not reach the server.')
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -53,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { access_token } = await api.login({ username, password })
     setToken(access_token)
     setMe(await api.me())
+    setAuthError('')
   }, [])
 
   const signup = useCallback(
@@ -79,8 +91,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ me, loading, login, signup, logout, refresh }),
-    [me, loading, login, signup, logout, refresh],
+    () => ({ me, loading, authError, login, signup, logout, refresh }),
+    [me, loading, authError, login, signup, logout, refresh],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

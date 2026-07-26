@@ -9,6 +9,10 @@ export interface AuthValue {
   me: Me | null
   /** True until any stored token has been checked against /api/auth/me. */
   loading: boolean
+  /** Set when resolving a stored token failed for a reason that ISN'T a bad
+   *  token (server down, network error) — the session is kept, and the login
+   *  screen explains why it couldn't be restored. */
+  authError: string
   login: (username: string, password: string) => Promise<void>
   signup: (body: {
     username: string

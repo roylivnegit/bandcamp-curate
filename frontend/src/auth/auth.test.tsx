@@ -70,4 +70,31 @@ describe('auth flow', () => {
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
     await waitFor(() => expect(localStorage.getItem('crate-digger.token')).toBeNull())
   })
+
+  it('keeps the token when the server is unreachable, and says so', async () => {
+    // Regression: any failed /me used to clear the token. The API cold-starts
+    // for ~30-60s on the free tier, so "unreachable" is routine — throwing the
+    // session away there signs people out for no reason.
+    localStorage.setItem('crate-digger.token', 'still-good')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+    renderApp('/scans')
+
+    expect(await screen.findByText(/reach the server/i)).toBeInTheDocument()
+    expect(screen.getByText(/wasn’t lost/i)).toBeInTheDocument()
+    expect(localStorage.getItem('crate-digger.token')).toBe('still-good')
+  })
+
+  it('keeps the token when /me returns a 5xx', async () => {
+    localStorage.setItem('crate-digger.token', 'still-good')
+    mockFetch([['/api/auth/me', { detail: 'boom' }, 500]])
+    renderApp('/scans')
+
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(localStorage.getItem('crate-digger.token')).toBe('still-good')
+  })
 })
