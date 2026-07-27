@@ -1,0 +1,60 @@
+.apphead {
+  border-bottom: 1px solid var(--line);
+  background: rgba(10, 12, 17, 0.72);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+.apphead-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  height: 58px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  text-decoration: none;
+}
+
+/* A stack of crate dividers, drawn rather than an icon font. */
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 4px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) 0 3px / 100% 2px no-repeat,
+    linear-gradient(var(--violet), var(--violet)) 0 8px / 100% 2px no-repeat,
+    linear-gradient(var(--accent-deep), var(--accent-deep)) 0 13px / 100% 2px no-repeat;
+}
+
+.brand-name {
+  font-family: var(--mono);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.brand-hl {
+  color: var(--accent);
+}
+
+.whoami {
+  font-size: var(--fs-tiny);
+  color: var(--muted);
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+}
+
+.signout {
+  padding: 7px 13px;
+  font-size: var(--fs-tiny);
+}

@@ -5,14 +5,18 @@ graph (album **supporters** → their **collections**), and produces a curated, 
 feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-create-purrfect-pascal.md`.
 
 ## Stack & layout
-- **Backend:** Python 3.12+ / FastAPI (async), SQLAlchemy 2.0 + Alembic, Postgres.
-- **Jobs:** Redis + ARQ workers + token-bucket rate limiter (M3, not built yet).
+- **Backend:** Python 3.12+ / FastAPI (async), SQLAlchemy 2.0 + Alembic, Postgres. JSON API only —
+  it serves no HTML.
+- **Frontend:** separate React app (`frontend/`, Vite + TypeScript), own origin, talks to the API
+  over CORS with a JWT bearer token.
+- **Jobs:** Redis + ARQ workers + token-bucket rate limiter.
 - **Scraping:** Nimble **v2** `/extract` only, behind a provider seam (`app/scraping/`).
 - **Parsing:** Bandcamp embeds clean JSON in the page (`#pagedata data-blob`, `data-tralbum`,
   `data-band`); we parse it **locally in Python** (`app/bandcamp/parse.py`) rather than
   Nimble server-side parsit-ai — see "Open decision" below.
-- Layout: `backend/app/{scraping,bandcamp,db,api}`, `backend/nimble_parsers/` (unused so far),
-  `backend/tests/`, `backend/scripts/` (verify_nimble.py, dump_extract.py).
+- Layout: `backend/app/{scraping,bandcamp,db,api,auth,crawl,curation}`, `backend/nimble_parsers/`
+  (unused so far), `backend/tests/`, `backend/scripts/`; `frontend/src/{api,auth,components,
+  features,styles}`.
 
 ## Status (as of 2026-07-24, M2 done + M3 started)
 - **M0 Scaffold** ✅ committed (`da93068`) — FastAPI skeleton, 15-table schema, Alembic
@@ -120,13 +124,11 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     it via another release). The like also prunes that band's current recs immediately. Holds until
     your next collection crawl reflects the real action; unlike brings the band back. Rec rows carry
     `album_id`/`track_id`; stats has `liked`.
-  UI features: stat tiles, All/Albums/Tracks filter, 3-state genre-tag chips (off→include→exclude),
-  click a band to filter by that label, **⊘ block** per card, a **Blocked (N)** panel to unblock,
-  load-more, Recompute. **Curation now returns one rec per band** (`compute_recommendations(
-  one_per_band=True)` — the band's top-scoring item). Run: `uvicorn app.main:app` (host venv +
-  localhost override) → http://127.0.0.1:8000. Verified live (1,600 recs = 1,600 distinct bands;
-  block/unblock/label-filter all work). `ruff` ignores B008 (FastAPI Depends idiom) + E501 for the
-  UI template. Tag facets are sparse until more album *pages* are crawled (tags live there).
+  **Curation returns one rec per band** (`compute_recommendations(one_per_band=True)` — the band's
+  top-scoring item). `ruff` ignores B008 (the FastAPI `Depends`/`Query` idiom). Tag facets stay
+  sparse until more album *pages* are crawled (tags live there).
+  **NOTE: `app/api/ui.py` is gone** — the server-rendered feed was replaced by the React app in
+  M8 (below). The backend serves no HTML; `GET /` is a 404.
 - **M6 Deploy** 🔨 self-hosted stack done (committed): `docker compose up -d` brings up the **whole
   app** — `postgres`, `redis`, a one-shot `migrate` (runs `alembic upgrade head`, then api/worker
   wait on `service_completed_successfully`), `api` (uvicorn, `/health` healthcheck), and `worker`
@@ -191,15 +193,46 @@ pg_dump/restored into the compose volume (counts intact). Inspect:
 (An earlier ad-hoc `brew` Postgres/Redis was used first, then decommissioned via `brew services
 stop postgresql@16 redis` — still installed but off, so it won't fight compose for the ports.)
 
+## M8 — multi-tenant auth + React frontend (2026-07-26/27)
+- **Auth (merged, PR #7)**: JWT bearer tokens (PyJWT HS256, `AUTH_SECRET_KEY`) + bcrypt directly
+  (not passlib). Signup is gated by a shared `AUTH_INVITE_CODE` — every scan runs on the operator's
+  Mac against their Nimble credits, so it can't be open. `app/auth/security.py` holds
+  hash/verify/`create_access_token`/`get_current_user`/`require_auth_configured`.
+- **Real multi-tenancy.** New `users` table; `user_id` on `scans`/`likes`/`blacklist`
+  (recommendations/scan_seeds scope transitively via `scan_id`). **`users.fan_id` — not the legacy
+  `Fan.is_me` flag — is now the "which Fan am I" mechanism.** The Bandcamp catalog + social graph
+  (bands/albums/tracks/tags/fans/fan_items/supporters/crawl_frontier) stays **global and shared**:
+  one user's crawl enriches everyone's discovery. Migration `0008` backfills an operator user from
+  the pre-existing `is_me` fan and **aborts rather than leaving NULL owners** (an unowned row would
+  be permanently invisible to ownership scoping).
+  - Fixed 4 cross-tenant leaks found along the way: `follows` had **no per-fan scoping at all**
+    (globally unique on `band_id` — one user's follow suppressed that band for everyone; now
+    `follows.fan_id` + composite unique), `blacklist`/`likes` exclusions were queried globally in
+    `build_exclusions`, and `/api/stats` both resolved "me" via a global `is_me` lookup **and**
+    counted neighbours as `is_me == False` (which excludes every *other* tenant's own fan).
+  - **Per-user collection onboarding**: signup creates a seedless `Scan(kind=collection)`;
+    `scan_service.run_scan` branches on that kind to crawl the user's own `bandcamp_fan_url`
+    directly and set `user.fan_id`, then falls into the same drain+curate path as a custom scan.
+    Previously "crawl my collection" and "the collection Scan row" were disconnected mechanisms.
+  - `scripts/set_password.py <username> <pw>` — required once after migrating, since the migration
+    can't hash a password (backfilled users carry an unusable `!` placeholder).
+- **React frontend** (`frontend/`, Vite + React + TS + react-router): replaces `app/api/ui.py`,
+  which is **deleted**. Separate origin, so the backend is a pure JSON API behind CORS
+  (`FRONTEND_ORIGIN`). Bearer token in `localStorage`; a 401 anywhere drops the session — except on
+  `/api/auth/login|signup`, where a 401 is a wrong password, not an expired session.
+  `npm run dev` (port 5173, strict) + `npm test` (17 vitest tests).
+- **Deploy**: `render.yaml` now defines two services — `crate-digger-api` (Docker) and
+  `crate-digger-web` (static, with a `/*` → `index.html` rewrite so client routes survive a
+  refresh). `VITE_API_BASE_URL` and `FRONTEND_ORIGIN` are dashboard-set, **not** `fromService`:
+  that yields a bare host and both need the scheme.
+
 ## Immediate next steps
-1. ~~Live end-to-end smoke test~~ ✅ done 2026-07-24 — `scripts.crawl seed && run 3` populated the
-   graph (see M3 status above); 3 Nimble credits. To crawl wider: `python -m scripts.crawl run <N>`
-   (each N = one more page render/credit) or run the ARQ worker (`arq app.worker.WorkerSettings`)
-   for the self-perpetuating chain.
-2. Consider a secondary budget cap (max total frontier size / max fetches per run) on top of the
+1. Consider a secondary budget cap (max total frontier size / max fetches per run) on top of the
    depth bound before a very wide run — depth 3 on a popular album still fans out wide.
-3. **M4 (curation)** is now unblocked with real data in the DB: score unowned tracks/albums by
-   supporter overlap + tag affinity + follow signals → `recommendations` table.
+2. **Per-user crawl budgets.** `crawl_max_requests`/`provider_usage` are still global, so one
+   user's deep scan can starve everyone else's. Fine at one or two users; revisit beyond that.
+3. Retire or relabel the legacy `seed_crawl`/`crawl_next` ARQ chain and `scripts/crawl.py`, which
+   still key off the single global `BANDCAMP_FAN_URL` (documented as operator-only for now).
 
 ## Open decision — RESOLVED (2026-07-24)
 Earlier flagged: local Python parsing vs Nimble server-side parsing, with the v2 parser def
@@ -221,10 +254,18 @@ Nimble parser can parse JSON and to prefer mimicking XHRs over render+scroll (bo
   cd backend
   python3 -m venv .venv && . .venv/bin/activate   # 3.12+; this box has 3.14 only
   pip install -e ".[dev]" aiosqlite
-  pytest -q                                        # 46 tests as of M3
+  pytest -q                                        # 142 tests as of M8
   ```
   The `.env` lives at the **repo root** (not `backend/`); config reads it via env vars, so
   `set -a && . ../.env && set +a` before running scripts that need the Nimble key.
+- Frontend (separate app, own toolchain):
+  ```bash
+  cd frontend && npm install
+  npm run dev     # http://localhost:5173, strict port — the API's CORS default expects it
+  npm test        # 17 vitest tests;  npm run build / npm run lint
+  ```
+  `frontend/.env.local` sets `VITE_API_BASE_URL` (defaults to the local uvicorn). Running the API
+  locally for the frontend also needs `AUTH_SECRET_KEY` + `AUTH_INVITE_CODE` exported.
 - Nimble calls cost credits (~3–35s each). Use `scripts/dump_extract.py <url> <out.json>` to
   save real responses and author parsers offline against them. Saved samples from this session
   were in the scratchpad (gone now); re-fetch if needed.

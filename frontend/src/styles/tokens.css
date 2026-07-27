@@ -1,0 +1,82 @@
+/* Design tokens.
+ *
+ * Carries forward the identity the old server-rendered UI established (deep
+ * blue-black ground, teal accent, violet secondary) with two deliberate changes:
+ *
+ *  1. Semantic status color is separate from the brand accent. The old CSS used
+ *     teal for both "accent" and "scan is done", so a status change and a brand
+ *     highlight were indistinguishable. Status now has its own ramp.
+ *  2. A monospace face carries data — scores, counts, badges, eyebrow labels.
+ *     Numbers line up and it suits a crate catalogue; prose stays in system sans.
+ *
+ * Single-theme on purpose: this is a dim, late-night digging tool, not a
+ * document that needs to read on paper. No light-mode inversion.
+ */
+
+:root {
+  /* ── ground & surfaces ─────────────────────────────────────────────────── */
+  --bg: #0a0c11;
+  --surface: #141823;
+  --surface-2: #1b2130;
+  --surface-3: #232a3b;
+  --line: #262d3d;
+  --line-strong: #384357;
+
+  /* ── text (neutrals biased toward the accent's hue, not flat grey) ─────── */
+  --text: #eceff6;
+  --muted: #99a3b5;
+  --faint: #667085;
+
+  /* ── brand ────────────────────────────────────────────────────────────── */
+  --accent: #5eead4;
+  --accent-deep: #2dd4bf;
+  --accent-ink: #04241d;
+  --accent-dim: rgba(94, 234, 212, 0.32);
+  --accent-wash: rgba(94, 234, 212, 0.07);
+  --violet: #c4b5fd;
+  --violet-dim: rgba(196, 181, 253, 0.3);
+
+  /* ── semantic status (independent of brand accent) ────────────────────── */
+  --ok: #34d399;
+  --ok-dim: rgba(52, 211, 153, 0.35);
+  --warn: #fbbf24;
+  --warn-dim: rgba(251, 191, 36, 0.38);
+  --danger: #fb7185;
+  --danger-dim: rgba(251, 113, 133, 0.4);
+
+  /* ── type ─────────────────────────────────────────────────────────────── */
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --fs-micro: 10px;
+  --fs-label: 11px;
+  --fs-tiny: 12px;
+  --fs-sm: 13px;
+  --fs-base: 15px;
+  --fs-md: 17px;
+  --fs-lg: 21px;
+  --fs-xl: 27px;
+  --fs-2xl: 34px;
+
+  /* ── spacing (4px base) ───────────────────────────────────────────────── */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+
+  /* ── shape & depth ────────────────────────────────────────────────────── */
+  --r-sm: 8px;
+  --r-md: 11px;
+  --r-lg: 15px;
+  --r-xl: 18px;
+  --r-pill: 999px;
+  --shadow-card: 0 16px 34px -22px rgba(0, 0, 0, 0.7);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+
+  --measure: 800px; /* the reading/scanning column */
+}
