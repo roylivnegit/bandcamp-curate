@@ -31,8 +31,16 @@ export function LikedPanel({
                   {r.band_name && <span className="hint"> {r.band_name}</span>}
                 </span>
                 {r.url && (
-                  <a className="listen sm" href={r.url} target="_blank" rel="noopener noreferrer">
-                    ↗
+                  // Icon-only link: the glyph is decorative, so the accessible
+                  // name has to come from aria-label or it announces as "↗".
+                  <a
+                    className="listen sm"
+                    href={r.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Open ${r.title || r.item_type} on Bandcamp`}
+                  >
+                    <span aria-hidden="true">↗</span>
                   </a>
                 )}
                 <button type="button" className="act" onClick={() => onUnlike(r)}>

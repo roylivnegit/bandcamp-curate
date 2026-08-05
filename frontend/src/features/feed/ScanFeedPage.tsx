@@ -13,6 +13,10 @@ import './feed.css'
 
 const LIMIT = FEED_PAGE_SIZE
 
+/** Module scope, not a closure over render state — the like/block handlers stay
+ *  referentially stable only if nothing they call is re-created per render. */
+const keyOf = (r: Recommendation) => `${r.item_type}:${r.album_id ?? r.track_id}`
+
 export function ScanFeedPage() {
   const { scanId: raw } = useParams()
   // A hand-typed or stale URL can put anything here. Number('abc') is NaN, which
@@ -20,6 +24,10 @@ export function ScanFeedPage() {
   const parsed = Number(raw)
   const scanId = Number.isInteger(parsed) && parsed > 0 ? parsed : null
   const filters = useFeedFilters(scanId)
+  /* Destructured so the handlers below can depend on the individual stable
+   * callbacks. `filters` itself is a fresh object every render, so depending on
+   * it would defeat the point. */
+  const { includeTag, setLabel } = filters
 
   const [scan, setScan] = useState<ScanDetail | null>(null)
   const [rows, setRows] = useState<Recommendation[]>([])
@@ -33,7 +41,16 @@ export function ScanFeedPage() {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
-  const pollTimer = useRef<number | undefined>(undefined)
+
+  /* Bumped by every first-page load. A response whose ticket no longer matches is
+   * stale — the filters moved on while it was in flight — so it must not land.
+   * Toggling two genre pills quickly is enough to make responses arrive out of
+   * order, and the loser would otherwise overwrite the winner's rows. */
+  const feedSeq = useRef(0)
+  /* In-flight like/block keys. A ref, not state: this only guards re-entry, and
+   * as state it would force the handlers to depend on it, un-memoizing every card
+   * on each click. `busyKeys` below is the render-visible half. */
+  const inFlight = useRef<Set<string>>(new Set())
 
   const ready = scan?.status === 'done'
 
@@ -53,8 +70,12 @@ export function ScanFeedPage() {
 
   useEffect(() => {
     if (!scan || scan.status === 'done' || scan.status === 'error') return
-    pollTimer.current = window.setTimeout(loadScan, SCAN_POLL_MS)
-    return () => window.clearTimeout(pollTimer.current)
+    // The id stays in the closure rather than a ref: under StrictMode's double
+    // invoke, a shared ref holds only the second timer, so the cleanup leaks the
+    // first one. `scan` in the deps is what re-arms the poll — loadScan sets a
+    // fresh object, which re-runs this effect.
+    const id = window.setTimeout(loadScan, SCAN_POLL_MS)
+    return () => window.clearTimeout(id)
   }, [scan, loadScan])
 
   // ── side lists ───────────────────────────────────────────────────────────
@@ -75,6 +96,7 @@ export function ScanFeedPage() {
 
   // ── the feed itself ──────────────────────────────────────────────────────
   const loadFirstPage = useCallback(async () => {
+    const req = ++feedSeq.current
     setLoading(true)
     setError('')
     try {
@@ -82,13 +104,15 @@ export function ScanFeedPage() {
         api.recommendations(filters.params, { sort: filters.sort, limit: LIMIT, offset: 0 }),
         api.recommendationsCount(filters.params),
       ])
+      if (feedSeq.current !== req) return
       setRows(page)
       setTotal(c.count)
       setDone(page.length < LIMIT)
     } catch (err) {
+      if (feedSeq.current !== req) return
       setError(err instanceof Error ? err.message : 'Could not load the feed.')
     } finally {
-      setLoading(false)
+      if (feedSeq.current === req) setLoading(false)
     }
   }, [filters.params, filters.sort])
 
@@ -98,6 +122,10 @@ export function ScanFeedPage() {
 
   async function loadMore() {
     if (loading || done) return
+    // Reads the current ticket without claiming one: if the filters change while
+    // this page is in flight, these rows belong to the old query and are dropped
+    // rather than appended to the new list.
+    const req = feedSeq.current
     setLoading(true)
     try {
       const page = await api.recommendations(filters.params, {
@@ -105,30 +133,32 @@ export function ScanFeedPage() {
         limit: LIMIT,
         offset: rows.length,
       })
+      if (feedSeq.current !== req) return
       setRows((prev) => [...prev, ...page])
       if (page.length < LIMIT) setDone(true)
     } catch (err) {
+      if (feedSeq.current !== req) return
       setError(err instanceof Error ? err.message : 'Could not load more.')
     } finally {
-      setLoading(false)
+      if (feedSeq.current === req) setLoading(false)
     }
   }
 
   // ── like / block ─────────────────────────────────────────────────────────
-  const keyOf = (r: Recommendation) => `${r.item_type}:${r.album_id ?? r.track_id}`
-
-  function markBusy(key: string, on: boolean) {
+  /* Every handler below is dependency-free (functional setState + the in-flight
+   * ref), so `FeedCard`'s memo actually holds across unrelated re-renders. */
+  const markBusy = useCallback((key: string, on: boolean) => {
     setBusyKeys((prev) => {
       const next = new Set(prev)
       if (on) next.add(key)
       else next.delete(key)
       return next
     })
-  }
+  }, [])
 
   /** Animate the card out, then drop it and any sibling by the same band —
    *  curation excludes the whole band, so the live feed should match. */
-  function retire(rec: Recommendation, kind: 'like' | 'block') {
+  const retire = useCallback((rec: Recommendation, kind: 'like' | 'block') => {
     const key = keyOf(rec)
     setExiting((prev) => ({ ...prev, [key]: kind }))
     window.setTimeout(() => {
@@ -144,38 +174,57 @@ export function ScanFeedPage() {
       })
       setTotal((t) => (t === null ? t : Math.max(0, t - 1)))
     }, CARD_EXIT_MS)
-  }
+  }, [])
 
-  async function like(rec: Recommendation) {
-    const key = keyOf(rec)
-    if (busyKeys.has(key)) return
-    markBusy(key, true)
-    try {
-      const ref = rec.album_id !== null ? { album_id: rec.album_id } : { track_id: rec.track_id! }
-      await api.like(ref)
-      retire(rec, 'like')
-      await Promise.all([loadLiked(), loadFacets()])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save that like.')
-    } finally {
-      markBusy(key, false)
-    }
-  }
+  const like = useCallback(
+    async (rec: Recommendation) => {
+      const key = keyOf(rec)
+      if (inFlight.current.has(key)) return
+      inFlight.current.add(key)
+      markBusy(key, true)
+      try {
+        const ref = rec.album_id !== null ? { album_id: rec.album_id } : { track_id: rec.track_id! }
+        await api.like(ref)
+        retire(rec, 'like')
+        await Promise.all([loadLiked(), loadFacets()])
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not save that like.')
+      } finally {
+        inFlight.current.delete(key)
+        markBusy(key, false)
+      }
+    },
+    [markBusy, retire, loadLiked, loadFacets],
+  )
 
-  async function block(rec: Recommendation) {
-    const key = keyOf(rec)
-    if (rec.band_id === null || busyKeys.has(key)) return
-    markBusy(key, true)
-    try {
-      await api.block(rec.band_id)
-      retire(rec, 'block')
-      await Promise.all([loadBlocked(), loadFacets()])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not block that artist.')
-    } finally {
-      markBusy(key, false)
-    }
-  }
+  const block = useCallback(
+    async (rec: Recommendation) => {
+      const key = keyOf(rec)
+      if (rec.band_id === null || inFlight.current.has(key)) return
+      inFlight.current.add(key)
+      markBusy(key, true)
+      try {
+        await api.block(rec.band_id)
+        retire(rec, 'block')
+        await Promise.all([loadBlocked(), loadFacets()])
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not block that artist.')
+      } finally {
+        inFlight.current.delete(key)
+        markBusy(key, false)
+      }
+    },
+    [markBusy, retire, loadBlocked, loadFacets],
+  )
+
+  const onBandClick = useCallback(
+    (rec: Recommendation) => {
+      if (rec.band_id !== null) {
+        setLabel({ id: rec.band_id, name: rec.band_name ?? 'unknown' })
+      }
+    },
+    [setLabel],
+  )
 
   async function unlike(item: Liked) {
     const ref = item.album_id !== null ? { album_id: item.album_id } : { track_id: item.track_id! }
@@ -257,8 +306,15 @@ export function ScanFeedPage() {
               </p>
             )}
 
-            {error && <p className="err">{error}</p>}
+            {error && (
+        <p className="err" role="alert">
+          {error}
+        </p>
+      )}
 
+            {/* Every prop here is either the row itself, a per-row primitive, or a
+                stable callback — nothing is re-created per render, so a card only
+                re-renders when its own row or flags change. */}
             {rows.map((r) => {
               const key = keyOf(r)
               return (
@@ -267,13 +323,10 @@ export function ScanFeedPage() {
                   rec={r}
                   exiting={exiting[key] ?? null}
                   busy={busyKeys.has(key)}
-                  onLike={() => void like(r)}
-                  onBlock={() => void block(r)}
-                  onTagClick={(t) => filters.includeTag(t)}
-                  onBandClick={() =>
-                    r.band_id !== null &&
-                    filters.setLabel({ id: r.band_id, name: r.band_name ?? 'unknown' })
-                  }
+                  onLike={like}
+                  onBlock={block}
+                  onTagClick={includeTag}
+                  onBandClick={onBandClick}
                 />
               )
             })}

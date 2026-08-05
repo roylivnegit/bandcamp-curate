@@ -1,43 +1,55 @@
+import { Suspense, lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { useAuth } from './auth/context'
-import { LoginPage } from './auth/LoginPage'
-import { SignupPage } from './auth/SignupPage'
 import { AppHeader } from './components/AppHeader'
-import { ScanFeedPage } from './features/feed/ScanFeedPage'
-import { ScanListPage } from './features/scans/ScanListPage'
+
+/* Split on the auth boundary. The two branches below never render together, so
+ * neither should ship in the other's chunk: a signed-out visitor downloading the
+ * feed page (and its CSS) is pure waste, and vice versa. The static imports these
+ * replace put all four pages plus every stylesheet in one entry chunk. */
+const LoginPage = lazy(() => import('./auth/LoginPage').then((m) => ({ default: m.LoginPage })))
+const SignupPage = lazy(() => import('./auth/SignupPage').then((m) => ({ default: m.SignupPage })))
+const ScanListPage = lazy(() =>
+  import('./features/scans/ScanListPage').then((m) => ({ default: m.ScanListPage })),
+)
+const ScanFeedPage = lazy(() =>
+  import('./features/feed/ScanFeedPage').then((m) => ({ default: m.ScanFeedPage })),
+)
+
+const Loading = <p className="empty">Loading…</p>
 
 export default function App() {
   const { me, loading } = useAuth()
 
   // Don't flash the login screen while a stored token is still being resolved.
   if (loading) {
-    return (
-      <div className="wrap">
-        <p className="empty">Loading…</p>
-      </div>
-    )
+    return <div className="wrap">{Loading}</div>
   }
 
   if (!me) {
     return (
-      <Routes>
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <Suspense fallback={<div className="wrap">{Loading}</div>}>
+        <Routes>
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </Suspense>
     )
   }
 
   return (
     <>
       <AppHeader />
-      <Routes>
-        <Route path="/scans" element={<ScanListPage />} />
-        <Route path="/scans/:scanId" element={<ScanFeedPage />} />
-        {/* Signed in: /login and /signup have nothing left to offer. */}
-        <Route path="*" element={<Navigate to="/scans" replace />} />
-      </Routes>
+      <Suspense fallback={<div className="wrap">{Loading}</div>}>
+        <Routes>
+          <Route path="/scans" element={<ScanListPage />} />
+          <Route path="/scans/:scanId" element={<ScanFeedPage />} />
+          {/* Signed in: /login and /signup have nothing left to offer. */}
+          <Route path="*" element={<Navigate to="/scans" replace />} />
+        </Routes>
+      </Suspense>
     </>
   )
 }

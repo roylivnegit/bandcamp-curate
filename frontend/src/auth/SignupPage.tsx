@@ -107,7 +107,11 @@ export function SignupPage() {
             We crawl this to learn your taste. Nothing is posted to your account.
           </p>
         </div>
-        {error && <p className="err">{error}</p>}
+        {error && (
+        <p className="err" role="alert">
+          {error}
+        </p>
+      )}
         <button type="submit" className="btn block authsubmit" disabled={busy || !complete}>
           {busy ? 'Creating…' : 'Create account'}
         </button>

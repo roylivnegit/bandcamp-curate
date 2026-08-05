@@ -75,7 +75,11 @@ export function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        {error && <p className="err">{error}</p>}
+        {error && (
+        <p className="err" role="alert">
+          {error}
+        </p>
+      )}
         <button
           type="submit"
           className="btn block authsubmit"

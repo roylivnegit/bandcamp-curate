@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useDeferredValue, useMemo, useState } from 'react'
 
 import type { Facet, SortKey } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
@@ -101,8 +101,23 @@ function GenreDropdown({ filters, facetTags }: { filters: FeedFilters; facetTags
   const [pending, setPending] = useState<Set<string>>(new Set())
 
   const selectedCount = Object.keys(filters.tags).length
-  const q = query.trim().toLowerCase()
-  const rows = facetTags.filter((t) => t.label.toLowerCase().includes(q))
+
+  /* A well-crawled account has thousands of genre tags. Two things keep typing
+   * here smooth: the search key is lowercased once per facet list rather than
+   * once per tag per keystroke, and the filtering reads a deferred query, so the
+   * input paints immediately and the list catches up. */
+  const searchable = useMemo(
+    () => facetTags.map((t) => ({ tag: t, key: t.label.toLowerCase() })),
+    [facetTags],
+  )
+  const deferredQuery = useDeferredValue(query)
+  const rows = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase()
+    if (!q) return facetTags
+    const out: Facet[] = []
+    for (const { tag, key } of searchable) if (key.includes(q)) out.push(tag)
+    return out
+  }, [searchable, facetTags, deferredQuery])
 
   return (
     <Dropdown
@@ -128,7 +143,9 @@ function GenreDropdown({ filters, facetTags }: { filters: FeedFilters; facetTags
                 No genre tags yet — they arrive as album pages get crawled.
               </p>
             ) : rows.length === 0 ? (
-              <p className="ddempty">No genres match “{query}”.</p>
+              // deferredQuery, not query: the message has to describe the list
+              // that's actually on screen.
+              <p className="ddempty">No genres match “{deferredQuery}”.</p>
             ) : (
               rows.map((t) => {
                 const sel = pending.has(t.value)

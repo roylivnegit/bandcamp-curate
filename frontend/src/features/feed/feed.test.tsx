@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -116,6 +116,60 @@ describe('scan feed', () => {
     expect(await screen.findByText(/isn’t a valid scan address/i)).toBeInTheDocument()
     const urls = fetchMock.mock.calls.map(([u]) => String(u))
     expect(urls.some((u) => u.includes('NaN'))).toBe(false)
+  })
+
+  it('ignores a page that lands after the filters moved on', async () => {
+    // Two filter changes in quick succession, with the first request answering
+    // last. Its rows belong to a query the user has already left, so they must
+    // not replace the newer ones — the reason loadFirstPage takes a ticket.
+    let releaseAlbums = () => {}
+    const albumsHeld = new Promise<void>((resolve) => {
+      releaseAlbums = resolve
+    })
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) {
+          if (url.includes('item_type=album')) {
+            await albumsHeld
+            return json([fakeRec({ title: 'Stale album page', album_id: 11 })])
+          }
+          if (url.includes('item_type=track')) {
+            return json([fakeRec({ title: 'Fresh track page', album_id: 12 })])
+          }
+          return json([fakeRec({ title: 'Unfiltered page' })])
+        }
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+    expect(await screen.findByText('Unfiltered page')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Albums' })) // held in flight
+    await user.click(screen.getByRole('button', { name: 'Tracks' })) // answers immediately
+    expect(await screen.findByText('Fresh track page')).toBeInTheDocument()
+
+    await act(async () => {
+      releaseAlbums()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(screen.queryByText('Stale album page')).not.toBeInTheDocument()
+    expect(screen.getByText('Fresh track page')).toBeInTheDocument()
   })
 
   it('filters to one artist when the band name is clicked', async () => {

@@ -8,11 +8,16 @@ export function ago(iso: string | null): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 
+/* Hoisted: a literal in the function body is a fresh RegExp object on every
+ * call, and this one runs once per rendered feed card. No `/g`, so there's no
+ * shared `lastIndex` to leak between calls. */
+const BANDCAMP_HOST = /^([^.]+)\.bandcamp\.com$/i
+
 /** The `<handle>` from `https://<handle>.bandcamp.com/...`, if it looks like one. */
 export function bandcampHandle(url: string | null): string {
   if (!url) return ''
   try {
-    const m = new URL(url).hostname.match(/^([^.]+)\.bandcamp\.com$/i)
+    const m = BANDCAMP_HOST.exec(new URL(url).hostname)
     return m && m[1] !== 'www' ? m[1] : ''
   } catch {
     return ''
