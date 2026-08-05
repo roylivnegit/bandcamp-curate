@@ -83,6 +83,17 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   default 3) **and by a request budget** (`crawl_max_requests`, default 100 = cumulative successful
   provider fetches; enforced in `runner.run_until_empty` + the ARQ `crawl_next` chain). Ingest
   still happens at the boundary, only outward enqueue stops.
+- **Fan-out is also pruned by your follows** (`service.FOLLOWED_FILTER_MIN_DEPTH = 2`): from depth 2
+  down (a neighbour's collection), an owned item whose artist/label you already follow is **ingested
+  but not detail-crawled** — the ownership edge is the co-ownership signal, while its page (tags,
+  supporters, subgraph) only feeds recs curation excludes anyway. `service.followed_bands(fan_id)`
+  loads the follows once per collection and matches on **band bandcamp_id OR storefront host** — the
+  same pair `curation.build_exclusions` uses, because a followed *label*'s releases carry the
+  *artist's* band_id and are only identifiable by subdomain (`app/bandcamp/urls.url_host`, now shared
+  by crawl + curation). Threaded as `seed_fan_id` from `run_scan` (the scan owner's `user.fan_id`,
+  picked up right after the depth-0 collection crawl that creates it) → `run_until_empty` →
+  `process_one/process_entry` → `crawl_fan_collection`. `seed_fan_id=None` (the legacy operator
+  crawl chain) disables it. Counted per crawl as `CrawlOutcome.skipped_followed` and logged.
 - **M4 Curation** 🔨 POC done (committed + run live): `app/curation/engine.py` scores unowned
   albums/tracks by **co-ownership among taste-neighbours** (# non-me fans who own it) + a
   **tag-affinity** nudge from your owned-album genres, after excluding everything already in your

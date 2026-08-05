@@ -2,9 +2,10 @@
 
 A scan is a named discovery run seeded by album and/or track URLs, any mix.
 `run_scan` enqueues the scan's seeds into the shared frontier, drains it (bounded
-by depth + the global request budget), resolves each seed to its ingested
-album/track, then curates that scan. The frontier/graph is shared across scans;
-only the seeds and resulting recommendations are per-scan.
+by depth + the global request budget, and pruned of detail crawls for artists the
+scan's owner already follows), resolves each seed to its ingested album/track, then
+curates that scan. The frontier/graph is shared across scans; only the seeds and
+resulting recommendations are per-scan.
 """
 
 import logging
@@ -145,6 +146,12 @@ async def run_scan(
         seed_urls = [(s.url, s.seed_type) for s in seeds]
         used_before = await runner.requests_used(session)
         scan_kind, scan_user_id = scan.kind, scan.user_id
+        # The fan this walk is *for* — its `follows` prune detail crawls of
+        # already-followed artists/labels deep in the walk. Unset until the owner's
+        # collection scan has run (the branch below sets it), which just means the
+        # filter is inactive on that first run.
+        owner = await session.get(User, scan_user_id)
+        seed_fan_id = owner.fan_id if owner is not None else None
 
     try:
         # A `collection` scan has no ScanSeed rows — it seeds from the owning
@@ -161,11 +168,14 @@ async def run_scan(
                 outcome = await crawl_fan_collection(
                     session, fetcher, user.bandcamp_fan_url, is_me=True,
                     collection_client=collection_client, follows_client=follows_client,
-                    depth=0, max_depth=max_depth,
+                    depth=0, max_depth=max_depth, seed_fan_id=seed_fan_id,
                 )
                 if outcome.fan_id is not None:
                     user.fan_id = outcome.fan_id
                 await session.commit()
+                # This crawl is what *populates* the follows we filter on, so pick
+                # the fan up here — the drain below is where the filter applies.
+                seed_fan_id = user.fan_id
 
         # Enqueue seeds at the frontier (dedup'd), then drain.
         async with sessionmaker() as session:
@@ -181,7 +191,7 @@ async def run_scan(
             await session.commit()
 
         await runner.run_until_empty(
-            sessionmaker, fetcher,
+            sessionmaker, fetcher, seed_fan_id=seed_fan_id,
             collection_client=collection_client, follows_client=follows_client,
             supporters_client=supporters_client,
             max_depth=max_depth, max_requests=max_requests,
