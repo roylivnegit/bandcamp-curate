@@ -66,6 +66,10 @@ export function NewScanForm({
           <input
             id="seed-url"
             className="input"
+            // Matches the signup form's fan-url field: gets the URL keyboard on
+            // mobile without `type="url"`, whose native validation would fight
+            // the Enter-to-add handler below.
+            inputMode="url"
             placeholder="Paste a Bandcamp album or track URL"
             value={seedUrl}
             onChange={(e) => setSeedUrl(e.target.value)}
@@ -92,7 +96,7 @@ export function NewScanForm({
                 type="button"
                 className="rm"
                 aria-label={`Remove ${u}`}
-                onClick={() => setSeeds(seeds.filter((_, j) => j !== i))}
+                onClick={() => setSeeds((prev) => prev.filter((_, j) => j !== i))}
               >
                 ×
               </button>
@@ -101,7 +105,11 @@ export function NewScanForm({
         </ul>
       )}
 
-      {error && <p className="err">{error}</p>}
+      {error && (
+        <p className="err" role="alert">
+          {error}
+        </p>
+      )}
 
       <div className="newscan-foot">
         <button type="button" className="btn ghost" onClick={onCancel}>

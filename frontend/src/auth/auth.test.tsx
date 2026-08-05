@@ -46,6 +46,9 @@ describe('auth flow', () => {
     // screen must not be replaced by a session-expired message.
     expect(await screen.findByText(/invalid username or password/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    // role="alert" — a sighted user sees the red text appear; a screen-reader
+    // user gets nothing unless it's announced.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/invalid username or password/i)
   })
 
   it('reports a rejected invite code on signup', async () => {
@@ -53,7 +56,9 @@ describe('auth flow', () => {
     renderApp('/signup')
     const user = userEvent.setup()
 
-    await user.type(screen.getByLabelText('Invite code'), 'nope')
+    // findBy, not getBy: routes are lazy-loaded, so the form arrives a tick
+    // after the first paint (behind App's Suspense fallback).
+    await user.type(await screen.findByLabelText('Invite code'), 'nope')
     await user.type(screen.getByLabelText('Username'), 'newbie')
     await user.type(screen.getByLabelText('Password'), 'pw12345')
     await user.type(screen.getByLabelText('Your Bandcamp collection'), 'https://bandcamp.com/n')

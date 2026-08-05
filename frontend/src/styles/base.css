@@ -40,6 +40,37 @@ a {
   border-radius: var(--r-sm);
 }
 
+/* Touch targets, per Apple HIG 44pt / Material 48dp minimums.
+ *
+ * Scoped to `pointer: coarse` on purpose. The dense controls this app leans on —
+ * filter-pill ✕ buttons (~15px), seed-row ✕, card like/block — are comfortable
+ * with a mouse, and padding them to 44px everywhere would wreck the density that
+ * makes a long feed scannable. On a finger, the same controls are mis-tap bait,
+ * and two of them are destructive (remove filter, remove seed).
+ *
+ * Real layout size rather than an expanded ::after hit area: these controls sit
+ * next to each other in flex rows, so an invisible overlay would extend over a
+ * neighbour and steal its taps — including onto the *filter text* itself, which
+ * would turn a stray tap into a deletion. */
+@media (pointer: coarse) {
+  .fpill .rm,
+  .fpill .tog,
+  .seed .rm,
+  .act,
+  .listen {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* The ✕ glyphs are centred text in a now-taller box. */
+  .fpill .rm,
+  .seed .rm {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

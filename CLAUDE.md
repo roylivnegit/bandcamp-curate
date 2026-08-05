@@ -8,7 +8,10 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
 - **Backend:** Python 3.12+ / FastAPI (async), SQLAlchemy 2.0 + Alembic, Postgres. JSON API only —
   it serves no HTML.
 - **Frontend:** separate React app (`frontend/`, Vite + TypeScript), own origin, talks to the API
-  over CORS with a JWT bearer token.
+  over CORS with a JWT bearer token. **Read `frontend/CLAUDE.md` before touching it** — the React
+  perf/correctness and UI/UX rules the app is written to (memoized list rows, stale-response tickets,
+  lazy routes, announced errors, coarse-pointer touch targets), distilled from the
+  `react-best-practices` and `ui-ux-pro-max` skills, plus the conflicts left deliberately unresolved.
 - **Jobs:** Redis + ARQ workers + token-bucket rate limiter.
 - **Scraping:** Nimble **v2** `/extract` only, behind a provider seam (`app/scraping/`).
 - **Parsing:** Bandcamp embeds clean JSON in the page (`#pagedata data-blob`, `data-tralbum`,

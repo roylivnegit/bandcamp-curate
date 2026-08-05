@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api } from '../../api/client'
@@ -15,7 +15,6 @@ export function ScanListPage() {
   const [scans, setScans] = useState<Scan[] | null>(null)
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
-  const timer = useRef<number | undefined>(undefined)
 
   const load = useCallback(async () => {
     try {
@@ -36,11 +35,16 @@ export function ScanListPage() {
   const active = scans?.some((s) => s.status === 'queued' || s.status === 'running') ?? false
   useEffect(() => {
     if (!active) return
-    timer.current = window.setTimeout(async () => {
-      await load()
-      await refresh()
+    // Timer id in the closure, not a ref: StrictMode invokes this twice, and a
+    // shared ref would hold only the second id — leaving the first timer running
+    // past cleanup. `scans` in the deps is the re-arm signal (load() sets a fresh
+    // array), not an unused dependency.
+    const id = window.setTimeout(async () => {
+      // Parallel: the scan list and `me` are independent reads, and `me` only
+      // feeds the onboarding banner.
+      await Promise.all([load(), refresh()])
     }, SCAN_POLL_MS)
-    return () => window.clearTimeout(timer.current)
+    return () => window.clearTimeout(id)
   }, [active, scans, load, refresh])
 
   const onboarding = me && !me.has_crawled
@@ -58,7 +62,10 @@ export function ScanListPage() {
       )}
 
       <div className="scanhead">
-        <h2 className="eyebrow">Your scans</h2>
+        {/* h1, not h2: this is the page's own top-level heading and the header's
+            wordmark isn't one, so an h2 here skipped a level. `.eyebrow` carries
+            all the styling, so the look is unchanged. */}
+        <h1 className="eyebrow">Your scans</h1>
         {!creating && (
           <button type="button" className="btn" onClick={() => setCreating(true)}>
             ＋ New scan
@@ -76,7 +83,11 @@ export function ScanListPage() {
         />
       )}
 
-      {error && <p className="err">{error}</p>}
+      {error && (
+        <p className="err" role="alert">
+          {error}
+        </p>
+      )}
 
       {scans === null && !error && <p className="empty">Loading scans…</p>}
 

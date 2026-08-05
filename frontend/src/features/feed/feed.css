@@ -191,6 +191,13 @@
   border-radius: var(--r-lg);
   padding: var(--s-4) var(--s-4) var(--s-4) var(--s-5);
   margin-bottom: 11px;
+  /* "Load more" appends 50 rows at a time and a scan can hold ~1,600, so the
+     list gets long. This lets the browser skip layout and paint for off-screen
+     cards. The length is a rough first guess at card height so the scrollbar
+     isn't wildly wrong on the first paint; `auto` then remembers each card's
+     real size once it has been rendered. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
   transition:
     border-color 0.16s,
     transform 0.16s,

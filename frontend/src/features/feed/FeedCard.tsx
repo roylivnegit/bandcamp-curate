@@ -1,9 +1,17 @@
+import { memo } from 'react'
+
 import type { Recommendation } from '../../api/types'
 import { bandcampHandle, plural } from '../../lib/format'
 
 /** `exiting` drives the evaporate animation the old UI had: a liked/blocked card
- *  dissolves upward instead of vanishing, so you can see what you just acted on. */
-export function FeedCard({
+ *  dissolves upward instead of vanishing, so you can see what you just acted on.
+ *
+ *  Memoized, and every callback takes the `rec` rather than closing over it. The
+ *  feed grows to hundreds of rows via "load more", and without both halves of
+ *  that every unrelated parent state change (a poll tick, one row's busy flag, a
+ *  panel toggle) re-renders every card: per-row closures would be new props on
+ *  each render, so `memo` alone would never hit. */
+export const FeedCard = memo(function FeedCard({
   rec,
   exiting,
   busy,
@@ -15,10 +23,10 @@ export function FeedCard({
   rec: Recommendation
   exiting: 'like' | 'block' | null
   busy: boolean
-  onLike: () => void
-  onBlock: () => void
+  onLike: (rec: Recommendation) => void
+  onBlock: (rec: Recommendation) => void
   onTagClick: (tag: string) => void
-  onBandClick: () => void
+  onBandClick: (rec: Recommendation) => void
 }) {
   const co = rec.reasons.co_owners ?? 0
   const handle = bandcampHandle(rec.url)
@@ -33,13 +41,15 @@ export function FeedCard({
       </div>
 
       <div className="card-body">
-        <h3 className="card-title">
+        {/* h2: the page's h1 is the scan title, so h3 skipped a level. Styling
+            comes from `.card-title`, not the tag. */}
+        <h2 className="card-title">
           {rec.title || 'Untitled'}
           <span className="type">{rec.item_type}</span>
-        </h3>
+        </h2>
 
         {rec.band_id ? (
-          <button type="button" className="band" onClick={onBandClick}>
+          <button type="button" className="band" onClick={() => onBandClick(rec)}>
             {rec.band_name || 'unknown artist'}
             {handle && <span className="handle">{handle}</span>}
           </button>
@@ -66,11 +76,11 @@ export function FeedCard({
         )}
 
         <div className="card-actions">
-          <button type="button" className="act like" disabled={busy} onClick={onLike}>
+          <button type="button" className="act like" disabled={busy} onClick={() => onLike(rec)}>
             ♥ like
           </button>
           {rec.band_id !== null && (
-            <button type="button" className="act block" disabled={busy} onClick={onBlock}>
+            <button type="button" className="act block" disabled={busy} onClick={() => onBlock(rec)}>
               ⊘ block
             </button>
           )}
@@ -83,4 +93,4 @@ export function FeedCard({
       </div>
     </article>
   )
-}
+})
