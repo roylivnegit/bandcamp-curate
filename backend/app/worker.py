@@ -51,6 +51,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["max_requests"] = settings.crawl_max_requests
     ctx["concurrency"] = settings.crawl_concurrency
     ctx["slice_seconds"] = settings.crawl_slice_seconds
+    ctx["entry_seconds"] = settings.crawl_entry_seconds
     ctx["curate_each_slice"] = settings.crawl_curate_each_slice
 
 
@@ -115,6 +116,7 @@ async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
             max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
             concurrency=ctx.get("concurrency", 1),
             slice_seconds=ctx.get("slice_seconds"),
+            entry_seconds=ctx.get("entry_seconds"),
             curate_each_slice=ctx.get("curate_each_slice", False),
         )
     except Exception as exc:  # noqa: BLE001 — surface it on the scan, then re-raise

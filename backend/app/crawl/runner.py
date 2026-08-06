@@ -237,6 +237,7 @@ async def run_until_empty(
     max_requests: int | None = None,
     max_iterations: int = 1000,
     max_seconds: float | None = None,
+    entry_seconds: float | None = None,
     concurrency: int = 1,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> list[CrawlOutcome]:
@@ -275,12 +276,27 @@ async def run_until_empty(
                     stop = True
                     return
                 try:
-                    outcome = await process_one(
+                    coro = process_one(
                         session, fetcher, seed_url=seed_url, seed_fan_id=seed_fan_id,
                         collection_client=collection_client, follows_client=follows_client,
                         supporters_client=supporters_client, max_depth=max_depth,
                         scan_id=scan_id, stale_after=stale_after,
                     )
+                    # A hard bound on ONE entry. Without it the slice deadline below
+                    # is unenforceable: it is only consulted between entries, so a
+                    # single slow entry keeps the slice — and its ARQ job — running
+                    # past any timeout. The abandoned claim is reclaimed as stale,
+                    # and pages already committed are unaffected.
+                    outcome = (
+                        await coro if entry_seconds is None
+                        else await asyncio.wait_for(coro, entry_seconds)
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "entry exceeded %ss and was abandoned; it will be reclaimed",
+                        entry_seconds,
+                    )
+                    continue
                 except Exception:  # noqa: BLE001 — already recorded; keep draining
                     continue
             if outcome is None:

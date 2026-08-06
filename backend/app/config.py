@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     # Seconds are the thing the timeout actually measures.
     crawl_slice_seconds: int = 120
 
+    # Hard bound on ONE frontier entry. The slice deadline is only checked between
+    # entries, so a single long entry holds the whole slice open however short the
+    # slice budget is — measured at 25-70s uncontended (a render plus sequential
+    # supporters pagination) and minutes under concurrency, which is what kept
+    # blowing the 600s job_timeout. Exceeding this cancels the entry; its committed
+    # pages survive and the claim is reclaimed later as stale.
+    crawl_entry_seconds: int = 180
+
     # Re-curate after each slice so the feed fills in while the crawl runs, rather
     # than appearing all at once at the end. Recommendations are recomputed
     # wholesale in one transaction, so a reader sees the previous set or the new

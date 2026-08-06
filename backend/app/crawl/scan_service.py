@@ -267,6 +267,7 @@ async def advance_scan(
     slice_entries: int = SCAN_SLICE_ENTRIES,
     concurrency: int = 1,
     slice_seconds: float | None = None,
+    entry_seconds: float | None = None,
     curate_each_slice: bool = False,
 ) -> bool:
     """Crawl ONE bounded slice of this scan. True if more work remains.
@@ -301,6 +302,7 @@ async def advance_scan(
         supporters_client=supporters_client,
         max_depth=max_depth, max_requests=max_requests,
         max_iterations=entries, max_seconds=slice_seconds,
+        entry_seconds=entry_seconds,
         scan_id=scan_id, concurrency=concurrency,
     )
 

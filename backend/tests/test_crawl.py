@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -1740,3 +1741,37 @@ async def test_a_non_retryable_db_error_still_fails_the_entry(
     async with sessionmaker_() as s:
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
         assert entry.status == CrawlStatus.ERROR
+
+
+async def test_one_slow_entry_cannot_hold_the_slice_open(
+    concurrent_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The slice deadline is only consulted BETWEEN entries, so a single long entry
+    keeps the slice — and its ARQ job — running past any timeout. Measured at
+    25-70s uncontended and minutes under concurrency, which is what repeatedly blew
+    the 600s job_timeout. One entry therefore needs its own hard bound."""
+    import asyncio as _asyncio
+
+    class HangingFetcher(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            await _asyncio.sleep(30)  # never completes within the entry budget
+            return await super().fetch(request)
+
+    async with concurrent_sessionmaker() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=SCAN)
+        await s.commit()
+
+    started = time.monotonic()
+    outcomes = await runner.run_until_empty(
+        concurrent_sessionmaker, HangingFetcher({ALBUM_URL: ALBUM_HTML}), scan_id=SCAN,
+        supporters_client=FakeSupportersClient(), max_depth=0,
+        max_iterations=4, max_seconds=5, entry_seconds=0.3, concurrency=1,
+    )
+    elapsed = time.monotonic() - started
+
+    assert outcomes == []  # the entry was abandoned, not completed
+    assert elapsed < 5  # …and it did not run for the fetch's 30s
+    async with concurrent_sessionmaker() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        # Left claimed rather than errored: the stale reclaim owns it from here.
+        assert entry.status == CrawlStatus.IN_PROGRESS
