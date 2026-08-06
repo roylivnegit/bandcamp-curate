@@ -13,12 +13,12 @@ genres you already collect. Everything already in your world is excluded first:
 Recommendations are recomputed wholesale (clear + insert) so re-running is idempotent.
 """
 
-import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bandcamp.urls import url_host
 from app.db.models import (
     Album,
     AlbumSupporter,
@@ -62,14 +62,6 @@ class Exclusions:
     track_ids: set[int]
     band_ids: set[int]
     band_hosts: set[str]  # url hosts of followed bands (e.g. "atomesmusic.bandcamp.com")
-
-
-def _url_host(url: str | None) -> str | None:
-    """The host of a Bandcamp URL, e.g. https://atomesmusic.bandcamp.com/album/x → host."""
-    if not url:
-        return None
-    m = re.match(r"https?://([^/]+)", url)
-    return m.group(1).lower() if m else None
 
 
 async def get_me(session: AsyncSession, user: User) -> Fan:
@@ -167,7 +159,7 @@ async def build_exclusions(session: AsyncSession, me: Fan, user: User) -> Exclus
             .where(Follow.fan_id == me.id)
         )
     ).scalars()
-    band_hosts = {h for h in (_url_host(u) for u in followed_urls) if h}
+    band_hosts = {h for h in (url_host(u) for u in followed_urls) if h}
     # Active blacklist — per-user (blocking a band is a per-tenant preference).
     bl_where = (Blacklist.user_id == user.id, Blacklist.active.is_(True))
     bl_albums = await _scalar_set(session, select(Blacklist.album_id).where(*bl_where))
@@ -356,7 +348,7 @@ async def compute_recommendations(
         return (
             aid in excl.album_ids
             or band_id in excl.band_ids
-            or _url_host(url) in excl.band_hosts
+            or url_host(url) in excl.band_hosts
         )
 
     # ── Album candidates: co-owners among this scan's neighbours ──────────────
@@ -428,7 +420,7 @@ async def compute_recommendations(
         if (
             track_id in excl.track_ids
             or band_id in excl.band_ids
-            or _url_host(url) in excl.band_hosts
+            or url_host(url) in excl.band_hosts
         ):
             continue
         seed_tags = track_prov.get(track_id, set())

@@ -1,19 +1,25 @@
 """Crawl operations: fetch a page, parse it, map it into the graph, and enqueue
 the follow-up work it reveals.
 
-Two operations power the whole walk:
+Three operations power the whole walk:
 
     crawl_fan_collection → ingest a fan's owned items, enqueue each owned ALBUM
+                           and each owned standalone TRACK
     crawl_album          → ingest album+tracks+tags+supporters, enqueue each
                            supporter's FAN_COLLECTION
+    crawl_track          → same for a standalone track page
 
-Chained, they traverse the supporter→collection→album→supporter graph. The
-frontier's (url, kind) uniqueness stops the walk from revisiting a node.
+Chained, they traverse the supporter→collection→album/track→supporter graph. The
+frontier's (url, kind) uniqueness stops the walk from revisiting a node, and past
+`FOLLOWED_FILTER_MIN_DEPTH` a neighbour's items by artists the seed fan already
+follows are ingested but not detail-crawled (see `crawl_fan_collection`).
 
 Operations take a `Fetcher` (satisfied by `ScraperGateway`) so they can be unit
 tested against a fake that replays saved fixtures — no live credits spent.
 """
 
+import logging
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -30,16 +36,28 @@ from app.bandcamp.mapper import (
     ingest_track_supporters,
 )
 from app.bandcamp.parse import (
+    ParsedItem,
     parse_album_page,
     parse_album_supporters,
     parse_fan_page,
     parse_track_page,
 )
 from app.bandcamp.supporters_api import SupportersApiClient
+from app.bandcamp.urls import url_host
 from app.crawl.frontier import enqueue
-from app.db.models import Album, Track
+from app.db.models import Album, Band, Follow, Track
 from app.enums import CrawlKind
 from app.scraping.base import FetchRequest, FetchResult
+
+logger = logging.getLogger("crate_digger.crawl")
+
+# From this depth down, a neighbour's owned item whose artist/label the seed fan
+# already follows is ingested but NOT enqueued for a detail crawl. Its ownership
+# edge is what feeds co-ownership scoring; its page (tags, supporters, subgraph)
+# only feeds recommendations curation would exclude anyway, so the render is
+# wasted credits. 2 = "the collections of my albums' supporters" — everything
+# shallower (my own collection at 0, its albums at 1) is always crawled in full.
+FOLLOWED_FILTER_MIN_DEPTH = 2
 
 
 class Fetcher(Protocol):
@@ -67,7 +85,50 @@ class CrawlOutcome:
     tracks: int = 0  # tracks ingested (album)
     supporters: int = 0  # supporter edges ingested (album)
     enqueued: int = 0  # new frontier rows added
+    skipped_followed: int = 0  # owned items not enqueued — band already followed
     fan_id: int | None = None  # the ingested Fan's id (fan collection only)
+
+
+@dataclass(slots=True, frozen=True)
+class FollowedBands:
+    """The artists/labels one fan follows, keyed the two ways a release can point
+    back at them: the Bandcamp band id it's stored under, and the storefront host
+    it lives on.
+
+    Both are needed because a followed *label* usually isn't the band a release is
+    stored under — label releases carry the **artist's** band_id but sit on the
+    label's subdomain. This mirrors `curation.build_exclusions` exactly, so an item
+    this matches is one curation would drop from the feed regardless.
+    """
+
+    band_ids: frozenset[int]
+    hosts: frozenset[str]
+
+    def __bool__(self) -> bool:
+        return bool(self.band_ids or self.hosts)
+
+    def covers(self, item: ParsedItem) -> bool:
+        """Whether `item` belongs to a followed artist/label."""
+        return item.band.bandcamp_id in self.band_ids or url_host(item.url) in self.hosts
+
+
+EMPTY_FOLLOWS = FollowedBands(band_ids=frozenset(), hosts=frozenset())
+
+
+async def followed_bands(session: AsyncSession, fan_id: int) -> FollowedBands:
+    """Load every band `fan_id` follows, as ids + storefront hosts. One query per
+    fan collection — the result is reused for that whole collection's items."""
+    rows = (
+        await session.execute(
+            select(Band.bandcamp_id, Band.url)
+            .join(Follow, Follow.band_id == Band.id)
+            .where(Follow.fan_id == fan_id)
+        )
+    ).all()
+    return FollowedBands(
+        band_ids=frozenset(bid for bid, _ in rows if bid is not None),
+        hosts=frozenset(h for h in (url_host(u) for _, u in rows) if h),
+    )
 
 
 def fan_collection_request(url: str) -> FetchRequest:
@@ -94,6 +155,31 @@ def _within_depth(depth: int, max_depth: int | None) -> bool:
     return max_depth is None or depth < max_depth
 
 
+# A Bandcamp release URL: /album/<slug> or /track/<slug> on any host.
+_ITEM_PATH_RE = re.compile(r"^https?://[^/]+/(album|track)/", re.IGNORECASE)
+_URL_KIND = {"album": CrawlKind.ALBUM, "track": CrawlKind.TRACK}
+
+
+def kind_for_url(url: str) -> CrawlKind | None:
+    """The crawl kind a URL's own path implies — None if it's neither.
+
+    Route the frontier on this, never on a collection item's `item_type`. The two
+    disagree routinely, and only the URL can be trusted here: `item_type` describes
+    the *item you own*, while the frontier's kind picks the *parser*, and each
+    parser reads the release id straight off the page it's given.
+
+    `parse_collection_item` labels anything Bandcamp doesn't call an "album" a
+    track — which sweeps in `package` items (vinyl/CD), whose URL is the /album/
+    page. Handing that to `parse_track_page` doesn't fail; it reads the album's
+    tralbum id and writes a phantom Track under it, carrying the album's supporters
+    as TrackSupporters. Curation then scores that ghost against the real album, and
+    one-per-band dedup can let it win. It also defeats the frontier's (url, kind)
+    dedup, so the page is rendered twice.
+    """
+    m = _ITEM_PATH_RE.match(url)
+    return _URL_KIND[m.group(1).lower()] if m else None
+
+
 async def crawl_fan_collection(
     session: AsyncSession,
     fetcher: Fetcher,
@@ -104,14 +190,24 @@ async def crawl_fan_collection(
     follows_client: FollowsApiClient | None = None,
     depth: int = 0,
     max_depth: int | None = None,
+    seed_fan_id: int | None = None,
 ) -> CrawlOutcome:
-    """Fetch a fan page, ingest their whole collection, and enqueue each owned album.
+    """Fetch a fan page, ingest their whole collection, and enqueue each owned item.
 
     The rendered page gives the first page + fan_id + pagination token; the rest is
     pulled by mimicking the `collection_items` XHR (deterministic, no auto-scroll).
     For your own account (`is_me`) we also page the *full* follows list so curation
     can exclude every artist/label you follow (the page embeds only the first ~45).
-    Owned albums are enqueued at `depth + 1`, capped by `max_depth`.
+    Owned items are enqueued at `depth + 1` (capped by `max_depth`) as ALBUM or
+    TRACK per `kind_for_url` — the item's *URL*, not its `item_type`, which lies
+    often enough to corrupt data (see that function). Items whose URL is neither
+    are skipped rather than crawled with a guessed parser.
+
+    `seed_fan_id` is the fan the walk is *for* (the scan owner's own Fan). From
+    `FOLLOWED_FILTER_MIN_DEPTH` down, items by an artist/label that fan already
+    follows are still ingested — the ownership edge is the co-ownership signal —
+    but are not enqueued for a detail crawl, since curation excludes them anyway.
+    Passing None (the legacy operator crawl) disables the filter.
     """
     result = await fetcher.fetch(fan_collection_request(url))
     if not result.html:
@@ -150,11 +246,23 @@ async def crawl_fan_collection(
     counts = await ingest_fan_collection(session, fc, is_me=is_me)
 
     enqueued = 0
+    skipped = 0
     if _within_depth(depth, max_depth):
+        followed = EMPTY_FOLLOWS
+        if depth >= FOLLOWED_FILTER_MIN_DEPTH and seed_fan_id is not None:
+            followed = await followed_bands(session, seed_fan_id)
         for item in fc.items:
-            if item.item_type == "album" and item.url:
-                if await enqueue(session, item.url, CrawlKind.ALBUM, depth=depth + 1):
-                    enqueued += 1
+            if not item.url:
+                continue
+            kind = kind_for_url(item.url)
+            if kind is None:  # not a release page — don't guess a parser for it
+                logger.debug("not enqueuing %s: neither an album nor a track URL", item.url)
+                continue
+            if followed and followed.covers(item):
+                skipped += 1
+                continue
+            if await enqueue(session, item.url, kind, depth=depth + 1):
+                enqueued += 1
     await session.commit()
 
     return CrawlOutcome(
@@ -162,6 +270,7 @@ async def crawl_fan_collection(
         kind=str(CrawlKind.FAN_COLLECTION),
         items=counts.fan_items,
         enqueued=enqueued,
+        skipped_followed=skipped,
         fan_id=counts.fan_id,
     )
 

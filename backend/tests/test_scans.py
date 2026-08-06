@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from app.auth.security import get_current_user
+from app.crawl import runner
 from app.crawl.scan_service import (
     claim_queued_scans,
     create_collection_scan,
@@ -212,6 +213,64 @@ async def test_run_scan_crawls_resolves_and_curates(sessionmaker_) -> None:  # n
     async with sessionmaker_() as s:
         seed = (await s.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))).scalar_one()
         assert seed.resolved_album_id is not None  # seed resolved to the crawled album
+
+
+async def test_run_scan_passes_the_owners_fan_to_the_drain(
+    sessionmaker_, monkeypatch: pytest.MonkeyPatch,  # noqa: ANN001
+) -> None:
+    # The followed-artist prune keys off the *scan owner's* fan, so run_scan must
+    # resolve it and hand it to the frontier drain (see crawl.service.followed_bands).
+    async with sessionmaker_() as s:
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me")
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
+        await s.commit()
+        scan = await create_scan(s, user.id, "Panchito dig", [ALBUM_URL])
+        scan_id, fan_id = scan.id, fan.id
+
+    seen: dict = {}
+    real_run = runner.run_until_empty
+
+    async def spy(*a, **kw):  # noqa: ANN002,ANN003,ANN202
+        seen.update(kw)
+        return await real_run(*a, **kw)
+
+    monkeypatch.setattr(runner, "run_until_empty", spy)
+    await run_scan(
+        sessionmaker_, FakeFetcher({ALBUM_URL: ALBUM_HTML}), scan_id,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+    )
+    assert seen["seed_fan_id"] == fan_id
+
+
+async def test_collection_scan_picks_up_the_fan_it_just_created(sessionmaker_) -> None:  # noqa: ANN001
+    # A first-ever collection scan has no user.fan_id when it starts — the depth-0
+    # crawl creates it. The drain that follows must use that fresh id, not None.
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        user_id, scan_id = user.id, scan.id
+        assert user.fan_id is None
+
+    seen: dict = {}
+    real_run = runner.run_until_empty
+
+    async def spy(*a, **kw):  # noqa: ANN002,ANN003,ANN202
+        seen.update(kw)
+        return await real_run(*a, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner, "run_until_empty", spy)
+        await _run_collection_scan(sessionmaker_, user_id, scan_id)
+
+    async with sessionmaker_() as s:
+        crawled_fan_id = (await s.get(User, user_id)).fan_id
+    assert crawled_fan_id is not None
+    assert seen["seed_fan_id"] == crawled_fan_id
 
 
 async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:  # noqa: ANN001

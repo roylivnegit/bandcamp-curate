@@ -16,19 +16,28 @@ from app.bandcamp.parse import ParsedBand, ParsedItem, ParsedSupporter
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
-from app.crawl.service import crawl_album, crawl_fan_collection, crawl_track
+from app.crawl.service import (
+    FOLLOWED_FILTER_MIN_DEPTH,
+    crawl_album,
+    crawl_fan_collection,
+    crawl_track,
+    followed_bands,
+    kind_for_url,
+)
 from app.db.base import Base
 from app.db.models import (
     Album,
     AlbumSupporter,
+    Band,
     CrawlFrontier,
     Fan,
     FanItem,
+    Follow,
     ProviderUsage,
     Track,
     TrackSupporter,
 )
-from app.enums import CrawlKind, CrawlStatus
+from app.enums import CrawlKind, CrawlStatus, TargetType
 from app.scraping.base import FetchRequest, FetchResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -38,6 +47,7 @@ TRACK_HTML = (FIXTURES / "track_page.html").read_text()
 ALBUM_URL = "https://cerebro-spinal.bandcamp.com/album/panchito"
 TRACK_URL = "https://jscottg.bandcamp.com/track/return-of-the-king-original-mix"
 SEED_URL = "https://bandcamp.com/guron"
+ME_URL = "https://bandcamp.com/me"  # the seed fan in the followed-filter tests
 
 
 class FakeFetcher:
@@ -169,8 +179,267 @@ async def test_crawl_fan_collection_ingests_and_enqueues_albums(
             select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.ALBUM)
         )
     ).scalars().all()
-    assert len(albums) == outcome.enqueued >= 2
+    assert len(albums) == 2
     assert "https://paged.bandcamp.com/album/extra" in {a.url for a in albums}
+    # …and the owned standalone track as a TRACK crawl (its own supporters differ
+    # from the parent album's, so it's a distinct node in the graph).
+    tracks = (
+        await session.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.TRACK)
+        )
+    ).scalars().all()
+    assert [t.url for t in tracks] == [TRACK_URL]
+    assert outcome.enqueued == len(albums) + len(tracks) == 3
+
+
+async def test_crawl_fan_collection_propagates_depth_to_owned_items(
+    session: AsyncSession,
+) -> None:
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, is_me=True,
+        collection_client=FakeCollectionClient(), depth=1, max_depth=3,
+    )
+    entries = (await session.execute(select(CrawlFrontier))).scalars().all()
+    assert {e.kind for e in entries} == {CrawlKind.ALBUM, CrawlKind.TRACK}
+    assert all(e.depth == 2 for e in entries)  # children at depth+1
+
+
+async def test_crawl_fan_collection_at_max_depth_enqueues_nothing(
+    session: AsyncSession,
+) -> None:
+    # Items are still ingested at the boundary; only outward enqueue stops — and
+    # that applies to owned tracks exactly as it does to owned albums.
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL, is_me=True,
+        collection_client=FakeCollectionClient(), depth=3, max_depth=3,
+    )
+    assert outcome.items == 2 and outcome.enqueued == 0
+    assert await _count(session, CrawlFrontier) == 0
+
+
+# ── Frontier kind comes from the URL, never from item_type ─────────────────────
+
+
+def _track_item(item_id: int, url: str) -> ParsedItem:
+    """A "track"-typed collection item — which is what `parse_collection_item`
+    calls anything Bandcamp doesn't label an "album", `package` (vinyl/CD) included."""
+    return ParsedItem(
+        item_id=item_id, item_type="track",
+        band=ParsedBand(bandcamp_id=item_id + 1, name="Paged Band"),
+        title="A Package", url=url,
+    )
+
+
+def test_kind_for_url() -> None:
+    assert kind_for_url("https://b.bandcamp.com/album/x") == CrawlKind.ALBUM
+    assert kind_for_url("https://b.bandcamp.com/track/x") == CrawlKind.TRACK
+    assert kind_for_url("https://B.BANDCAMP.COM/Album/X") == CrawlKind.ALBUM  # case-insensitive
+    # Neither → None, so the caller skips rather than guessing a parser.
+    assert kind_for_url("https://b.bandcamp.com/merch/x") is None
+    assert kind_for_url("https://bandcamp.com/guron") is None
+    assert kind_for_url("https://b.bandcamp.com/album") is None  # no slug
+    assert kind_for_url("not a url") is None
+
+
+async def test_track_typed_item_with_album_url_enqueues_as_album(
+    session: AsyncSession,
+) -> None:
+    """Regression: a vinyl/`package` purchase arrives as item_type "track" carrying
+    the /album/ URL. Enqueueing it as TRACK sends album HTML to `parse_track_page`,
+    which silently writes a phantom Track under the *album's* id with the album's
+    supporters attached. Route on the URL: it's an album page, so crawl it as one."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    package = _track_item(555001, "https://paged.bandcamp.com/album/vinyl-reissue")
+
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=FakeCollectionClient([package])
+    )
+
+    entry = (
+        await session.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.url == "https://paged.bandcamp.com/album/vinyl-reissue"
+            )
+        )
+    ).scalar_one()
+    assert entry.kind == CrawlKind.ALBUM  # NOT TRACK, despite item_type == "track"
+
+
+async def test_album_typed_item_with_track_url_enqueues_as_track(
+    session: AsyncSession,
+) -> None:
+    # The mirror case — the URL wins in both directions, so there's no path where
+    # a page reaches the parser built for the other kind.
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    mislabelled = _album_item(555001, "https://paged.bandcamp.com/track/single")
+
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=FakeCollectionClient([mislabelled])
+    )
+
+    entry = (
+        await session.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.url == "https://paged.bandcamp.com/track/single"
+            )
+        )
+    ).scalar_one()
+    assert entry.kind == CrawlKind.TRACK
+
+
+async def test_non_release_url_is_ingested_but_never_enqueued(
+    session: AsyncSession,
+) -> None:
+    # A URL that's neither /album/ nor /track/ has no parser we can trust, so it is
+    # ingested (ownership still counts) but never handed to one.
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    merch = _track_item(555001, "https://paged.bandcamp.com/merch/t-shirt")
+
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=FakeCollectionClient([merch])
+    )
+
+    assert outcome.items == 3  # ingested like any other owned item
+    assert outcome.enqueued == 2  # only the fixture's own album + track
+    assert await _frontier_urls(session) == {ALBUM_URL, TRACK_URL}
+
+
+# ── Followed-artist pruning (depth ≥ FOLLOWED_FILTER_MIN_DEPTH) ────────────────
+
+
+async def _seed_fan_following(
+    session: AsyncSession, *, band_bandcamp_id: int, band_url: str | None
+) -> int:
+    """A Fan with one Follow row, and the followed Band. Returns the fan's id."""
+    fan = Fan(bandcamp_fan_id=1, username="me", url=ME_URL)
+    band = Band(bandcamp_id=band_bandcamp_id, name="Followed", url=band_url)
+    session.add_all([fan, band])
+    await session.flush()
+    session.add(Follow(fan_id=fan.id, band_id=band.id, target_type=str(TargetType.ARTIST)))
+    await session.commit()
+    return fan.id
+
+
+async def _frontier_urls(session: AsyncSession) -> set[str]:
+    return {
+        e.url for e in (await session.execute(select(CrawlFrontier))).scalars().all()
+    }
+
+
+async def test_followed_band_is_ingested_but_not_detail_crawled(
+    session: AsyncSession,
+) -> None:
+    # A neighbour (depth 2) owns an album by a band I already follow. Curation would
+    # exclude it, so we skip the page render — but the ownership edge still lands.
+    fan_id = await _seed_fan_following(
+        session, band_bandcamp_id=555002, band_url="https://followed.bandcamp.com"
+    )
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    followed_item = _album_item(555001, "https://paged.bandcamp.com/album/extra")
+    assert followed_item.band.bandcamp_id == 555002  # _album_item's band id = id + 1
+
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL,
+        collection_client=FakeCollectionClient([followed_item]),
+        depth=2, max_depth=4, seed_fan_id=fan_id,
+    )
+
+    assert outcome.items == 3  # still ingested — co-ownership needs the edge
+    assert await _count(session, FanItem) == 3
+    assert outcome.skipped_followed == 1
+    assert "https://paged.bandcamp.com/album/extra" not in await _frontier_urls(session)
+    # The unfollowed items in the same collection are enqueued as usual.
+    assert outcome.enqueued == 2
+    assert {ALBUM_URL, TRACK_URL} == await _frontier_urls(session)
+
+
+async def test_followed_label_matched_by_url_host(session: AsyncSession) -> None:
+    # A followed *label*: its releases are stored under the artist's band_id, so only
+    # the storefront host identifies them — the same match curation makes.
+    fan_id = await _seed_fan_following(
+        session, band_bandcamp_id=999999, band_url="https://paged.bandcamp.com"
+    )
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    label_release = _album_item(555001, "https://paged.bandcamp.com/album/extra")
+
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL,
+        collection_client=FakeCollectionClient([label_release]),
+        depth=2, max_depth=4, seed_fan_id=fan_id,
+    )
+
+    assert outcome.skipped_followed == 1
+    assert "https://paged.bandcamp.com/album/extra" not in await _frontier_urls(session)
+
+
+async def test_followed_filter_is_off_above_min_depth(session: AsyncSession) -> None:
+    # My own collection (0) and its albums (1) are always crawled in full — a band
+    # I follow *and* own is exactly the taste signal the walk starts from.
+    fan_id = await _seed_fan_following(
+        session, band_bandcamp_id=555002, band_url="https://paged.bandcamp.com"
+    )
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    followed_item = _album_item(555001, "https://paged.bandcamp.com/album/extra")
+
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL, is_me=True,
+        collection_client=FakeCollectionClient([followed_item]),
+        follows_client=FakeFollowsClient(),
+        depth=FOLLOWED_FILTER_MIN_DEPTH - 1, max_depth=4, seed_fan_id=fan_id,
+    )
+
+    assert outcome.skipped_followed == 0
+    assert "https://paged.bandcamp.com/album/extra" in await _frontier_urls(session)
+
+
+async def test_followed_filter_needs_a_seed_fan(session: AsyncSession) -> None:
+    # No seed fan (the legacy operator crawl) → nothing is pruned, even at depth.
+    await _seed_fan_following(
+        session, band_bandcamp_id=555002, band_url="https://paged.bandcamp.com"
+    )
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL,
+        collection_client=FakeCollectionClient(
+            [_album_item(555001, "https://paged.bandcamp.com/album/extra")]
+        ),
+        depth=2, max_depth=4, seed_fan_id=None,
+    )
+    assert outcome.skipped_followed == 0 and outcome.enqueued == 3
+
+
+async def test_followed_bands_loads_ids_and_hosts(session: AsyncSession) -> None:
+    fan_id = await _seed_fan_following(
+        session, band_bandcamp_id=42, band_url="https://Atomesmusic.bandcamp.com/album/x"
+    )
+    followed = await followed_bands(session, fan_id)
+    assert followed.band_ids == frozenset({42})
+    assert followed.hosts == frozenset({"atomesmusic.bandcamp.com"})  # lowercased
+    assert bool(followed) is True
+    # A different fan's follows are not visible — Follow rows are per-fan.
+    other = Fan(bandcamp_fan_id=2, username="other", url="https://bandcamp.com/other")
+    session.add(other)
+    await session.commit()
+    assert bool(await followed_bands(session, other.id)) is False
+
+
+async def test_followed_bands_tolerates_bands_without_ids_or_urls(
+    session: AsyncSession,
+) -> None:
+    # bands.url is nullable (discover-by-id, enrich later) — a band with neither key
+    # contributes nothing rather than matching everything.
+    fan = Fan(bandcamp_fan_id=1, username="me", url=ME_URL)
+    band = Band(bandcamp_id=None, name="Stub", url=None)
+    session.add_all([fan, band])
+    await session.flush()
+    session.add(Follow(fan_id=fan.id, band_id=band.id, target_type=str(TargetType.ARTIST)))
+    await session.commit()
+
+    followed = await followed_bands(session, fan.id)
+    assert bool(followed) is False
+    assert followed.covers(_album_item(1, "https://anything.bandcamp.com/album/x")) is False
 
 
 class FakeGateway:
@@ -546,13 +815,16 @@ async def test_runner_dispatches_track_kind(
 async def test_runner_walks_the_graph(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:
-    # Any /album/ URL replays the album fixture; guron's page replays the collection.
-    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML, "/album/": ALBUM_HTML})
+    # Any /album/ or /track/ URL replays that fixture; guron's page the collection.
+    fetcher = FakeFetcher({
+        "bandcamp.com/guron": FAN_HTML, "/album/": ALBUM_HTML, "/track/": TRACK_HTML,
+    })
     async with sessionmaker_() as s:
         await seed_fan_collection(s, SEED_URL)
 
-    # Bound iterations: guron's collection routes to panchito; the other supporter
-    # fan pages have no fake route, so those entries error out and the walk stops.
+    # Bound iterations: guron's collection routes to panchito + the owned track; the
+    # other supporter fan pages have no fake route, so those entries error out and
+    # the walk stops.
     outcomes = await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(),
@@ -562,6 +834,7 @@ async def test_runner_walks_the_graph(
     kinds = [o.kind for o in outcomes]
     assert str(CrawlKind.FAN_COLLECTION) in kinds
     assert str(CrawlKind.ALBUM) in kinds
+    assert str(CrawlKind.TRACK) in kinds  # owned standalone tracks are walked too
 
     async with sessionmaker_() as s:
         # Seed fan marked is_me (its follows were recorded).
@@ -570,8 +843,36 @@ async def test_runner_walks_the_graph(
         # The album and its supporters were ingested during the walk.
         assert await _count(s, Album) >= 1
         assert await _count(s, AlbumSupporter) == 3
+        # …as were the owned track's own supporters.
+        assert await _count(s, TrackSupporter) == 3
         # No entries left PENDING (all DONE or ERROR).
         assert await frontier.pending_count(s) == 0
+
+
+async def test_runner_threads_seed_fan_id_into_the_filter(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    # The prune only works if seed_fan_id survives run_until_empty → process_one →
+    # process_entry → crawl_fan_collection. Drive one depth-2 fan collection whose
+    # owner owns an album on a followed label and check the album isn't queued.
+    async with sessionmaker_() as s:
+        fan_id = await _seed_fan_following(
+            s, band_bandcamp_id=999999, band_url="https://cerebro-spinal.bandcamp.com"
+        )
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, depth=2)
+        await s.commit()
+
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    outcomes = await runner.run_until_empty(
+        sessionmaker_, fetcher, seed_fan_id=fan_id,
+        collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
+        max_depth=4, max_iterations=5,
+    )
+
+    assert [o.skipped_followed for o in outcomes] == [1]
+    async with sessionmaker_() as s:
+        assert ALBUM_URL not in await _frontier_urls(s)  # on the followed label's host
+        assert TRACK_URL in await _frontier_urls(s)  # different host → still walked
 
 
 async def test_budget_stops_the_run(
@@ -611,12 +912,14 @@ async def test_budget_helpers(session: AsyncSession) -> None:
 async def test_runner_respects_max_depth(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:
-    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML, "/album/": ALBUM_HTML})
+    fetcher = FakeFetcher({
+        "bandcamp.com/guron": FAN_HTML, "/album/": ALBUM_HTML, "/track/": TRACK_HTML,
+    })
     async with sessionmaker_() as s:
         await seed_fan_collection(s, SEED_URL)  # depth 0
 
-    # max_depth=1: seed (0) → owned albums (1) → album crawl at depth 1 == max,
-    # so supporter fan-collections (depth 2) are never enqueued.
+    # max_depth=1: seed (0) → owned albums/tracks (1) → album/track crawl at
+    # depth 1 == max, so supporter fan-collections (depth 2) are never enqueued.
     await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(),
@@ -633,6 +936,7 @@ async def test_runner_respects_max_depth(
         ).scalars().all()
         # Only the seed fan collection — no supporter collections were enqueued.
         assert {f.url for f in fans} == {SEED_URL}
-        # Supporters were still ingested from the album page.
+        # Supporters were still ingested from the album and track pages.
         assert await _count(s, AlbumSupporter) == 3
+        assert await _count(s, TrackSupporter) == 3
         assert await frontier.pending_count(s) == 0

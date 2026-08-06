@@ -50,6 +50,7 @@ async def process_entry(
     entry: CrawlFrontier,
     *,
     seed_url: str | None = None,
+    seed_fan_id: int | None = None,
     collection_client: CollectionApiClient | None = None,
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
@@ -64,6 +65,7 @@ async def process_entry(
             follows_client=follows_client,
             depth=entry.depth,
             max_depth=max_depth,
+            seed_fan_id=seed_fan_id,
         )
     if entry.kind == CrawlKind.ALBUM:
         return await crawl_album(
@@ -83,6 +85,7 @@ async def process_one(
     fetcher: Fetcher,
     *,
     seed_url: str | None = None,
+    seed_fan_id: int | None = None,
     collection_client: CollectionApiClient | None = None,
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
@@ -97,7 +100,7 @@ async def process_one(
     entry_id, url, kind = entry.id, entry.url, entry.kind
     try:
         outcome = await process_entry(
-            session, fetcher, entry, seed_url=seed_url,
+            session, fetcher, entry, seed_url=seed_url, seed_fan_id=seed_fan_id,
             collection_client=collection_client, follows_client=follows_client,
             supporters_client=supporters_client, max_depth=max_depth,
         )
@@ -110,9 +113,9 @@ async def process_one(
         raise
     await frontier.mark_done(session, entry)
     logger.info(
-        "crawled %s (%s): items=%d tracks=%d supporters=%d enqueued=%d",
+        "crawled %s (%s): items=%d tracks=%d supporters=%d enqueued=%d skipped_followed=%d",
         outcome.url, outcome.kind, outcome.items, outcome.tracks,
-        outcome.supporters, outcome.enqueued,
+        outcome.supporters, outcome.enqueued, outcome.skipped_followed,
     )
     return outcome
 
@@ -122,6 +125,7 @@ async def run_until_empty(
     fetcher: Fetcher,
     *,
     seed_url: str | None = None,
+    seed_fan_id: int | None = None,
     collection_client: CollectionApiClient | None = None,
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
@@ -130,7 +134,10 @@ async def run_until_empty(
     max_iterations: int = 1000,
 ) -> list[CrawlOutcome]:
     """Process frontier entries until it drains, the request budget is hit, or
-    `max_iterations` is reached."""
+    `max_iterations` is reached.
+
+    `seed_fan_id` is the fan the walk is for — its `follows` prune detail crawls of
+    already-followed artists/labels deep in the walk (see `crawl_fan_collection`)."""
     outcomes: list[CrawlOutcome] = []
     for _ in range(max_iterations):
         async with sessionmaker() as session:
@@ -139,7 +146,7 @@ async def run_until_empty(
                 break
             try:
                 outcome = await process_one(
-                    session, fetcher, seed_url=seed_url,
+                    session, fetcher, seed_url=seed_url, seed_fan_id=seed_fan_id,
                     collection_client=collection_client, follows_client=follows_client,
                     supporters_client=supporters_client, max_depth=max_depth,
                 )
