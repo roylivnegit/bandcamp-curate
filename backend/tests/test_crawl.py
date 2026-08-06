@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -482,6 +483,110 @@ async def test_a_run_that_stops_early_leaves_the_collection_resumable(
         assert entry.status == CrawlStatus.DONE and entry.cursor is None
         assert await _count(s, FanItem) == 100
     assert client.pages_fetched - pages_before == 15  # the remaining pages, not 25
+
+
+async def test_a_killed_visit_is_reclaimable_not_stranded(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """A per-page commit also persists the IN_PROGRESS claim, so a process killed
+    mid-visit (the 600s job_timeout that started all this) leaves a row nobody is
+    working. A plain PENDING-only claim would strand it and those pages would be
+    unreachable forever."""
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+    async with sessionmaker_() as s:  # claim, then "die" mid-visit
+        await frontier.claim_next(s)
+        await s.commit()
+
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.status == CrawlStatus.IN_PROGRESS  # durably claimed
+        assert await frontier.claim_next(s) is None  # nobody may steal a live claim
+        # Once the claim goes stale, it must become reclaimable.
+        reclaimed = await frontier.claim_next(s, stale_after=timedelta(seconds=0))
+        assert reclaimed is not None and reclaimed.id == entry.id
+        assert reclaimed.attempts == 2
+
+
+async def test_crash_mid_visit_keeps_the_resume_bookmark(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """Data durability isn't enough: without the bookmark, a retry re-buys every
+    page it already paid for. The cursor must be committed with each page."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = ExplodingCollectionClient(_many_items(100), per_page=4, fail_on_page=6)
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    async with sessionmaker_() as s:
+        with pytest.raises(RuntimeError, match="blew up"):
+            await runner.process_one(s, fetcher, collection_client=client, max_depth=0)
+
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert await _count(s, FanItem) == 20  # 5 pages committed before the crash
+        assert entry.cursor is not None  # …and the bookmark survived with them
+        assert entry.cursor["collection"] == "20"  # resume at item 20, not item 0
+        assert entry.status == CrawlStatus.ERROR
+
+
+async def test_killed_visit_recovers_and_resumes_without_re_buying_pages(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """The whole recovery story end to end, as it would play out on a job timeout:
+    killed mid-visit → stale claim reclaimed → resumed from the bookmark → done,
+    paying only for the pages it hadn't already bought."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)  # 25 pages
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    # Claim and page 5, then vanish — no mark_done, no mark_error, no rollback.
+    async with sessionmaker_() as s:
+        entry = await frontier.claim_next(s)
+        await crawl_fan_collection(
+            s, fetcher, SEED_URL, collection_client=client, max_depth=0,
+            pages_per_visit=5, entry=entry,
+        )
+    async with sessionmaker_() as s:
+        row = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert row.status == CrawlStatus.IN_PROGRESS  # abandoned claim
+        assert row.cursor["collection"] == "20"  # …but the bookmark is durable
+        assert await _count(s, FanItem) == 20
+
+    pages_before = client.pages_fetched
+    await runner.run_until_empty(
+        sessionmaker_, fetcher, collection_client=client, max_depth=0,
+        max_iterations=20, stale_after=timedelta(seconds=0),
+    )
+
+    async with sessionmaker_() as s:
+        row = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert row.status == CrawlStatus.DONE and row.cursor is None
+        assert await _count(s, FanItem) == 100  # every item, still exactly once
+    # 20 pages remained. Re-buying from the top would have cost 25.
+    assert client.pages_fetched - pages_before == 20
+
+
+async def test_cursor_is_checkpointed_on_every_page(session: AsyncSession) -> None:
+    # The committed bookmark must track the pages actually ingested, so it can
+    # never point earlier (re-buying) or later (silently skipping items).
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)
+    entry = CrawlFrontier(url=SEED_URL, kind=str(CrawlKind.FAN_COLLECTION),
+                          status=CrawlStatus.IN_PROGRESS)
+    session.add(entry)
+    await session.commit()
+
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=client, entry=entry
+    )
+
+    assert entry.cursor == outcome.cursor  # what's persisted == what's returned
+    assert entry.cursor["collection"] == "40"
 
 
 # ── Frontier kind comes from the URL, never from item_type ─────────────────────

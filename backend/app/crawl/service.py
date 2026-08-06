@@ -47,7 +47,7 @@ from app.bandcamp.parse import (
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.bandcamp.urls import url_host
 from app.crawl.frontier import enqueue
-from app.db.models import Album, Band, Fan, Follow, Track
+from app.db.models import Album, Band, CrawlFrontier, Fan, Follow, Track
 from app.enums import CrawlKind
 from app.scraping.base import FetchRequest, FetchResult
 
@@ -248,6 +248,7 @@ async def crawl_fan_collection(
     seed_fan_id: int | None = None,
     cursor: dict | None = None,
     pages_per_visit: int = PAGES_PER_VISIT,
+    entry: CrawlFrontier | None = None,
 ) -> CrawlOutcome:
     """Ingest a bounded slice of a fan's collection and enqueue what it reveals.
 
@@ -274,6 +275,11 @@ async def crawl_fan_collection(
     follows are still ingested — the ownership edge is the co-ownership signal —
     but are not enqueued for a detail crawl, since curation excludes them anyway.
     Passing None (the legacy operator crawl) disables the filter.
+
+    Pass the frontier `entry` to have the bookmark **checkpointed into each page's
+    commit**, so a crash leaves the position as durable as the data. Without it the
+    cursor is only returned at the end, and an interruption re-buys the whole
+    visit's pages on the next run.
     """
     col_client = collection_client or CollectionApiClient()
     fol_client = follows_client or FollowsApiClient()
@@ -287,8 +293,21 @@ async def crawl_fan_collection(
     bc_fan_id: int
     tokens: dict[str, str | None]
 
+    def snapshot() -> dict | None:
+        """The resume bookmark for the tokens as they stand, or None if exhausted."""
+        return {"fan_id": bc_fan_id, **tokens} if any(tokens.values()) else None
+
+    async def checkpoint() -> None:
+        """Commit the page's work AND its bookmark together, so an interruption
+        can never leave ingested pages the next run doesn't know it already has."""
+        if entry is not None:
+            entry.cursor = snapshot()
+        await session.commit()
+
     async def absorb(batch: list[ParsedItem], *, is_wishlist: bool = False) -> None:
-        """Ingest a page, queue what it reveals, commit — one durable unit."""
+        """Ingest a page, queue what it reveals, checkpoint — one durable unit.
+        Callers must advance `tokens` BEFORE calling, so the bookmark committed
+        here means "everything up to and including this page is ingested"."""
         nonlocal ingested, enqueued, skipped
         ingested += await ingest_items_batch(session, fan, batch, is_wishlist=is_wishlist)
         if not is_wishlist:
@@ -297,7 +316,7 @@ async def crawl_fan_collection(
             )
             enqueued += e
             skipped += s
-        await session.commit()
+        await checkpoint()
 
     if cursor:
         # Resuming: no render needed, the cursor holds the fan and the tokens.
@@ -319,12 +338,8 @@ async def crawl_fan_collection(
             session, fc.fan.fan_id, fc.fan.username,
             name=fc.fan.name, url=fc.fan.url, is_me=is_me,
         )
-        # The page embeds the first page of each list — free with the render.
-        await absorb(fc.items)
-        if is_me:
-            await absorb(fc.wishlist, is_wishlist=True)
-            await ingest_follows_batch(session, fan, fc.follows)
-            await session.commit()
+        # Tokens first: `absorb` checkpoints them, so they must already describe
+        # what remains AFTER the embedded page it's about to ingest.
         tokens = {
             "collection": _next_token(None, fc.last_token, fc.more_available),
             "wishlist": _next_token(None, fc.wishlist_last_token, fc.wishlist_more_available)
@@ -332,6 +347,12 @@ async def crawl_fan_collection(
             "follows": _next_token(None, fc.follows_last_token, fc.follows_more_available)
             if is_me else None,
         }
+        # The page embeds the first page of each list — free with the render.
+        await absorb(fc.items)
+        if is_me:
+            await absorb(fc.wishlist, is_wishlist=True)
+            await ingest_follows_batch(session, fan, fc.follows)
+            await checkpoint()
 
     # Spend the visit's page budget: collection first, then (is_me only) the
     # wishlist and follows lists that gate curation.
@@ -339,25 +360,25 @@ async def crawl_fan_collection(
     while pages_left > 0 and tokens["collection"]:
         batch, nxt, more = await col_client.fetch_page(bc_fan_id, tokens["collection"])
         pages_left -= 1
-        await absorb(batch)
         tokens["collection"] = _next_token(tokens["collection"], nxt, more)
+        await absorb(batch)
 
     while is_me and pages_left > 0 and tokens["wishlist"]:
         batch, nxt, more = await col_client.fetch_page(
             bc_fan_id, tokens["wishlist"], url=WISHLIST_ITEMS_URL
         )
         pages_left -= 1
-        await absorb(batch, is_wishlist=True)
         tokens["wishlist"] = _next_token(tokens["wishlist"], nxt, more)
+        await absorb(batch, is_wishlist=True)
 
     while is_me and pages_left > 0 and tokens["follows"]:
         bands, nxt, more = await fol_client.fetch_page(bc_fan_id, tokens["follows"])
         pages_left -= 1
-        await ingest_follows_batch(session, fan, bands)
-        await session.commit()
         tokens["follows"] = _next_token(tokens["follows"], nxt, more)
+        await ingest_follows_batch(session, fan, bands)
+        await checkpoint()
 
-    leftover = {"fan_id": bc_fan_id, **tokens} if any(tokens.values()) else None
+    leftover = snapshot()
     if leftover is not None:
         logger.info(
             "%s paged out at %d pages; resuming later from %s",

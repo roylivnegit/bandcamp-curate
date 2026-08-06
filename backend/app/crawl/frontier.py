@@ -8,11 +8,25 @@ close it out. This is deliberately simple (single-dispatcher friendly); a
 concurrently against Postgres.
 """
 
-from sqlalchemy import select
+import logging
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CrawlFrontier
 from app.enums import CrawlKind, CrawlStatus
+
+logger = logging.getLogger("crate_digger.crawl")
+
+# How long an IN_PROGRESS claim may sit untouched before another claim may take it.
+#
+# A visit commits after every page, and that commit also persists the claim — so a
+# process killed mid-visit (ARQ's 600s job_timeout, a container restart, SIGKILL)
+# leaves the row IN_PROGRESS with no one working it. Without recovery those pages
+# are unreachable forever, because a plain claim only looks at PENDING. Comfortably
+# longer than `job_timeout` so a *live* visit is never stolen from itself.
+STALE_CLAIM_AFTER = timedelta(minutes=30)
 
 
 async def enqueue(
@@ -44,9 +58,17 @@ async def enqueue(
 
 
 async def claim_next(
-    session: AsyncSession, kinds: list[CrawlKind | str] | None = None
+    session: AsyncSession,
+    kinds: list[CrawlKind | str] | None = None,
+    *,
+    stale_after: timedelta = STALE_CLAIM_AFTER,
 ) -> CrawlFrontier | None:
-    """Claim the highest-priority, least-visited, oldest PENDING row → IN_PROGRESS.
+    """Claim the highest-priority, least-visited, oldest eligible row → IN_PROGRESS.
+
+    Eligible = PENDING, **or** IN_PROGRESS and untouched for `stale_after` — a
+    claim abandoned by a killed process (see `STALE_CLAIM_AFTER`). Without that
+    second case a crash mid-visit would strand the entry forever, since the
+    per-page commit makes its IN_PROGRESS durable.
 
     `attempts` sits between priority and id so the queue sweeps in **passes**: a
     fan collection too big to page in one visit is parked back as PENDING with a
@@ -55,7 +77,16 @@ async def claim_next(
     slice before any of them gets a second — rather than one whale monopolising
     the crawl until it finishes.
     """
-    stmt = select(CrawlFrontier).where(CrawlFrontier.status == CrawlStatus.PENDING)
+    cutoff = datetime.now(UTC) - stale_after
+    stmt = select(CrawlFrontier).where(
+        or_(
+            CrawlFrontier.status == CrawlStatus.PENDING,
+            and_(
+                CrawlFrontier.status == CrawlStatus.IN_PROGRESS,
+                CrawlFrontier.updated_at < cutoff,
+            ),
+        )
+    )
     if kinds:
         stmt = stmt.where(CrawlFrontier.kind.in_([str(k) for k in kinds]))
     stmt = stmt.order_by(
@@ -65,6 +96,11 @@ async def claim_next(
     entry = (await session.execute(stmt)).scalar_one_or_none()
     if entry is None:
         return None
+    if entry.status == CrawlStatus.IN_PROGRESS:
+        logger.warning(
+            "reclaiming stale in-progress entry %s (%s), untouched since %s",
+            entry.url, entry.kind, entry.updated_at,
+        )
     entry.status = CrawlStatus.IN_PROGRESS
     entry.attempts += 1
     await session.flush()
@@ -103,6 +139,9 @@ async def mark_partial(
 
 
 async def mark_error(session: AsyncSession, entry: CrawlFrontier, error: str) -> None:
+    """Record a failure. Deliberately leaves `cursor` intact: the pages already
+    ingested are committed, so if the entry is ever re-run it must resume from the
+    bookmark rather than re-buying them."""
     entry.status = CrawlStatus.ERROR
     entry.last_error = error[:2000]
     await session.commit()

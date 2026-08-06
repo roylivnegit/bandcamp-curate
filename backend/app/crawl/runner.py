@@ -7,6 +7,7 @@ The ARQ worker reuses `process_one` per job for the production, throttled path.
 """
 
 import logging
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -67,6 +68,7 @@ async def process_entry(
             max_depth=max_depth,
             seed_fan_id=seed_fan_id,
             cursor=entry.cursor,
+            entry=entry,  # lets each page commit its own resume bookmark
         )
     if entry.kind == CrawlKind.ALBUM:
         return await crawl_album(
@@ -91,9 +93,10 @@ async def process_one(
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
+    stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> CrawlOutcome | None:
     """Claim and process a single frontier entry. Returns None if none pending."""
-    entry = await frontier.claim_next(session)
+    entry = await frontier.claim_next(session, stale_after=stale_after)
     if entry is None:
         return None
     # Capture identity now — after a commit/rollback the instance expires, and
@@ -140,6 +143,7 @@ async def run_until_empty(
     max_depth: int | None = None,
     max_requests: int | None = None,
     max_iterations: int = 1000,
+    stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> list[CrawlOutcome]:
     """Process frontier entries until it drains, the request budget is hit, or
     `max_iterations` is reached.
@@ -157,6 +161,7 @@ async def run_until_empty(
                     session, fetcher, seed_url=seed_url, seed_fan_id=seed_fan_id,
                     collection_client=collection_client, follows_client=follows_client,
                     supporters_client=supporters_client, max_depth=max_depth,
+                    stale_after=stale_after,
                 )
             except Exception:  # noqa: BLE001 — already recorded; keep draining
                 continue

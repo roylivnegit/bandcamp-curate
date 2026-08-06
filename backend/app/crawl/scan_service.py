@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.crawl import frontier, runner
-from app.crawl.service import Fetcher, crawl_fan_collection
+from app.crawl.service import PAGES_PER_VISIT, Fetcher, crawl_fan_collection
 from app.db.models import Album, Scan, ScanSeed, Track, User
 from app.enums import CrawlKind, ItemType, ScanKind, ScanStatus
 
@@ -189,10 +189,16 @@ async def run_scan(
                     if cursor is None:
                         break
                 else:
-                    logger.warning(
-                        "collection scan %s still unfinished after %d visits; "
-                        "curation exclusions may be incomplete",
-                        scan_id, MAX_COLLECTION_VISITS,
+                    # Fail loudly rather than curate on a half-read collection.
+                    # Every exclusion (owned / wishlisted / followed) comes from
+                    # this crawl, so proceeding would silently surface artists the
+                    # user already has — wrong in a way nothing in the feed reveals.
+                    # An errored scan is visible and re-runnable; it also resumes
+                    # cheaply, since the pages read so far are already committed.
+                    raise ValueError(
+                        f"own collection still unfinished after {MAX_COLLECTION_VISITS} "
+                        f"visits ({MAX_COLLECTION_VISITS * PAGES_PER_VISIT} pages); "
+                        "refusing to curate on incomplete exclusions"
                     )
                 if outcome.fan_id is not None:
                     user.fan_id = outcome.fan_id
