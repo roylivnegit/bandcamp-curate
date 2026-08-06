@@ -311,6 +311,45 @@ async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -
         assert await frontier.pending_count(s, scan_id=scan_id + 999) == 0
 
 
+async def test_a_slice_offers_at_least_one_entry_per_worker(sessionmaker_) -> None:  # noqa: ANN001
+    """A slice smaller than the worker count starves workers: with 10 entries and
+    50 workers, ten crawl and forty return immediately, so the slice bound becomes
+    the real concurrency. The effective slice is max(slice_entries, concurrency)."""
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        scan_id = scan.id
+
+    seen: list = []
+    real_run = runner.run_until_empty
+
+    async def spy(*a, **kw):  # noqa: ANN002,ANN003,ANN202
+        seen.append(kw.get("max_iterations"))
+        return await real_run(*a, **kw)
+
+    fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
+
+    async def slice_once(entries: int, workers: int) -> None:
+        await advance_scan(
+            sessionmaker_, fetcher, scan_id,
+            collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+            supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+            slice_entries=entries, concurrency=workers,
+        )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner, "run_until_empty", spy)
+        await slice_once(2, 6)   # slice 1: fresh-scan special case, forced to 1
+        await slice_once(2, 6)   # concurrency wins  -> 6
+        await slice_once(9, 3)   # slice_entries wins -> 9
+
+    # Slice 1 is the fresh-collection-scan special case: one entry on its own, so
+    # the owner's Fan exists (and the followed-artist prune works) from slice 2.
+    assert seen == [1, 6, 9]
+
+
 async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN001
     """The ARQ chain re-enqueues purely on "more work?", so without a persisted
     counter a perpetually-nonempty frontier would spawn jobs forever and leave the
