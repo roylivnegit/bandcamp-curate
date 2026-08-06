@@ -10,7 +10,9 @@ The *queue* is per-scan; the *graph* is not. Bands, albums, tracks and supporter
 stay global, and reaching a page another scan already crawled costs no fetch — the
 fan-out is replayed from the stored rows instead (`app.crawl.replay`). Draining
 runs as a chain of short slices (`advance_scan`), each processing up to
-`SCAN_SLICE_ENTRIES` entries with `crawl_concurrency` in flight at once.
+`max(SCAN_SLICE_ENTRIES, crawl_concurrency)` entries with that many crawls in
+flight at once — a slice must offer at least one entry per worker or the workers
+starve, so raising concurrency raises the slice with it.
 """
 
 import logging
@@ -31,10 +33,13 @@ logger = logging.getLogger("crate_digger.scan")
 SEED_PRIORITY = 90  # below the owner's own fan page, above ordinary discovery
 SELF_FAN_PRIORITY = 100  # the owner's own collection drains first (cf. seed.SEED_PRIORITY)
 
-# Frontier entries one slice may process. Each slice is a whole ARQ job, so this
-# is what keeps jobs short: ~10 entries is well inside any timeout, and the chain
-# just runs more of them. The frontier holds tens of thousands of entries —
-# draining it inside one job is what used to blow past `job_timeout`.
+# FLOOR on the frontier entries one slice may process — `advance_scan` raises it
+# to `crawl_concurrency` when that's larger, since a slice offering fewer entries
+# than there are workers just leaves workers idle. Each slice is a whole ARQ job,
+# so this is what keeps jobs short; the frontier holds tens of thousands of
+# entries and draining it inside one job is what used to blow past `job_timeout`.
+# Parallelism is what keeps a bigger slice short: 50 entries at 50-way concurrency
+# is one ~30s round, not 50 sequential fetches.
 SCAN_SLICE_ENTRIES = 10
 
 # Backstop on the chain so a bug can't schedule slices forever. At 10 entries each
@@ -177,9 +182,8 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
         if stats["slices_run"] > MAX_SCAN_SLICES:
             await session.commit()  # keep the count; the caller marks the scan failed
             raise ValueError(
-                f"scan exceeded {MAX_SCAN_SLICES} slices "
-                f"({MAX_SCAN_SLICES * SCAN_SLICE_ENTRIES} frontier entries) without "
-                "finishing — stopping rather than queueing more work"
+                f"scan exceeded {MAX_SCAN_SLICES} slices without finishing — "
+                "stopping rather than queueing more work"
             )
 
         self_url: str | None = None
@@ -226,6 +230,13 @@ async def advance_scan(
     restart between any two of them and lose nothing.
     """
     plan = await start_scan(sessionmaker, scan_id)  # idempotent
+
+    # A slice must offer at least as many entries as there are workers, or the
+    # workers starve: with slice_entries=10 and concurrency=50, ten crawl and forty
+    # return immediately, so the effective parallelism is the slice bound. These
+    # two were set in different PRs for different reasons and never reconciled —
+    # the slice exists to bound job *duration*, which parallelism already shortens.
+    slice_entries = max(slice_entries, concurrency)
 
     # `seed_fan_id` is fixed for the whole slice, but the owner's Fan doesn't exist
     # until their own page is ingested — so on a first-ever collection scan a
@@ -365,6 +376,7 @@ async def run_scan(
     max_depth: int | None = None,
     max_requests: int | None = None,
     max_slices: int = MAX_SCAN_SLICES,
+    concurrency: int = 1,
 ) -> Scan:
     """Run a scan to completion in-process: slice, slice, … then finalize.
 
@@ -373,6 +385,7 @@ async def run_scan(
     single job can outlive its timeout. Marks the scan running → done (or error),
     recording credits spent + rec count in `scan.stats`.
     """
+    effective_slice = max(SCAN_SLICE_ENTRIES, concurrency)  # mirrors advance_scan
     try:
         for _ in range(max_slices):
             more = await advance_scan(
@@ -380,13 +393,14 @@ async def run_scan(
                 collection_client=collection_client, follows_client=follows_client,
                 supporters_client=supporters_client,
                 max_depth=max_depth, max_requests=max_requests,
+                concurrency=concurrency,
             )
             if not more:
                 break
         else:
             raise ValueError(
-                f"scan still unfinished after {max_slices} slices "
-                f"({max_slices * SCAN_SLICE_ENTRIES} frontier entries)"
+                f"scan still unfinished after {max_slices} slices of up to "
+                f"{effective_slice} entries each"
             )
         return await finalize_scan(sessionmaker, scan_id)
     except Exception as exc:  # noqa: BLE001 — record on the scan and surface

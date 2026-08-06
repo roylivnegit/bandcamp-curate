@@ -266,6 +266,79 @@ async def test_crawl_fan_collection_at_max_depth_enqueues_nothing(
     assert await _count(session, CrawlFrontier) == 0
 
 
+# ── The DB connection must never be held across a fetch ────────────────────────
+
+
+class TxSpyFetcher(FakeFetcher):
+    """Records whether a DB transaction was open at the moment of each fetch."""
+
+    def __init__(self, routes: dict[str, str], session: AsyncSession) -> None:
+        super().__init__(routes)
+        self.session = session
+        self.in_tx: list[bool] = []
+
+    async def fetch(self, request: FetchRequest) -> FetchResult:
+        self.in_tx.append(self.session.in_transaction())
+        return await super().fetch(request)
+
+
+class TxSpySupportersClient(FakeSupportersClient):
+    """Same, for the supporters pagination that follows the page render."""
+
+    def __init__(self, supporters, session: AsyncSession) -> None:  # noqa: ANN001
+        super().__init__(supporters)
+        self.session = session
+        self.in_tx: list[bool] = []
+
+    async def iter_supporters(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+        self.in_tx.append(self.session.in_transaction())
+        async for s in super().iter_supporters(*a, **kw):
+            yield s
+
+
+async def test_no_open_transaction_while_fetching_an_album(
+    session: AsyncSession,
+) -> None:
+    """A Nimble render is 3-35s and needs no database at all. Holding a pooled
+    connection open across it is what exhausted the pool on 2026-08-06: managed
+    Postgres reaped the idle-but-open connections mid-operation."""
+    fetcher = TxSpyFetcher({ALBUM_URL: ALBUM_HTML}, session)
+    supporters = TxSpySupportersClient([_supporter("late_fan")], session)
+
+    await crawl_album(
+        session, fetcher, ALBUM_URL, supporters_client=supporters, scan_id=SCAN
+    )
+
+    assert fetcher.in_tx == [False]  # the page render
+    assert supporters.in_tx == [False]  # …and the pagination after it
+
+
+async def test_no_open_transaction_while_fetching_a_fan_collection(
+    session: AsyncSession,
+) -> None:
+    # Same invariant on the collection path, where `followed_bands()` used to open
+    # a transaction just before the render and hold it for the whole visit.
+    fetcher = TxSpyFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()}, session)
+
+    class TxSpyCollectionClient(FakeCollectionClient):
+        def __init__(self, items, per_page):  # noqa: ANN001
+            super().__init__(items, per_page=per_page)
+            self.in_tx: list[bool] = []
+
+        async def fetch_page(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+            self.in_tx.append(session.in_transaction())
+            return await super().fetch_page(*a, **kw)
+
+    client = TxSpyCollectionClient(_many_items(40), 4)
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=client,
+        seed_fan_id=None, max_depth=0, scan_id=SCAN,
+    )
+
+    assert fetcher.in_tx == [False]
+    assert client.in_tx and not any(client.in_tx)  # every page, not just the first
+
+
 # ── Per-scan frontier, reuse, and concurrency ──────────────────────────────────
 
 

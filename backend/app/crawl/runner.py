@@ -147,7 +147,14 @@ async def process_one(
     """Claim and process a single frontier entry. Returns None if none pending."""
     entry = await frontier.claim_next(session, scan_id=scan_id, stale_after=stale_after)
     if entry is None:
+        await session.commit()  # nothing to do — don't sit on a connection
         return None
+    # Commit the claim before any fetching. The claim's transaction would otherwise
+    # stay open across the whole page render (3-35s), pinning a pooled connection
+    # that does nothing — the exact shape that exhausted the pool and killed the
+    # crawl on 2026-08-06. Making the claim durable here is also what the stale
+    # reclaim in `claim_next` already assumes.
+    await session.commit()
     # Capture identity now — after a commit/rollback the instance expires, and
     # re-reading an attribute would trigger an illegal async lazy-load.
     entry_id, url, kind = entry.id, entry.url, entry.kind

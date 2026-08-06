@@ -17,10 +17,17 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        url, connect_args = normalized_async_url(get_settings().database_url)
+        settings = get_settings()
+        url, connect_args = normalized_async_url(settings.database_url)
         _engine = create_async_engine(
             url,
+            # Sized to the crawl's concurrency. SQLAlchemy's default (5 + 10
+            # overflow) silently capped a 50-worker crawl at 15 and left the rest
+            # queueing — the pool, not the setting, was the real ceiling.
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
             pool_pre_ping=True,  # managed PG closes idle conns; ping before use
+            pool_recycle=settings.db_pool_recycle_seconds,
             connect_args=connect_args,
             future=True,
         )
