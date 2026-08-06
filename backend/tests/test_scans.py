@@ -717,3 +717,30 @@ async def test_interim_curation_runs_once_the_collection_is_read(sessionmaker_) 
     # Fully read in one visit → the feed can safely fill in mid-crawl.
     calls = await _curate_calls_for(sessionmaker_, "complete", FAN_HTML, FakeCollectionClient())
     assert len(calls) == 1
+
+
+async def test_interim_curation_resolves_seeds_first(sessionmaker_) -> None:  # noqa: ANN001
+    """A custom scan scores from its *resolved* seed. Seed resolution used to
+    happen only at finalize, so every mid-crawl curate found no seed, no
+    taste-neighbours, and returned nothing — the live feed was a no-op for exactly
+    the scans it was built for."""
+    async with sessionmaker_() as s:
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me")
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
+        await s.commit()
+        scan = await create_scan(s, user.id, "dig", [ALBUM_URL])
+        scan_id = scan.id
+
+    await advance_scan(
+        sessionmaker_, FakeFetcher({ALBUM_URL: ALBUM_HTML}), scan_id,
+        supporters_client=FakeSupportersClient(), max_depth=0, max_requests=50,
+        curate_each_slice=True,
+    )
+
+    async with sessionmaker_() as s:
+        seed = (await s.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))).scalar_one()
+        # Resolved mid-crawl, not left for finalize — otherwise curation scores nothing.
+        assert seed.resolved_album_id is not None
