@@ -1769,9 +1769,43 @@ async def test_one_slow_entry_cannot_hold_the_slice_open(
     )
     elapsed = time.monotonic() - started
 
-    assert outcomes == []  # the entry was abandoned, not completed
+    assert outcomes == []  # the entry did not complete
     assert elapsed < 5  # …and it did not run for the fetch's 30s
     async with concurrent_sessionmaker() as s:
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
-        # Left claimed rather than errored: the stale reclaim owns it from here.
-        assert entry.status == CrawlStatus.IN_PROGRESS
+        # Back on the queue, NOT left IN_PROGRESS. `pending_count` only sees
+        # PENDING and that is what tells the scan chain work remains — parked
+        # IN_PROGRESS the scan would finalize and abandon this entry entirely.
+        assert entry.status == CrawlStatus.PENDING
+        assert "timed out" in (entry.last_error or "")
+        assert entry.cursor is None or isinstance(entry.cursor, dict)  # bookmark kept
+
+
+async def test_an_entry_that_always_times_out_eventually_fails(
+    concurrent_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Re-queueing a timed-out entry is right, but unbounded it would retry a
+    permanently-slow entry on every pass forever, holding a slot each time."""
+    import asyncio as _asyncio
+
+    class AlwaysHangs(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            await _asyncio.sleep(30)
+            return await super().fetch(request)
+
+    async with concurrent_sessionmaker() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=SCAN)
+        await s.commit()
+
+    fetcher = AlwaysHangs({ALBUM_URL: ALBUM_HTML})
+    for _ in range(runner.MAX_ENTRY_TIMEOUTS + 1):
+        async with concurrent_sessionmaker() as s:
+            await runner.process_one(
+                s, fetcher, scan_id=SCAN, supporters_client=FakeSupportersClient(),
+                max_depth=0, entry_seconds=0.2,
+            )
+
+    async with concurrent_sessionmaker() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.status == CrawlStatus.ERROR  # stopped being re-queued
+        assert "timed out" in entry.last_error

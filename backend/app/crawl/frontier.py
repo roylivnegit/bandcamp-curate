@@ -202,6 +202,23 @@ async def mark_partial(
     await session.commit()
 
 
+async def mark_retryable(session: AsyncSession, entry: CrawlFrontier, error: str) -> None:
+    """Return an entry to the queue after a recoverable failure, keeping `cursor`.
+
+    Distinct from leaving it IN_PROGRESS: `pending_count` only sees PENDING, and
+    that is what tells the scan chain whether work remains. An entry parked
+    IN_PROGRESS is invisible to it, so the scan finalizes, the chain stops, and
+    nothing ever calls `claim_next` again to trigger the stale reclaim — the work
+    isn't deferred, it's abandoned, and the scan reports done without it.
+
+    `attempts` (already bumped by the claim) sorts it behind everything on an
+    earlier pass, which is the backoff.
+    """
+    entry.status = CrawlStatus.PENDING
+    entry.last_error = error[:2000]
+    await session.commit()
+
+
 async def mark_error(session: AsyncSession, entry: CrawlFrontier, error: str) -> None:
     """Record a failure. Deliberately leaves `cursor` intact: the pages already
     ingested are committed, so if the entry is ever re-run it must resume from the
