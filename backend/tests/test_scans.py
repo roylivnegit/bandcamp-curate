@@ -748,3 +748,38 @@ async def test_interim_curation_resolves_seeds_first(sessionmaker_) -> None:  # 
         seed = (await s.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))).scalar_one()
         # Resolved mid-crawl, not left for finalize — otherwise curation scores nothing.
         assert seed.resolved_album_id is not None
+
+
+async def test_a_timed_out_entry_keeps_the_scan_from_finalizing(sessionmaker_) -> None:  # noqa: ANN001
+    """The bug this guards: `advance_scan` reports "more work?" from
+    `pending_count`, which sees PENDING only. A timed-out entry left IN_PROGRESS is
+    invisible to it, so the scan finalizes, the chain stops, and nothing ever calls
+    `claim_next` again to trigger stale reclaim — the entry isn't deferred, it's
+    abandoned, and the scan reports done without it."""
+    import asyncio as _asyncio
+
+    class Hangs:
+        async def fetch(self, request):  # noqa: ANN001,ANN202
+            await _asyncio.sleep(30)
+
+    async with sessionmaker_() as s:
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me")
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
+        await s.commit()
+        scan = await create_scan(s, user.id, "dig", [ALBUM_URL])
+        scan_id = scan.id
+
+    more = await advance_scan(
+        sessionmaker_, Hangs(), scan_id, supporters_client=FakeSupportersClient(),
+        max_depth=0, max_requests=50, entry_seconds=0.2,
+    )
+
+    assert more is True  # the scan must NOT finalize on unfinished work
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier).where(
+            CrawlFrontier.scan_id == scan_id))).scalar_one()
+        assert entry.status == CrawlStatus.PENDING
+        assert await frontier.pending_count(s, scan_id=scan_id) == 1  # visible as work

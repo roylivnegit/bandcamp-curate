@@ -41,6 +41,11 @@ logger = logging.getLogger("crate_digger.crawl")
 _RETRYABLE_SQLSTATES = {"40P01", "40001"}
 _DB_RETRIES = 3
 
+# How many times an entry may time out before it is failed rather than re-queued.
+# Without a cap a permanently-slow entry is retried on every pass forever; with
+# one it eventually stops consuming a slot and says why.
+MAX_ENTRY_TIMEOUTS = 3
+
 
 def _is_retryable_db_error(exc: BaseException) -> bool:
     return (
@@ -160,9 +165,16 @@ async def process_one(
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
+    entry_seconds: float | None = None,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> CrawlOutcome | None:
-    """Claim and process a single frontier entry. Returns None if none pending."""
+    """Claim and process a single frontier entry. Returns None if none pending.
+
+    `entry_seconds` hard-bounds this one entry: the slice deadline is only checked
+    between entries, so without it a single slow entry keeps the slice — and its
+    ARQ job — running past any timeout. The bound lives here rather than in the
+    caller because only here is the claimed entry in hand to put back.
+    """
     entry = await frontier.claim_next(session, scan_id=scan_id, stale_after=stale_after)
     if entry is None:
         await session.commit()  # nothing to do — don't sit on a connection
@@ -178,12 +190,33 @@ async def process_one(
     entry_id, url, kind = entry.id, entry.url, entry.kind
     for attempt in range(1, _DB_RETRIES + 1):
         try:
-            outcome = await process_entry(
+            work = process_entry(
                 session, fetcher, entry, seed_url=seed_url, seed_fan_id=seed_fan_id,
                 collection_client=collection_client, follows_client=follows_client,
                 supporters_client=supporters_client, max_depth=max_depth,
             )
+            outcome = (
+                await work if entry_seconds is None
+                else await asyncio.wait_for(work, entry_seconds)
+            )
             break
+        except TimeoutError:
+            await session.rollback()
+            reloaded = await frontier.get_by_id(session, entry_id)
+            if reloaded is None:
+                return None
+            note = f"timed out after {entry_seconds}s"
+            if reloaded.attempts >= MAX_ENTRY_TIMEOUTS:
+                # Stop re-queueing something that never finishes; say why.
+                await frontier.mark_error(session, reloaded, f"{note} x{reloaded.attempts}")
+                logger.warning("%s (%s): %s — giving up", url, kind, note)
+            else:
+                # Back to PENDING, cursor intact. Left IN_PROGRESS it would be
+                # invisible to `pending_count`, so the scan would finalize and the
+                # chain stop with this work silently abandoned.
+                await frontier.mark_retryable(session, reloaded, note)
+                logger.warning("%s (%s): %s — re-queued", url, kind, note)
+            return None
         except Exception as exc:  # noqa: BLE001 — record and move on; crawl is resumable
             await session.rollback()
             if _is_retryable_db_error(exc) and attempt < _DB_RETRIES:
@@ -237,6 +270,7 @@ async def run_until_empty(
     max_requests: int | None = None,
     max_iterations: int = 1000,
     max_seconds: float | None = None,
+    entry_seconds: float | None = None,
     concurrency: int = 1,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> list[CrawlOutcome]:
@@ -275,11 +309,14 @@ async def run_until_empty(
                     stop = True
                     return
                 try:
+                    # The per-entry bound lives inside `process_one`, which holds
+                    # the claim and can put a timed-out entry back on the queue.
                     outcome = await process_one(
                         session, fetcher, seed_url=seed_url, seed_fan_id=seed_fan_id,
                         collection_client=collection_client, follows_client=follows_client,
                         supporters_client=supporters_client, max_depth=max_depth,
-                        scan_id=scan_id, stale_after=stale_after,
+                        scan_id=scan_id, entry_seconds=entry_seconds,
+                        stale_after=stale_after,
                     )
                 except Exception:  # noqa: BLE001 — already recorded; keep draining
                     continue
