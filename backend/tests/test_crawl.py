@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
+import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -18,6 +19,7 @@ from app.crawl import frontier, runner
 from app.crawl.seed import seed_fan_collection
 from app.crawl.service import (
     FOLLOWED_FILTER_MIN_DEPTH,
+    PAGES_PER_VISIT,
     crawl_album,
     crawl_fan_collection,
     crawl_track,
@@ -68,21 +70,37 @@ class FakeFetcher:
 
 
 class FakeCollectionClient:
-    """Stands in for the collection_items / wishlist_items XHRs (URL-routed)."""
+    """Stands in for the collection_items / wishlist_items XHRs (URL-routed).
+
+    Serves the supplied items one page at a time, mirroring the real client's
+    `fetch_page` contract → (items, next_token, more_available). Tokens are just
+    the index of the next page, which is enough to exercise resume.
+    """
 
     def __init__(
         self, items: list[ParsedItem] | None = None,
         wishlist: list[ParsedItem] | None = None,
+        per_page: int = 40,
     ) -> None:
         self._items = items or []
         self._wishlist = wishlist or []
+        self.per_page = per_page
+        self.pages_fetched = 0  # how many pagination requests this fake served
 
-    async def iter_items(
-        self, fan_id: int, start_token: str, *,
-        url: str = COLLECTION_ITEMS_URL, max_pages: int = 100,
-    ) -> AsyncIterator[ParsedItem]:
-        for item in (self._wishlist if url == WISHLIST_ITEMS_URL else self._items):
-            yield item
+    def _page(self, source: list[ParsedItem], token: str):  # noqa: ANN202
+        start = int(token) if str(token).isdigit() else 0
+        chunk = source[start:start + self.per_page]
+        nxt = start + self.per_page
+        more = nxt < len(source)
+        return chunk, (str(nxt) if more else None), more
+
+    async def fetch_page(
+        self, fan_id: int, older_than_token: str, *,
+        count: int | None = None, url: str = COLLECTION_ITEMS_URL,
+    ) -> tuple[list[ParsedItem], str | None, bool]:
+        self.pages_fetched += 1
+        source = self._wishlist if url == WISHLIST_ITEMS_URL else self._items
+        return self._page(source, older_than_token)
 
 
 def _album_item(item_id: int, url: str) -> ParsedItem:
@@ -217,6 +235,253 @@ async def test_crawl_fan_collection_at_max_depth_enqueues_nothing(
     )
     assert outcome.items == 2 and outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
+
+
+# ── Bounded, resumable pagination ──────────────────────────────────────────────
+
+
+def _fan_html_with_collection_token(token: str = "0") -> str:
+    """A fan page whose collection has more pages behind it (`last_token` set)."""
+    import html as _html
+    import json as _json
+
+    blob = {
+        "fan_data": {"fan_id": 9985893, "username": "guron",
+                     "trackpipe_url": "https://bandcamp.com/guron"},
+        "item_cache": {"collection": {}, "wishlist": {}, "following_bands": {}},
+        "collection_data": {"item_count": 1000, "last_token": token},
+        "wishlist_data": {"last_token": None},
+        "following_bands_data": {"last_token": None},
+    }
+    enc = _html.escape(_json.dumps(blob), quote=True)
+    return f'<div id="pagedata" data-blob="{enc}"></div>'
+
+
+def _many_items(n: int, start: int = 1) -> list[ParsedItem]:
+    return [
+        _album_item(start + i, f"https://b{start + i}.bandcamp.com/album/a{start + i}")
+        for i in range(n)
+    ]
+
+
+class ExplodingCollectionClient(FakeCollectionClient):
+    """Serves pages normally until `fail_on_page`, then raises — a crash mid-crawl."""
+
+    def __init__(self, items: list[ParsedItem], *, per_page: int, fail_on_page: int) -> None:
+        super().__init__(items, per_page=per_page)
+        self._fail_on_page = fail_on_page
+
+    async def fetch_page(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+        if self.pages_fetched + 1 == self._fail_on_page:
+            raise RuntimeError("provider blew up mid-pagination")
+        return await super().fetch_page(*a, **kw)
+
+
+async def test_visit_is_capped_and_returns_a_cursor(session: AsyncSession) -> None:
+    # 100 items at 4/page = 25 pages, far more than one visit's budget.
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)
+
+    outcome = await crawl_fan_collection(session, fetcher, SEED_URL, collection_client=client)
+
+    assert client.pages_fetched == PAGES_PER_VISIT  # stopped at the budget, not the end
+    assert outcome.items == PAGES_PER_VISIT * 4  # …and everything it read was ingested
+    assert await _count(session, FanItem) == 40
+    assert outcome.cursor is not None
+    assert outcome.cursor["collection"] == "40"  # resume from item 40
+    assert outcome.cursor["fan_id"] == 9985893
+
+
+async def test_resume_continues_without_re_rendering_the_page(
+    session: AsyncSession,
+) -> None:
+    """The whole point of the cursor: a resumed visit costs only its pagination.
+    Re-rendering the fan page would burn a Nimble credit re-reading page one."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)
+    first = await crawl_fan_collection(session, fetcher, SEED_URL, collection_client=client)
+    assert len(fetcher.calls) == 1  # the one render
+
+    second = await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=client, cursor=first.cursor
+    )
+
+    assert len(fetcher.calls) == 1  # NOT re-rendered — no second credit
+    assert second.items == PAGES_PER_VISIT * 4  # the next 40 items
+    assert await _count(session, FanItem) == 80  # 40 + 40, no overlap
+    assert second.cursor is not None and second.cursor["collection"] == "80"
+
+
+async def test_repeated_visits_drain_the_collection(session: AsyncSession) -> None:
+    # 100 items / 4 per page = 25 pages → 3 visits (10 + 10 + 5).
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)
+
+    cursor, visits = None, 0
+    while visits < 10:
+        outcome = await crawl_fan_collection(
+            session, fetcher, SEED_URL, collection_client=client, cursor=cursor
+        )
+        visits += 1
+        cursor = outcome.cursor
+        if cursor is None:
+            break
+
+    assert visits == 3
+    assert cursor is None  # exhausted → the runner will mark it done
+    assert await _count(session, FanItem) == 100  # every item, exactly once
+
+
+async def test_pages_already_read_survive_a_crash(session: AsyncSession) -> None:
+    """The regression this whole change exists for. The old loop held every page
+    in memory and committed once at the end, so a failure discarded the lot —
+    and the credits spent getting it. Now each page is durable when it lands."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = ExplodingCollectionClient(_many_items(100), per_page=4, fail_on_page=4)
+
+    with pytest.raises(RuntimeError, match="blew up"):
+        await crawl_fan_collection(session, fetcher, SEED_URL, collection_client=client)
+
+    # Pages 1-3 were committed before the crash; only the 4th is lost.
+    assert await _count(session, FanItem) == 12
+
+
+async def test_runner_parks_a_partial_entry_as_pending_with_cursor(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    async with sessionmaker_() as s:
+        outcome = await runner.process_one(s, fetcher, collection_client=client)
+    assert outcome is not None and outcome.cursor is not None
+
+    async with sessionmaker_() as s:
+        entry = (await s.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
+        )).scalar_one()
+        assert entry.status == CrawlStatus.PENDING  # back in the queue, not done
+        assert entry.cursor["collection"] == "40"  # …carrying its bookmark
+        assert entry.attempts == 1
+
+
+async def test_runner_marks_done_and_clears_cursor_when_fully_paged(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(12), per_page=4)  # 3 pages < budget
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    async with sessionmaker_() as s:
+        await runner.process_one(s, fetcher, collection_client=client)
+
+    async with sessionmaker_() as s:
+        entry = (await s.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
+        )).scalar_one()
+        assert entry.status == CrawlStatus.DONE
+        assert entry.cursor is None
+
+
+async def test_big_collections_take_turns_instead_of_hogging(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """Two oversized collections must interleave: each gets a bounded visit before
+    either gets a second. Without `attempts` in the claim ordering the first entry
+    would be re-claimed forever and the second would never start.
+
+    `max_depth=0` keeps the discovered albums out of the frontier so this asserts
+    on the collection ordering alone.
+    """
+    fan_a, fan_b = "https://bandcamp.com/guron", "https://bandcamp.com/other"
+    fetcher = FakeFetcher({
+        "bandcamp.com/guron": _fan_html_with_collection_token(),
+        # A distinct fan_id, so the two are separate Fan rows.
+        "bandcamp.com/other": _fan_html_with_collection_token().replace(
+            "9985893", "7777777").replace("guron", "other"),
+    })
+    client = FakeCollectionClient(_many_items(200), per_page=4)
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, fan_a, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, fan_b, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    visited = []
+    for _ in range(4):
+        async with sessionmaker_() as s:
+            outcome = await runner.process_one(
+                s, fetcher, collection_client=client, max_depth=0
+            )
+        visited.append(outcome.url)
+
+    # Alternating, not A-A-A-A: both are still unfinished after two rounds each.
+    assert visited == [fan_a, fan_b, fan_a, fan_b]
+    async with sessionmaker_() as s:
+        entries = (await s.execute(select(CrawlFrontier))).scalars().all()
+        assert all(e.status == CrawlStatus.PENDING and e.attempts == 2 for e in entries)
+
+
+async def test_run_until_empty_drains_a_multi_visit_collection(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    # 25 pages needs 3 visits; the runner should keep re-claiming the parked entry
+    # until it's fully paged, then mark it done — no manual re-queue.
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    outcomes = await runner.run_until_empty(
+        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=20
+    )
+
+    assert len(outcomes) == 3  # 10 + 10 + 5 pages
+    assert [o.cursor is None for o in outcomes] == [False, False, True]
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.status == CrawlStatus.DONE and entry.cursor is None
+        assert await _count(s, FanItem) == 100
+        assert await frontier.pending_count(s) == 0
+
+
+async def test_a_run_that_stops_early_leaves_the_collection_resumable(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """A run cut short mid-collection — in production by the credit budget, here
+    by max_iterations — must not lose the pages already paid for. The entry stays
+    PENDING with its bookmark, so the NEXT run resumes instead of re-buying them."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
+    client = FakeCollectionClient(_many_items(100), per_page=4)
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    await runner.run_until_empty(
+        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=1
+    )
+
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.status == CrawlStatus.PENDING  # resumable, not failed
+        assert entry.cursor is not None and entry.cursor["collection"] == "40"
+        assert await _count(s, FanItem) == 40  # the pages we did pay for are kept
+
+    # A later run picks up exactly where it left off, re-reading nothing.
+    pages_before = client.pages_fetched
+    await runner.run_until_empty(
+        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=20
+    )
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.status == CrawlStatus.DONE and entry.cursor is None
+        assert await _count(s, FanItem) == 100
+    assert client.pages_fetched - pages_before == 15  # the remaining pages, not 25
 
 
 # ── Frontier kind comes from the URL, never from item_type ─────────────────────
@@ -539,14 +804,22 @@ async def test_follows_api_client_paginates() -> None:
 
 
 class FakeFollowsClient:
-    def __init__(self, bands: list[ParsedBand] | None = None) -> None:
-        self._bands = bands or []
+    """Serves followed bands one page at a time (see FakeCollectionClient)."""
 
-    async def iter_bands(
-        self, fan_id: int, start_token: str, *, max_pages: int = 200
-    ) -> AsyncIterator[ParsedBand]:
-        for b in self._bands:
-            yield b
+    def __init__(self, bands: list[ParsedBand] | None = None, per_page: int = 60) -> None:
+        self._bands = bands or []
+        self.per_page = per_page
+        self.pages_fetched = 0
+
+    async def fetch_page(
+        self, fan_id: int, older_than_token: str, *, count: int | None = None
+    ) -> tuple[list[ParsedBand], str | None, bool]:
+        self.pages_fetched += 1
+        start = int(older_than_token) if str(older_than_token).isdigit() else 0
+        chunk = self._bands[start:start + self.per_page]
+        nxt = start + self.per_page
+        more = nxt < len(self._bands)
+        return chunk, (str(nxt) if more else None), more
 
 
 def _fan_html_with_follows_token() -> str:

@@ -46,12 +46,20 @@ async def enqueue(
 async def claim_next(
     session: AsyncSession, kinds: list[CrawlKind | str] | None = None
 ) -> CrawlFrontier | None:
-    """Claim the highest-priority, oldest PENDING row and mark it IN_PROGRESS."""
+    """Claim the highest-priority, least-visited, oldest PENDING row → IN_PROGRESS.
+
+    `attempts` sits between priority and id so the queue sweeps in **passes**: a
+    fan collection too big to page in one visit is parked back as PENDING with a
+    cursor (see `mark_partial`), and its higher `attempts` puts it behind every
+    entry still on its first visit. So one pass gives every collection a bounded
+    slice before any of them gets a second — rather than one whale monopolising
+    the crawl until it finishes.
+    """
     stmt = select(CrawlFrontier).where(CrawlFrontier.status == CrawlStatus.PENDING)
     if kinds:
         stmt = stmt.where(CrawlFrontier.kind.in_([str(k) for k in kinds]))
     stmt = stmt.order_by(
-        CrawlFrontier.priority.desc(), CrawlFrontier.id.asc()
+        CrawlFrontier.priority.desc(), CrawlFrontier.attempts.asc(), CrawlFrontier.id.asc()
     ).limit(1)
 
     entry = (await session.execute(stmt)).scalar_one_or_none()
@@ -74,6 +82,23 @@ async def get_by_id(session: AsyncSession, entry_id: int) -> CrawlFrontier | Non
 async def mark_done(session: AsyncSession, entry: CrawlFrontier) -> None:
     entry.status = CrawlStatus.DONE
     entry.last_error = None
+    entry.cursor = None  # fully paged; nothing left to resume from
+    await session.commit()
+
+
+async def mark_partial(
+    session: AsyncSession, entry: CrawlFrontier, cursor: dict
+) -> None:
+    """Park a partially-paged entry: back to PENDING, carrying `cursor`.
+
+    The work already ingested is committed and stays committed — this only
+    records where to pick up. `attempts` (bumped by the claim) puts the entry
+    behind everything on an earlier pass, so the crawl sweeps broadly instead of
+    draining one huge collection to the end before touching anything else.
+    """
+    entry.status = CrawlStatus.PENDING
+    entry.last_error = None
+    entry.cursor = cursor
     await session.commit()
 
 

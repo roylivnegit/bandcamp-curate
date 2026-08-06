@@ -66,6 +66,7 @@ async def process_entry(
             depth=entry.depth,
             max_depth=max_depth,
             seed_fan_id=seed_fan_id,
+            cursor=entry.cursor,
         )
     if entry.kind == CrawlKind.ALBUM:
         return await crawl_album(
@@ -111,11 +112,18 @@ async def process_one(
             await frontier.mark_error(session, reloaded, f"{type(exc).__name__}: {exc}")
         logger.warning("crawl failed for %s (%s): %s", url, kind, exc)
         raise
-    await frontier.mark_done(session, entry)
+    if outcome.cursor is not None:
+        # Paged out mid-collection. Everything fetched so far is already committed;
+        # park the bookmark and let the rest of the frontier have a pass first.
+        await frontier.mark_partial(session, entry, outcome.cursor)
+    else:
+        await frontier.mark_done(session, entry)
     logger.info(
-        "crawled %s (%s): items=%d tracks=%d supporters=%d enqueued=%d skipped_followed=%d",
+        "crawled %s (%s): items=%d tracks=%d supporters=%d enqueued=%d "
+        "skipped_followed=%d%s",
         outcome.url, outcome.kind, outcome.items, outcome.tracks,
         outcome.supporters, outcome.enqueued, outcome.skipped_followed,
+        " [partial — will resume]" if outcome.cursor is not None else "",
     )
     return outcome
 

@@ -24,6 +24,11 @@ logger = logging.getLogger("crate_digger.scan")
 
 SEED_PRIORITY = 90  # below the is_me fan seed (100), above ordinary discovery
 
+# Safety bound on draining your own collection (10 pages × 40 items per visit),
+# so a provider that never stops paginating can't spin here forever. 50 visits
+# ≈ 20,000 items — comfortably past the largest real collection we've seen (2,040).
+MAX_COLLECTION_VISITS = 50
+
 # A Bandcamp album/track URL: any host, path starting /album/<slug> or /track/<slug>.
 _SEED_RE = re.compile(r"^(https?://[^/]+/(album|track)/[^/?#]+)", re.IGNORECASE)
 
@@ -165,11 +170,30 @@ async def run_scan(
                     raise ValueError("scan's owning user not found")
                 if not user.bandcamp_fan_url:
                     raise ValueError("no bandcamp_fan_url set for this user")
-                outcome = await crawl_fan_collection(
-                    session, fetcher, user.bandcamp_fan_url, is_me=True,
-                    collection_client=collection_client, follows_client=follows_client,
-                    depth=0, max_depth=max_depth, seed_fan_id=seed_fan_id,
-                )
+                # Your OWN collection must be paged to the end, not sliced: the
+                # wishlist and follows lists gate every curation exclusion, so a
+                # partial read would leak owned/followed artists into your feed.
+                # This path isn't frontier-backed, so there's no entry to park a
+                # cursor on — we drain the visits here instead. Each page is still
+                # committed as it lands, so an interruption keeps its progress
+                # (it just re-pages from the top next run; ingest is idempotent).
+                cursor: dict | None = None
+                for _ in range(MAX_COLLECTION_VISITS):
+                    outcome = await crawl_fan_collection(
+                        session, fetcher, user.bandcamp_fan_url, is_me=True,
+                        collection_client=collection_client, follows_client=follows_client,
+                        depth=0, max_depth=max_depth, seed_fan_id=seed_fan_id,
+                        cursor=cursor,
+                    )
+                    cursor = outcome.cursor
+                    if cursor is None:
+                        break
+                else:
+                    logger.warning(
+                        "collection scan %s still unfinished after %d visits; "
+                        "curation exclusions may be incomplete",
+                        scan_id, MAX_COLLECTION_VISITS,
+                    )
                 if outcome.fan_id is not None:
                     user.fan_id = outcome.fan_id
                 await session.commit()
