@@ -1,11 +1,16 @@
 """Scan orchestration: create scans from seed URLs and run them.
 
 A scan is a named discovery run seeded by album and/or track URLs, any mix.
-`run_scan` enqueues the scan's seeds into the shared frontier, drains it (bounded
-by depth + the global request budget, and pruned of detail crawls for artists the
-scan's owner already follows), resolves each seed to its ingested album/track, then
-curates that scan. The frontier/graph is shared across scans; only the seeds and
-resulting recommendations are per-scan.
+`run_scan` enqueues the scan's seeds into **its own** frontier queue, drains it
+(bounded by depth + the request budget, and pruned of detail crawls for artists
+the owner already follows), resolves each seed to its ingested album/track, then
+curates that scan.
+
+The *queue* is per-scan; the *graph* is not. Bands, albums, tracks and supporters
+stay global, and reaching a page another scan already crawled costs no fetch — the
+fan-out is replayed from the stored rows instead (`app.crawl.replay`). Draining
+runs as a chain of short slices (`advance_scan`), each processing up to
+`SCAN_SLICE_ENTRIES` entries with `crawl_concurrency` in flight at once.
 """
 
 import logging
@@ -184,7 +189,7 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
             self_url = owner.bandcamp_fan_url
             await frontier.enqueue(
                 session, self_url, CrawlKind.FAN_COLLECTION,
-                priority=SELF_FAN_PRIORITY, depth=0,
+                scan_id=scan_id, priority=SELF_FAN_PRIORITY, depth=0,
             )
 
         seeds = (
@@ -192,7 +197,9 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
         ).scalars().all()
         for seed in seeds:
             kind = CrawlKind.ALBUM if seed.seed_type == str(ItemType.ALBUM) else CrawlKind.TRACK
-            await frontier.enqueue(session, seed.url, kind, priority=SEED_PRIORITY, depth=0)
+            await frontier.enqueue(
+                session, seed.url, kind, scan_id=scan_id, priority=SEED_PRIORITY, depth=0
+            )
 
         await session.commit()
         return ScanPlan(self_url=self_url, seed_fan_id=owner.fan_id)
@@ -209,6 +216,7 @@ async def advance_scan(
     max_depth: int | None = None,
     max_requests: int | None = None,
     slice_entries: int = SCAN_SLICE_ENTRIES,
+    concurrency: int = 1,
 ) -> bool:
     """Crawl ONE bounded slice of this scan. True if more work remains.
 
@@ -232,7 +240,7 @@ async def advance_scan(
         collection_client=collection_client, follows_client=follows_client,
         supporters_client=supporters_client,
         max_depth=max_depth, max_requests=max_requests,
-        max_iterations=entries,
+        max_iterations=entries, scan_id=scan_id, concurrency=concurrency,
     )
 
     # The owner's own page may have been ingested this slice — link the Fan as soon
@@ -256,16 +264,24 @@ async def advance_scan(
     async with sessionmaker() as session:
         if await runner.budget_exhausted(session, max_requests):
             return False  # out of credits — finalize with what we have
-        return await frontier.pending_count(session) > 0
+        return await frontier.pending_count(session, scan_id=scan_id) > 0
 
 
-async def _self_crawl_complete(session: AsyncSession, self_url: str | None) -> bool:
-    """Whether the owner's own fan page has been crawled to the last page."""
+async def _self_crawl_complete(
+    session: AsyncSession, self_url: str | None, *, scan_id: int
+) -> bool:
+    """Whether the owner's own fan page has been crawled to the last page.
+
+    Scoped to this scan's own entry: another scan having crawled the same page
+    doesn't help here, because a *reused* entry contributes no wishlist/follows
+    rows of its own — those come from the live crawl that first read the page.
+    """
     if self_url is None:
         return True  # custom scan — exclusions come from an earlier collection scan
     entry = (
         await session.execute(
             select(CrawlFrontier).where(
+                CrawlFrontier.scan_id == scan_id,
                 CrawlFrontier.url == self_url,
                 CrawlFrontier.kind == str(CrawlKind.FAN_COLLECTION),
             )
@@ -297,7 +313,7 @@ async def finalize_scan(
             if owner is not None and scan.kind == str(ScanKind.COLLECTION)
             else None
         )
-        if not await _self_crawl_complete(session, self_url):
+        if not await _self_crawl_complete(session, self_url, scan_id=scan_id):
             raise ValueError(
                 "your collection is only partly crawled (the crawl budget ran out "
                 "before it finished); refusing to curate on incomplete exclusions — "

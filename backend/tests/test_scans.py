@@ -306,7 +306,9 @@ async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -
     async with sessionmaker_() as s:
         scan = await s.get(Scan, scan_id)
         assert scan.status == str(ScanStatus.RUNNING)  # not finalized mid-chain
-        assert await frontier.pending_count(s) > 0
+        assert await frontier.pending_count(s, scan_id=scan_id) > 0
+        # …and that work belongs to THIS scan, not a shared pool.
+        assert await frontier.pending_count(s) == 0  # scan_id=None = legacy rows
 
 
 async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN001

@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
     crawl_max_requests: int = 5000
 
+    # Frontier entries crawled in parallel within one slice. A Nimble render takes
+    # 3-35s, so a serial drain is almost entirely idle waiting — at 1 this managed
+    # ~3 fetches/min against a limiter allowing far more. Each worker holds its own
+    # DB session and claims with FOR UPDATE SKIP LOCKED. One entry can issue several
+    # fetches (a render plus its pagination), so this multiplies against
+    # `scraper_max_concurrency`, which stays the hard ceiling. Raise via env.
+    crawl_concurrency: int = 8
+
     # Seed (legacy operator-only bootstrap — see scripts/crawl.py)
     bandcamp_fan_url: str = ""
 

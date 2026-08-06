@@ -8,6 +8,7 @@ collection (`is_me=True`), since the `follows` table means "artists/labels I fol
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bandcamp.parse import (
@@ -60,17 +61,56 @@ class TrackIngestCounts:
     tags: int = 0  # new track↔tag edges created this ingest
 
 
+async def _insert_or_reselect(session: AsyncSession, select_stmt, build):  # noqa: ANN001,ANN202
+    """Insert a row, tolerating another worker having inserted it a moment ago.
+
+    Every `get_or_create_*` here is check-then-insert, which is a race once the
+    crawl runs entries in parallel — and it does. Collectors overlap heavily (that
+    overlap IS the recommendation signal), so two workers reaching the same fan,
+    band or tag at the same instant is the common case, not the exotic one. The
+    loser hits the unique key; the row it wanted now exists, so re-select it.
+
+    The insert runs in a SAVEPOINT: losing this race must not discard the page of
+    ingested rows the caller has pending in the same transaction.
+    """
+    try:
+        async with session.begin_nested():
+            row = build()
+            session.add(row)
+            await session.flush()
+        return row
+    except IntegrityError:
+        return (await session.execute(select_stmt)).scalar_one()
+
+
+async def _add_edge_or_false(session: AsyncSession, build) -> bool:  # noqa: ANN001
+    """Insert an association row; False if a concurrent worker already did.
+
+    Same race as `_insert_or_reselect`, but the caller only wants "did I create
+    it?" for its counters, and the unique constraint already guarantees the edge
+    exists either way. SAVEPOINT so the loser doesn't take the caller's page with it.
+    """
+    try:
+        async with session.begin_nested():
+            session.add(build())
+            await session.flush()
+        return True
+    except IntegrityError:
+        return False
+
+
 async def get_or_create_band(session: AsyncSession, pb: ParsedBand) -> Band | None:
     if pb.bandcamp_id is None:
         return None
-    band = (
-        await session.execute(select(Band).where(Band.bandcamp_id == pb.bandcamp_id))
-    ).scalar_one_or_none()
+    stmt = select(Band).where(Band.bandcamp_id == pb.bandcamp_id)
+    band = (await session.execute(stmt)).scalar_one_or_none()
     if band is None:
-        band = Band(bandcamp_id=pb.bandcamp_id, name=pb.name, url=pb.url, kind=BandKind.UNKNOWN)
-        session.add(band)
-        await session.flush()
-        return band
+        return await _insert_or_reselect(
+            session, stmt,
+            lambda: Band(
+                bandcamp_id=pb.bandcamp_id, name=pb.name, url=pb.url, kind=BandKind.UNKNOWN
+            ),
+        )
     # Enrich missing fields only (never clobber existing data).
     if pb.name and not band.name:
         band.name = pb.name
@@ -87,19 +127,16 @@ async def get_or_create_album(
     title: str | None = None,
     band: Band | None = None,
 ) -> Album:
-    album = (
-        await session.execute(select(Album).where(Album.bandcamp_id == bandcamp_id))
-    ).scalar_one_or_none()
+    stmt = select(Album).where(Album.bandcamp_id == bandcamp_id)
+    album = (await session.execute(stmt)).scalar_one_or_none()
     if album is None:
-        album = Album(
-            bandcamp_id=bandcamp_id,
-            url=url,
-            title=title,
-            band_id=band.id if band else None,
+        return await _insert_or_reselect(
+            session, stmt,
+            lambda: Album(
+                bandcamp_id=bandcamp_id, url=url, title=title,
+                band_id=band.id if band else None,
+            ),
         )
-        session.add(album)
-        await session.flush()
-        return album
     if url and not album.url:
         album.url = url
     if title and not album.title:
@@ -118,20 +155,17 @@ async def get_or_create_track(
     band: Band | None = None,
     album: Album | None = None,
 ) -> Track:
-    track = (
-        await session.execute(select(Track).where(Track.bandcamp_id == bandcamp_id))
-    ).scalar_one_or_none()
+    stmt = select(Track).where(Track.bandcamp_id == bandcamp_id)
+    track = (await session.execute(stmt)).scalar_one_or_none()
     if track is None:
-        track = Track(
-            bandcamp_id=bandcamp_id,
-            url=url,
-            title=title,
-            band_id=band.id if band else None,
-            album_id=album.id if album else None,
+        return await _insert_or_reselect(
+            session, stmt,
+            lambda: Track(
+                bandcamp_id=bandcamp_id, url=url, title=title,
+                band_id=band.id if band else None,
+                album_id=album.id if album else None,
+            ),
         )
-        session.add(track)
-        await session.flush()
-        return track
     if url and not track.url:
         track.url = url
     if title and not track.title:
@@ -145,20 +179,17 @@ async def get_or_create_track(
 
 async def get_or_create_fan(session: AsyncSession, fan_id: int, username: str, *, name: str | None,
                             url: str | None, is_me: bool) -> Fan:
-    fan = (
-        await session.execute(select(Fan).where(Fan.bandcamp_fan_id == fan_id))
-    ).scalar_one_or_none()
+    stmt = select(Fan).where(Fan.bandcamp_fan_id == fan_id)
+    fan = (await session.execute(stmt)).scalar_one_or_none()
     if fan is None:
-        fan = Fan(
-            bandcamp_fan_id=fan_id,
-            username=username,
-            url=url or f"https://bandcamp.com/{username}",
-            name=name,
-            is_me=is_me,
+        return await _insert_or_reselect(
+            session, stmt,
+            lambda: Fan(
+                bandcamp_fan_id=fan_id, username=username,
+                url=url or f"https://bandcamp.com/{username}",
+                name=name, is_me=is_me,
+            ),
         )
-        session.add(fan)
-        await session.flush()
-        return fan
     if is_me and not fan.is_me:
         fan.is_me = True
     if name and not fan.name:
@@ -178,17 +209,16 @@ async def _add_fan_item(session: AsyncSession, fan: Fan, item_type: ItemType,
     )
     if (await session.execute(stmt)).scalar_one_or_none() is not None:
         return False
-    session.add(
-        FanItem(
+    return await _add_edge_or_false(
+        session,
+        lambda: FanItem(
             fan_id=fan.id,
             item_type=item_type,
             album_id=album.id if album else None,
             track_id=track.id if track else None,
             is_wishlist=is_wishlist,
-        )
+        ),
     )
-    await session.flush()
-    return True
 
 
 async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
@@ -225,9 +255,9 @@ async def upsert_follow(session: AsyncSession, band: Band, *, fan_id: int) -> bo
     if existing is not None:
         return False
     target = band.kind if band.kind in (BandKind.ARTIST, BandKind.LABEL) else TargetType.ARTIST
-    session.add(Follow(fan_id=fan_id, band_id=band.id, target_type=target))
-    await session.flush()
-    return True
+    return await _add_edge_or_false(
+        session, lambda: Follow(fan_id=fan_id, band_id=band.id, target_type=target)
+    )
 
 
 async def ingest_items_batch(
@@ -297,13 +327,10 @@ async def ingest_fan_collection(
 
 
 async def get_or_create_tag(session: AsyncSession, name: str) -> Tag:
-    tag = (
-        await session.execute(select(Tag).where(Tag.name == name))
-    ).scalar_one_or_none()
+    stmt = select(Tag).where(Tag.name == name)
+    tag = (await session.execute(stmt)).scalar_one_or_none()
     if tag is None:
-        tag = Tag(name=name)
-        session.add(tag)
-        await session.flush()
+        return await _insert_or_reselect(session, stmt, lambda: Tag(name=name))
     return tag
 
 
@@ -318,9 +345,9 @@ async def _add_album_tag(session: AsyncSession, album: Album, tag: Tag) -> bool:
     ).scalar_one_or_none()
     if exists is not None:
         return False
-    session.add(AlbumTag(album_id=album.id, tag_id=tag.id))
-    await session.flush()
-    return True
+    return await _add_edge_or_false(
+        session, lambda: AlbumTag(album_id=album.id, tag_id=tag.id)
+    )
 
 
 async def _link_tag(session: AsyncSession, model, id_col, obj_id: int, tag_id: int) -> bool:
@@ -331,9 +358,9 @@ async def _link_tag(session: AsyncSession, model, id_col, obj_id: int, tag_id: i
     ).scalar_one_or_none()
     if exists is not None:
         return False
-    session.add(model(**{id_col.key: obj_id, "tag_id": tag_id}))
-    await session.flush()
-    return True
+    return await _add_edge_or_false(
+        session, lambda: model(**{id_col.key: obj_id, "tag_id": tag_id})
+    )
 
 
 async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCounts:
@@ -428,15 +455,17 @@ async def get_or_create_supporter_fan(
             await session.execute(select(Fan).where(Fan.username == username))
         ).scalar_one_or_none()
     if fan is None:
-        fan = Fan(
-            bandcamp_fan_id=fan_id,
-            username=username,
-            url=f"https://bandcamp.com/{username}",
-            name=name,
+        # Supporters are the hottest contended rows in a concurrent crawl: the same
+        # collector shows up under many albums at once. Re-select by username, the
+        # key we searched on, if another worker inserted them first.
+        created = await _insert_or_reselect(
+            session, select(Fan).where(Fan.username == username),
+            lambda: Fan(
+                bandcamp_fan_id=fan_id, username=username,
+                url=f"https://bandcamp.com/{username}", name=name,
+            ),
         )
-        session.add(fan)
-        await session.flush()
-        return fan, True
+        return created, True
     if fan_id is not None and fan.bandcamp_fan_id is None:
         fan.bandcamp_fan_id = fan_id
     if name and not fan.name:
@@ -457,9 +486,9 @@ async def _add_album_supporter(
     ).scalar_one_or_none()
     if exists is not None:
         return False
-    session.add(AlbumSupporter(album_id=album.id, fan_id=fan.id))
-    await session.flush()
-    return True
+    return await _add_edge_or_false(
+        session, lambda: AlbumSupporter(album_id=album.id, fan_id=fan.id)
+    )
 
 
 async def ingest_album_supporters(
@@ -490,9 +519,9 @@ async def _add_track_supporter(session: AsyncSession, track: Track, fan: Fan) ->
     ).scalar_one_or_none()
     if exists is not None:
         return False
-    session.add(TrackSupporter(track_id=track.id, fan_id=fan.id))
-    await session.flush()
-    return True
+    return await _add_edge_or_false(
+        session, lambda: TrackSupporter(track_id=track.id, fan_id=fan.id)
+    )
 
 
 async def ingest_track_supporters(

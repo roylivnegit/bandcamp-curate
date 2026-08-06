@@ -6,6 +6,7 @@ a `Fetcher`) and Redis-free, so the CLI and tests can run a full crawl in-proces
 The ARQ worker reuses `process_one` per job for the production, throttled path.
 """
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -16,6 +17,7 @@ from app.bandcamp.collection_api import CollectionApiClient
 from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.crawl import frontier
+from app.crawl.replay import replay_fanout
 from app.crawl.service import (
     CrawlOutcome,
     Fetcher,
@@ -45,6 +47,33 @@ async def budget_exhausted(session: AsyncSession, max_requests: int | None) -> b
     return await requests_used(session) >= max_requests
 
 
+async def _reuse_if_already_crawled(
+    session: AsyncSession, entry: CrawlFrontier, *, max_depth: int | None
+) -> CrawlOutcome | None:
+    """If another scan already crawled this (url, kind), complete it for free.
+
+    The graph is global, so the fetch would tell us nothing new — but the *fan-out*
+    would, so we replay that from the stored rows. Skipping the fetch without the
+    replay would quietly stop this scan's walk at every page another scan had
+    already seen. Returns None when there's nothing to reuse.
+    """
+    if not await frontier.completed_elsewhere(
+        session, entry.url, entry.kind, scan_id=entry.scan_id
+    ):
+        return None
+    enqueued = 0
+    if max_depth is None or entry.depth < max_depth:
+        enqueued = await replay_fanout(
+            session, entry.url, entry.kind, scan_id=entry.scan_id, depth=entry.depth + 1,
+        )
+    await session.commit()
+    logger.info(
+        "reused %s (%s): already crawled by another scan, replayed %d children",
+        entry.url, entry.kind, enqueued,
+    )
+    return CrawlOutcome(url=entry.url, kind=str(entry.kind), enqueued=enqueued, reused=True)
+
+
 async def process_entry(
     session: AsyncSession,
     fetcher: Fetcher,
@@ -58,6 +87,9 @@ async def process_entry(
     max_depth: int | None = None,
 ) -> CrawlOutcome:
     """Run one already-claimed frontier entry by kind. Raises on failure."""
+    reused = await _reuse_if_already_crawled(session, entry, max_depth=max_depth)
+    if reused is not None:
+        return reused
     if entry.kind == CrawlKind.FAN_COLLECTION:
         return await crawl_fan_collection(
             session, fetcher, entry.url,
@@ -69,16 +101,17 @@ async def process_entry(
             seed_fan_id=seed_fan_id,
             cursor=entry.cursor,
             entry=entry,  # lets each page commit its own resume bookmark
+            scan_id=entry.scan_id,
         )
     if entry.kind == CrawlKind.ALBUM:
         return await crawl_album(
             session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
-            supporters_client=supporters_client,
+            supporters_client=supporters_client, scan_id=entry.scan_id,
         )
     if entry.kind == CrawlKind.TRACK:
         return await crawl_track(
             session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
-            supporters_client=supporters_client,
+            supporters_client=supporters_client, scan_id=entry.scan_id,
         )
     raise ValueError(f"unsupported crawl kind: {entry.kind}")
 
@@ -93,10 +126,11 @@ async def process_one(
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
+    scan_id: int | None = None,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> CrawlOutcome | None:
     """Claim and process a single frontier entry. Returns None if none pending."""
-    entry = await frontier.claim_next(session, stale_after=stale_after)
+    entry = await frontier.claim_next(session, scan_id=scan_id, stale_after=stale_after)
     if entry is None:
         return None
     # Capture identity now — after a commit/rollback the instance expires, and
@@ -121,13 +155,14 @@ async def process_one(
         await frontier.mark_partial(session, entry, outcome.cursor)
     else:
         await frontier.mark_done(session, entry)
-    logger.info(
-        "crawled %s (%s): items=%d tracks=%d supporters=%d enqueued=%d "
-        "skipped_followed=%d%s",
-        outcome.url, outcome.kind, outcome.items, outcome.tracks,
-        outcome.supporters, outcome.enqueued, outcome.skipped_followed,
-        " [partial — will resume]" if outcome.cursor is not None else "",
-    )
+    if not outcome.reused:  # reuse logs its own, quieter line
+        logger.info(
+            "crawled %s (%s): items=%d tracks=%d supporters=%d enqueued=%d "
+            "skipped_followed=%d%s",
+            outcome.url, outcome.kind, outcome.items, outcome.tracks,
+            outcome.supporters, outcome.enqueued, outcome.skipped_followed,
+            " [partial — will resume]" if outcome.cursor is not None else "",
+        )
     return outcome
 
 
@@ -143,29 +178,55 @@ async def run_until_empty(
     max_depth: int | None = None,
     max_requests: int | None = None,
     max_iterations: int = 1000,
+    scan_id: int | None = None,
+    concurrency: int = 1,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> list[CrawlOutcome]:
-    """Process frontier entries until it drains, the request budget is hit, or
-    `max_iterations` is reached.
+    """Process this scan's frontier entries until it drains, the request budget is
+    hit, or `max_iterations` entries have been processed.
+
+    `concurrency` workers claim and crawl in parallel. A Nimble render takes 3-35s,
+    so a serial drain spends nearly all of its time waiting: at concurrency 1 this
+    managed ~3 fetches/min against a limiter configured for 120+. Each worker owns
+    its own `AsyncSession` (they are not safe to share) and claims with
+    `FOR UPDATE SKIP LOCKED`, so no two ever take the same entry.
 
     `seed_fan_id` is the fan the walk is for — its `follows` prune detail crawls of
-    already-followed artists/labels deep in the walk (see `crawl_fan_collection`)."""
+    already-followed artists/labels deep in the walk (see `crawl_fan_collection`).
+    """
     outcomes: list[CrawlOutcome] = []
-    for _ in range(max_iterations):
-        async with sessionmaker() as session:
-            if await budget_exhausted(session, max_requests):
-                logger.info("request budget reached (%s); stopping", max_requests)
-                break
-            try:
-                outcome = await process_one(
-                    session, fetcher, seed_url=seed_url, seed_fan_id=seed_fan_id,
-                    collection_client=collection_client, follows_client=follows_client,
-                    supporters_client=supporters_client, max_depth=max_depth,
-                    stale_after=stale_after,
-                )
-            except Exception:  # noqa: BLE001 — already recorded; keep draining
-                continue
-        if outcome is None:
-            break
-        outcomes.append(outcome)
+    remaining = max_iterations
+    stop = False
+
+    async def worker() -> None:
+        nonlocal remaining, stop
+        while True:
+            if stop or remaining <= 0:
+                return
+            remaining -= 1  # reserve a slot before awaiting anything
+            async with sessionmaker() as session:
+                if await budget_exhausted(session, max_requests):
+                    logger.info("request budget reached (%s); stopping", max_requests)
+                    stop = True
+                    return
+                try:
+                    outcome = await process_one(
+                        session, fetcher, seed_url=seed_url, seed_fan_id=seed_fan_id,
+                        collection_client=collection_client, follows_client=follows_client,
+                        supporters_client=supporters_client, max_depth=max_depth,
+                        scan_id=scan_id, stale_after=stale_after,
+                    )
+                except Exception:  # noqa: BLE001 — already recorded; keep draining
+                    continue
+            if outcome is None:
+                # Nothing claimable *right now*. Other workers may still be adding
+                # children, but stopping here keeps the slice bounded — the caller
+                # loops again if there's more.
+                return
+            outcomes.append(outcome)
+
+    if concurrency <= 1:
+        await worker()
+    else:
+        await asyncio.gather(*(worker() for _ in range(concurrency)))
     return outcomes

@@ -79,6 +79,29 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   budget, exactly like renders. `build_pagination_clients(gateway, via_nimble=…)` wires the worker +
   CLI; flip `PAGINATION_VIA_NIMBLE=false` for the free direct path. `FetchRequest.cache_key` now folds
   in an `extra` digest so same-URL POSTs don't collide in the cache.
+- **The frontier is PER-SCAN** (`crawl_frontier.scan_id`, unique `(scan_id, url, kind)`, migration
+  `0010`). It used to be one global queue, so a 2026-07-24 operator crawl that left 11,521 depth-3
+  albums pending was inherited by every scan created afterwards — scan 2's own seed was crawled in
+  the first minute and it still reported `running` a day later, burning its owner's credits on a
+  backlog it never asked for. Pre-existing rows are left at `scan_id = NULL` = **legacy**: no scan
+  drains them, only `scripts/crawl.py` / `seed_crawl`.
+  - **The graph stays global.** Reaching a `(url, kind)` another scan already finished costs **no
+    fetch**: `frontier.completed_elsewhere` detects it and `app/crawl/replay.py` re-derives the
+    fan-out from stored rows (album/track → its supporters' collections; fan collection → its owned
+    items). Skipping the fetch *without* the replay would silently dead-end a scan's walk at every
+    page another scan had seen — reuse is only correct because the replay exists.
+- **The drain runs in parallel** (`crawl_concurrency`, 50 in `.env`; `run_until_empty(concurrency=)`).
+  A Nimble render is 3-35s, so a serial drain was ~97% idle: **3.3 fetches/min against a limiter
+  allowing 120+**. `.env` was also throttling `SCRAPER_MAX_QPS=2 / CONCURRENCY=4` against code
+  defaults of 30/40 — now 20/50.
+  - Concurrency forced three real fixes, all previously latent: `claim_next` is now a
+    **compare-and-swap** on the status it read (`FOR UPDATE SKIP LOCKED` on PG is just an
+    optimisation — the CAS is what's portable and what's correct); `frontier.enqueue` treats a
+    duplicate-key collision as "someone else added it"; and every `get_or_create_*` in the mapper
+    became insert-or-reselect. That last one matters most — collectors overlap heavily (that overlap
+    *is* the signal), so two workers hitting the same fan/band/tag is the common case, and without it
+    entries died on IntegrityError and were marked `error` permanently. All use SAVEPOINTs so losing
+    a race never discards the caller's committed-pending page.
 - **A scan is a CHAIN of short jobs, not one long one** (`scan_service.SCAN_SLICE_ENTRIES = 10`).
   `advance_scan` drains at most 10 frontier entries and returns "more?"; the ARQ `run_scan` job
   re-enqueues itself while that's true (same self-perpetuating shape as the legacy `crawl_next`),

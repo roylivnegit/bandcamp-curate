@@ -1,17 +1,22 @@
-"""The crawl frontier — a resumable work queue backed by `crawl_frontier`.
+"""The crawl frontier — a resumable, per-scan work queue backed by `crawl_frontier`.
 
-Rows are unique on (url, kind), so enqueueing the same target twice is a no-op:
-each fan collection and album page is crawled at most once. `claim_next` atomically
-moves the oldest eligible PENDING row to IN_PROGRESS; `mark_done`/`mark_error`
-close it out. This is deliberately simple (single-dispatcher friendly); a
-`SELECT ... FOR UPDATE SKIP LOCKED` claim can replace it when we run workers
-concurrently against Postgres.
+Rows are unique on (scan_id, url, kind): each scan walks its own subtree, so one
+scan is never held up draining work another queued. `claim_next` moves the
+highest-priority eligible row to IN_PROGRESS; `mark_done` / `mark_partial` /
+`mark_error` close it out. `scan_id IS NULL` marks legacy rows from before the
+per-scan split — no scan drains those, only the old operator chain.
+
+Safe for many concurrent claimers: the claim is a compare-and-swap on the status
+we just read (plus `FOR UPDATE SKIP LOCKED` on Postgres to avoid the wasted
+retry), and `enqueue` treats a duplicate-key collision as "someone else added it".
+Both use SAVEPOINTs, so losing a race never discards the caller's pending work.
 """
 
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CrawlFrontier
@@ -28,32 +33,53 @@ logger = logging.getLogger("crate_digger.crawl")
 # longer than `job_timeout` so a *live* visit is never stolen from itself.
 STALE_CLAIM_AFTER = timedelta(minutes=30)
 
+# How many rows a claimer will try before giving up, when it keeps losing the
+# compare-and-swap to other workers. Only bites under heavy contention.
+_CLAIM_ATTEMPTS = 8
+
 
 async def enqueue(
     session: AsyncSession,
     url: str,
     kind: CrawlKind | str,
     *,
+    scan_id: int | None = None,
     priority: int = 0,
     depth: int = 0,
 ) -> bool:
-    """Add a (url, kind) to the frontier if absent. Returns True if newly added."""
+    """Add a (scan_id, url, kind) to the frontier if absent. True if newly added.
+
+    Race-safe: concurrent crawlers routinely discover the same album at the same
+    moment, so a lost check-then-insert race is normal, not exotic. The unique
+    constraint is the real arbiter and an IntegrityError just means "someone else
+    added it" — the same answer as finding it in the select.
+    """
     kind = str(kind)
     existing = (
         await session.execute(
             select(CrawlFrontier).where(
-                CrawlFrontier.url == url, CrawlFrontier.kind == kind
+                CrawlFrontier.scan_id == scan_id,
+                CrawlFrontier.url == url,
+                CrawlFrontier.kind == kind,
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
         return False
-    session.add(
-        CrawlFrontier(
-            url=url, kind=kind, status=CrawlStatus.PENDING, priority=priority, depth=depth
-        )
-    )
-    await session.flush()
+    try:
+        # SAVEPOINT, not the outer transaction: the caller has a page's worth of
+        # ingested rows pending in this same session, and losing those to a
+        # duplicate-URL race would be a far worse bug than the one we're guarding.
+        async with session.begin_nested():
+            session.add(
+                CrawlFrontier(
+                    scan_id=scan_id, url=url, kind=kind,
+                    status=CrawlStatus.PENDING, priority=priority, depth=depth,
+                )
+            )
+            await session.flush()
+    except IntegrityError:
+        return False
     return True
 
 
@@ -61,6 +87,7 @@ async def claim_next(
     session: AsyncSession,
     kinds: list[CrawlKind | str] | None = None,
     *,
+    scan_id: int | None = None,
     stale_after: timedelta = STALE_CLAIM_AFTER,
 ) -> CrawlFrontier | None:
     """Claim the highest-priority, least-visited, oldest eligible row → IN_PROGRESS.
@@ -76,35 +103,58 @@ async def claim_next(
     entry still on its first visit. So one pass gives every collection a bounded
     slice before any of them gets a second — rather than one whale monopolising
     the crawl until it finishes.
+
+    `scan_id` scopes the claim to one scan's own subtree. Passing None claims only
+    legacy (pre-per-scan) rows, which is what the operator chain wants.
+
+    Concurrency-safe on Postgres via `FOR UPDATE SKIP LOCKED`: many crawlers claim
+    at once, and two of them landing on the same row would crawl it twice and pay
+    twice. SQLite has no such clause, but nothing runs it concurrently there.
     """
     cutoff = datetime.now(UTC) - stale_after
     stmt = select(CrawlFrontier).where(
+        CrawlFrontier.scan_id == scan_id,
         or_(
             CrawlFrontier.status == CrawlStatus.PENDING,
             and_(
                 CrawlFrontier.status == CrawlStatus.IN_PROGRESS,
                 CrawlFrontier.updated_at < cutoff,
             ),
-        )
+        ),
     )
     if kinds:
         stmt = stmt.where(CrawlFrontier.kind.in_([str(k) for k in kinds]))
     stmt = stmt.order_by(
         CrawlFrontier.priority.desc(), CrawlFrontier.attempts.asc(), CrawlFrontier.id.asc()
     ).limit(1)
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        # Lets concurrent claimers skip past a row someone else is taking rather
+        # than queue behind it. An optimisation — correctness is the CAS below.
+        stmt = stmt.with_for_update(skip_locked=True)
 
-    entry = (await session.execute(stmt)).scalar_one_or_none()
-    if entry is None:
-        return None
-    if entry.status == CrawlStatus.IN_PROGRESS:
-        logger.warning(
-            "reclaiming stale in-progress entry %s (%s), untouched since %s",
-            entry.url, entry.kind, entry.updated_at,
+    for _ in range(_CLAIM_ATTEMPTS):
+        entry = (await session.execute(stmt)).scalar_one_or_none()
+        if entry is None:
+            return None
+        was_stale = entry.status == CrawlStatus.IN_PROGRESS
+        # Compare-and-swap on the status we just read. This, not SKIP LOCKED, is
+        # what makes the claim exclusive: SKIP LOCKED is Postgres-only, and two
+        # workers reading the same row then both writing IN_PROGRESS would crawl
+        # it twice and pay twice. Only the worker whose UPDATE matches wins.
+        result = await session.execute(
+            update(CrawlFrontier)
+            .where(CrawlFrontier.id == entry.id, CrawlFrontier.status == entry.status)
+            .values(status=CrawlStatus.IN_PROGRESS, attempts=CrawlFrontier.attempts + 1)
         )
-    entry.status = CrawlStatus.IN_PROGRESS
-    entry.attempts += 1
-    await session.flush()
-    return entry
+        if result.rowcount == 1:
+            await session.refresh(entry)
+            if was_stale:
+                logger.warning(
+                    "reclaimed stale in-progress entry %s (%s)", entry.url, entry.kind
+                )
+            return entry
+        session.expire(entry)  # lost the race — look for another
+    return None
 
 
 async def get_by_id(session: AsyncSession, entry_id: int) -> CrawlFrontier | None:
@@ -148,13 +198,43 @@ async def mark_error(session: AsyncSession, entry: CrawlFrontier, error: str) ->
 
 
 async def pending_count(
-    session: AsyncSession, kind: CrawlKind | str | None = None
+    session: AsyncSession,
+    kind: CrawlKind | str | None = None,
+    *,
+    scan_id: int | None = None,
 ) -> int:
+    """PENDING entries for one scan (`scan_id=None` = the legacy rows)."""
     from sqlalchemy import func
 
     stmt = select(func.count()).select_from(CrawlFrontier).where(
-        CrawlFrontier.status == CrawlStatus.PENDING
+        CrawlFrontier.scan_id == scan_id,
+        CrawlFrontier.status == CrawlStatus.PENDING,
     )
     if kind is not None:
         stmt = stmt.where(CrawlFrontier.kind == str(kind))
     return (await session.execute(stmt)).scalar_one()
+
+
+async def completed_elsewhere(
+    session: AsyncSession, url: str, kind: CrawlKind | str, *, scan_id: int | None
+) -> bool:
+    """Whether some OTHER scan already crawled this (url, kind) to completion.
+
+    The graph is global, so re-fetching a page another scan already read buys
+    nothing but a Nimble credit. The caller completes the entry without fetching
+    and replays its fan-out from the stored rows instead (`app.crawl.replay`) —
+    skipping the fetch without that would silently truncate this scan's walk.
+    """
+    return (
+        await session.execute(
+            select(CrawlFrontier.id).where(
+                CrawlFrontier.url == url,
+                CrawlFrontier.kind == str(kind),
+                CrawlFrontier.scan_id.is_not(scan_id) if scan_id is None
+                else or_(
+                    CrawlFrontier.scan_id != scan_id, CrawlFrontier.scan_id.is_(None)
+                ),
+                CrawlFrontier.status == CrawlStatus.DONE,
+            ).limit(1)
+        )
+    ).scalar_one_or_none() is not None

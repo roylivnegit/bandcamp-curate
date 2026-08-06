@@ -331,12 +331,26 @@ class Recommendation(Base):
 
 
 class CrawlFrontier(Base, TimestampMixin):
-    """Resumable crawl queue: URLs to fetch and their state."""
+    """Resumable crawl queue: URLs to fetch and their state. **Scoped per scan** —
+    each scan walks its own subtree, so one scan can't be held up draining work
+    another one queued (a 2026-07-24 operator crawl left 11.5k entries behind, and
+    every later scan inherited them).
+
+    The *graph* stays global: bands/albums/tracks/supporters are shared, and an
+    entry whose (url, kind) another scan has already crawled completes without
+    spending a fetch — its fan-out is replayed from the stored data instead
+    (`app.crawl.replay`). So scans are isolated in scheduling, not in knowledge.
+    """
 
     __tablename__ = "crawl_frontier"
-    __table_args__ = (UniqueConstraint("url", "kind", name="uq_frontier_url_kind"),)
+    __table_args__ = (
+        UniqueConstraint("scan_id", "url", "kind", name="uq_frontier_scan_url_kind"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # NULL = legacy: rows from the pre-per-scan operator crawl (`scripts/crawl.py`,
+    # `seed_crawl`). No scan drains them; only that same legacy chain can.
+    scan_id: Mapped[int | None] = mapped_column(ForeignKey("scans.id"), index=True)
     url: Mapped[str] = mapped_column(String(512), index=True)
     kind: Mapped[str] = mapped_column(String(32), index=True)  # CrawlKind
     status: Mapped[str] = mapped_column(String(16), default=CrawlStatus.PENDING, index=True)

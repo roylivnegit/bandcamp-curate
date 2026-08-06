@@ -147,6 +147,27 @@ async def session(
         yield s
 
 
+@pytest_asyncio.fixture
+async def concurrent_sessionmaker(tmp_path) -> AsyncIterator[  # noqa: ANN001
+    async_sessionmaker[AsyncSession]
+]:
+    """A file-backed SQLite DB, for tests that need genuinely parallel sessions.
+
+    The in-memory engine above hands every session the *same* connection
+    (SQLAlchemy uses StaticPool for `sqlite://`), so concurrent work collides with
+    "SQL statements in progress" — an artefact of the fixture, not of the code.
+    Postgres gives each session its own connection, which is what production does.
+    """
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'crawl.db'}",
+        connect_args={"timeout": 30},  # SQLite serialises writers; wait, don't fail
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
 async def _count(session: AsyncSession, model) -> int:
     return (await session.execute(select(func.count()).select_from(model))).scalar_one()
 
@@ -236,6 +257,152 @@ async def test_crawl_fan_collection_at_max_depth_enqueues_nothing(
     )
     assert outcome.items == 2 and outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
+
+
+# ── Per-scan frontier, reuse, and concurrency ──────────────────────────────────
+
+
+async def test_frontier_is_scoped_per_scan(session: AsyncSession) -> None:
+    # The same URL can be queued by two scans independently, and each only ever
+    # claims its own. Before this, one scan drained a queue everyone shared.
+    assert await frontier.enqueue(session, ALBUM_URL, CrawlKind.ALBUM, scan_id=1) is True
+    assert await frontier.enqueue(session, ALBUM_URL, CrawlKind.ALBUM, scan_id=2) is True
+    assert await frontier.enqueue(session, ALBUM_URL, CrawlKind.ALBUM, scan_id=1) is False
+    await session.commit()
+
+    assert await _count(session, CrawlFrontier) == 2
+    claimed = await frontier.claim_next(session, scan_id=2)
+    assert claimed is not None and claimed.scan_id == 2
+    assert await frontier.pending_count(session, scan_id=1) == 1
+    assert await frontier.pending_count(session, scan_id=2) == 0  # the one we claimed
+
+
+async def test_a_scan_never_claims_legacy_entries(session: AsyncSession) -> None:
+    """The July 2026 operator crawl left 11.5k rows behind and every later scan
+    inherited them. Legacy rows (scan_id NULL) must be invisible to scans."""
+    await frontier.enqueue(session, ALBUM_URL, CrawlKind.ALBUM)  # scan_id=None
+    await session.commit()
+
+    assert await frontier.claim_next(session, scan_id=7) is None  # not this scan's work
+    assert await frontier.pending_count(session, scan_id=7) == 0
+    # …but the legacy operator chain can still reach them.
+    assert (await frontier.claim_next(session)) is not None
+
+
+async def test_enqueue_survives_a_duplicate_race(session: AsyncSession) -> None:
+    """Concurrent crawlers routinely discover the same album at the same instant.
+    The loser of that race must not take the caller's pending work down with it —
+    an ingested page is committed in the same transaction."""
+    session.add(Fan(bandcamp_fan_id=99, username="pending_work", url=ME_URL))
+    await session.flush()
+    session.add(CrawlFrontier(scan_id=1, url=ALBUM_URL, kind=str(CrawlKind.ALBUM),
+                              status=CrawlStatus.PENDING))
+    await session.commit()
+
+    # Simulate the racing insert landing between our select and our flush.
+    session.add(Fan(bandcamp_fan_id=100, username="more_work", url="https://bandcamp.com/mw"))
+    added = await frontier.enqueue(session, ALBUM_URL, CrawlKind.ALBUM, scan_id=1)
+    await session.commit()
+
+    assert added is False  # someone else got there
+    assert await _count(session, Fan) == 2  # …and our unrelated work survived
+    assert await _count(session, CrawlFrontier) == 1
+
+
+async def test_reuse_skips_the_fetch_and_replays_the_fanout(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """Scan 1 crawls an album; scan 2 wants the same album. The graph is global so
+    re-fetching buys nothing — but skipping the fetch must NOT skip the fan-out, or
+    scan 2's walk would silently dead-end at every page scan 1 had already seen."""
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=1)
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=2)
+        await s.commit()
+
+    async with sessionmaker_() as s:  # scan 1: the real crawl
+        first = await runner.process_one(
+            s, fetcher, scan_id=1, supporters_client=FakeSupportersClient(), max_depth=3
+        )
+    assert first is not None and first.reused is False
+    assert len(fetcher.calls) == 1
+    assert first.enqueued == 3  # three supporters' collections, into scan 1
+
+    async with sessionmaker_() as s:  # scan 2: same album, no credit
+        second = await runner.process_one(
+            s, fetcher, scan_id=2, supporters_client=FakeSupportersClient(), max_depth=3
+        )
+    assert second is not None and second.reused is True
+    assert len(fetcher.calls) == 1  # NOT fetched again
+
+    async with sessionmaker_() as s:
+        # The fan-out was replayed from the stored supporter rows, into scan 2.
+        fans = (await s.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.scan_id == 2,
+                CrawlFrontier.kind == CrawlKind.FAN_COLLECTION,
+            )
+        )).scalars().all()
+        assert {f.url for f in fans} == {
+            "https://bandcamp.com/guron",
+            "https://bandcamp.com/moth_lord",
+            "https://bandcamp.com/deepcrate",
+        }
+        assert all(f.depth == 1 for f in fans)  # same depth the live crawl would give
+        album_entry = (await s.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.scan_id == 2, CrawlFrontier.kind == CrawlKind.ALBUM
+            )
+        )).scalar_one()
+        assert album_entry.status == CrawlStatus.DONE
+
+
+async def test_reuse_respects_max_depth(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    # At the depth bound a reused entry completes but must not replay children,
+    # exactly as a live crawl there would ingest but not enqueue.
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=1, depth=3)
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=2, depth=3)
+        await s.commit()
+    async with sessionmaker_() as s:
+        await runner.process_one(s, fetcher, scan_id=1,
+                                 supporters_client=FakeSupportersClient(), max_depth=3)
+    async with sessionmaker_() as s:
+        out = await runner.process_one(s, fetcher, scan_id=2,
+                                       supporters_client=FakeSupportersClient(), max_depth=3)
+    assert out is not None and out.reused is True and out.enqueued == 0
+
+
+async def test_concurrent_drain_processes_each_entry_exactly_once(
+    concurrent_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A Nimble render is 3-35s of waiting, so the drain runs entries in parallel.
+    Two workers landing on the same row would crawl it twice and pay twice."""
+    urls = [f"https://b{i}.bandcamp.com/album/a{i}" for i in range(8)]
+    fetcher = FakeFetcher({"/album/": ALBUM_HTML})
+    async with concurrent_sessionmaker() as s:
+        for u in urls:
+            await frontier.enqueue(s, u, CrawlKind.ALBUM, scan_id=1)
+        await s.commit()
+
+    outcomes = await runner.run_until_empty(
+        concurrent_sessionmaker, fetcher, scan_id=1,
+        supporters_client=FakeSupportersClient(),
+        max_depth=0, concurrency=4, max_iterations=20,
+    )
+
+    processed = [o.url for o in outcomes]
+    assert sorted(processed) == sorted(urls)  # all of them…
+    assert len(processed) == len(set(processed))  # …each exactly once
+    async with concurrent_sessionmaker() as s:
+        done = (await s.execute(
+            select(CrawlFrontier).where(CrawlFrontier.status == CrawlStatus.DONE)
+        )).scalars().all()
+        assert len(done) == 8
 
 
 # ── Bounded, resumable pagination ──────────────────────────────────────────────

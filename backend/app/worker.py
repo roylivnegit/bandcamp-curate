@@ -48,6 +48,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["seed_url"] = settings.bandcamp_fan_url
     ctx["max_depth"] = settings.crawl_max_depth
     ctx["max_requests"] = settings.crawl_max_requests
+    ctx["concurrency"] = settings.crawl_concurrency
 
 
 async def seed_crawl(ctx: dict[str, Any], url: str | None = None) -> str:
@@ -103,6 +104,7 @@ async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
             follows_client=ctx.get("follows_client"),
             supporters_client=ctx.get("supporters_client"),
             max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
+            concurrency=ctx.get("concurrency", 1),
         )
     except Exception as exc:  # noqa: BLE001 — surface it on the scan, then re-raise
         await scan_service.fail_scan(ctx["sessionmaker"], scan_id, exc)
