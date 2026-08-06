@@ -80,7 +80,12 @@ async def _insert_or_reselect(session: AsyncSession, select_stmt, build):  # noq
             await session.flush()
         return row
     except IntegrityError:
-        return (await session.execute(select_stmt)).scalar_one()
+        # Only a duplicate is benign; anything else (NOT NULL, bad FK) must surface
+        # rather than be mistaken for "someone else created it".
+        existing = (await session.execute(select_stmt)).scalar_one_or_none()
+        if existing is None:
+            raise
+        return existing
 
 
 async def _add_edge_or_false(session: AsyncSession, build) -> bool:  # noqa: ANN001

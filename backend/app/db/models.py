@@ -348,9 +348,10 @@ class CrawlFrontier(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # NULL = legacy: rows from the pre-per-scan operator crawl (`scripts/crawl.py`,
-    # `seed_crawl`). No scan drains them; only that same legacy chain can.
-    scan_id: Mapped[int | None] = mapped_column(ForeignKey("scans.id"), index=True)
+    # Required: every entry belongs to exactly one scan. An unowned row is reached
+    # by no query and reported by nothing, which is how 11.5k entries sat unnoticed
+    # for two weeks. The operator chain resolves a scan too (`crawl.seed`).
+    scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id"), index=True)
     url: Mapped[str] = mapped_column(String(512), index=True)
     kind: Mapped[str] = mapped_column(String(32), index=True)  # CrawlKind
     status: Mapped[str] = mapped_column(String(16), default=CrawlStatus.PENDING, index=True)

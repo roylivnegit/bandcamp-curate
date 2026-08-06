@@ -3,8 +3,8 @@
 Rows are unique on (scan_id, url, kind): each scan walks its own subtree, so one
 scan is never held up draining work another queued. `claim_next` moves the
 highest-priority eligible row to IN_PROGRESS; `mark_done` / `mark_partial` /
-`mark_error` close it out. `scan_id IS NULL` marks legacy rows from before the
-per-scan split — no scan drains those, only the old operator chain.
+`mark_error` close it out. Every entry belongs to exactly one scan, including the
+operator chain's (see `crawl.seed`): an unowned row is reached by no query.
 
 Safe for many concurrent claimers: the claim is a compare-and-swap on the status
 we just read (plus `FOR UPDATE SKIP LOCKED` on Postgres to avoid the wasted
@@ -43,7 +43,7 @@ async def enqueue(
     url: str,
     kind: CrawlKind | str,
     *,
-    scan_id: int | None = None,
+    scan_id: int,
     priority: int = 0,
     depth: int = 0,
 ) -> bool:
@@ -79,6 +79,20 @@ async def enqueue(
             )
             await session.flush()
     except IntegrityError:
+        # Only a duplicate is benign. A NOT NULL or bad-FK violation must NOT be
+        # read as "already queued" — that silently drops work and looks like a
+        # no-op. Re-select: present ⇒ we lost the race; absent ⇒ the error is real.
+        raced = (
+            await session.execute(
+                select(CrawlFrontier).where(
+                    CrawlFrontier.scan_id == scan_id,
+                    CrawlFrontier.url == url,
+                    CrawlFrontier.kind == kind,
+                )
+            )
+        ).scalar_one_or_none()
+        if raced is None:
+            raise
         return False
     return True
 
@@ -87,7 +101,7 @@ async def claim_next(
     session: AsyncSession,
     kinds: list[CrawlKind | str] | None = None,
     *,
-    scan_id: int | None = None,
+    scan_id: int,
     stale_after: timedelta = STALE_CLAIM_AFTER,
 ) -> CrawlFrontier | None:
     """Claim the highest-priority, least-visited, oldest eligible row → IN_PROGRESS.
@@ -104,8 +118,8 @@ async def claim_next(
     slice before any of them gets a second — rather than one whale monopolising
     the crawl until it finishes.
 
-    `scan_id` scopes the claim to one scan's own subtree. Passing None claims only
-    legacy (pre-per-scan) rows, which is what the operator chain wants.
+    `scan_id` scopes the claim to one scan's own subtree — required, since every
+    entry belongs to exactly one scan.
 
     Concurrency-safe on Postgres via `FOR UPDATE SKIP LOCKED`: many crawlers claim
     at once, and two of them landing on the same row would crawl it twice and pay
@@ -201,9 +215,9 @@ async def pending_count(
     session: AsyncSession,
     kind: CrawlKind | str | None = None,
     *,
-    scan_id: int | None = None,
+    scan_id: int,
 ) -> int:
-    """PENDING entries for one scan (`scan_id=None` = the legacy rows)."""
+    """PENDING entries for one scan."""
     from sqlalchemy import func
 
     stmt = select(func.count()).select_from(CrawlFrontier).where(
@@ -216,7 +230,7 @@ async def pending_count(
 
 
 async def completed_elsewhere(
-    session: AsyncSession, url: str, kind: CrawlKind | str, *, scan_id: int | None
+    session: AsyncSession, url: str, kind: CrawlKind | str, *, scan_id: int
 ) -> bool:
     """Whether some OTHER scan already crawled this (url, kind) to completion.
 
@@ -230,10 +244,7 @@ async def completed_elsewhere(
             select(CrawlFrontier.id).where(
                 CrawlFrontier.url == url,
                 CrawlFrontier.kind == str(kind),
-                CrawlFrontier.scan_id.is_not(scan_id) if scan_id is None
-                else or_(
-                    CrawlFrontier.scan_id != scan_id, CrawlFrontier.scan_id.is_(None)
-                ),
+                CrawlFrontier.scan_id != scan_id,
                 CrawlFrontier.status == CrawlStatus.DONE,
             ).limit(1)
         )

@@ -83,8 +83,11 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   `0010`). It used to be one global queue, so a 2026-07-24 operator crawl that left 11,521 depth-3
   albums pending was inherited by every scan created afterwards — scan 2's own seed was crawled in
   the first minute and it still reported `running` a day later, burning its owner's credits on a
-  backlog it never asked for. Pre-existing rows are left at `scan_id = NULL` = **legacy**: no scan
-  drains them, only `scripts/crawl.py` / `seed_crawl`.
+  backlog it never asked for. **`scan_id` is NOT NULL** — migration `0010` backfills pre-existing rows
+  onto the operator's collection scan (the walk they came from) and aborts if there isn't one, per
+  `0008`'s precedent: an unowned row is reached by no query and reported by nothing, which is exactly
+  how 11.5k entries sat unnoticed for two weeks. The legacy operator chain therefore names a scan too
+  (`crawl.seed.operator_scan_id`).
   - **The graph stays global.** Reaching a `(url, kind)` another scan already finished costs **no
     fetch**: `frontier.completed_elsewhere` detects it and `app/crawl/replay.py` re-derives the
     fan-out from stored rows (album/track → its supporters' collections; fan collection → its owned

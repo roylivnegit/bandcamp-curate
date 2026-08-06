@@ -12,11 +12,12 @@ supporters are shared exactly as before — and an entry whose (url, kind) anoth
 scan already crawled completes without a fetch, replaying its fan-out from the
 stored rows (`app.crawl.replay`). Isolation of scheduling, not of knowledge.
 
-Existing rows are left at `scan_id = NULL`, meaning "legacy": no scan drains them,
-and only the pre-per-scan operator chain (`scripts/crawl.py`, `seed_crawl`) can.
-That keeps the discovered work — it was paid for — without any scan picking it up
-by accident. Note NULLs are distinct under a unique constraint, so legacy rows are
-not deduplicated against each other; they are inert, so this doesn't matter.
+Existing rows are backfilled onto the operator's own collection scan — the walk
+they came from — and `scan_id` is then locked NOT NULL. Every entry has an owner:
+a row nobody owns is a row no query reaches and nothing reports, which is how
+11.5k entries sat unnoticed for two weeks in the first place. If rows exist and no
+collection scan does, this ABORTS rather than leave them ownerless (same call as
+0008: a failed migration you can fix beats silent invisible data).
 
 Guarded like 0002-0009: a fresh DB builds this from the current ORM metadata, so
 this only patches an EXISTING DB.
@@ -75,9 +76,31 @@ def _drop_unique(batch, table: str, columns: list[str]) -> None:  # noqa: ANN001
         batch.drop_index(name)
 
 
+def _legacy_owner_id() -> int | None:
+    """The scan to hand pre-existing rows to: the earliest collection scan, i.e.
+    the operator's own "My collection". Those entries were discovered by walking
+    that collection, so it is their true owner, not a synthetic placeholder."""
+    row = op.get_bind().execute(
+        sa.text("SELECT id FROM scans WHERE kind = 'collection' ORDER BY id LIMIT 1")
+    ).first()
+    return row[0] if row else None
+
+
 def upgrade() -> None:
     if _has_column(_TABLE, "scan_id"):
         return  # fresh DB built from ORM metadata, or already migrated
+
+    bind = op.get_bind()
+    existing = bind.execute(sa.text(f"SELECT COUNT(*) FROM {_TABLE}")).scalar_one()
+    owner_id = _legacy_owner_id()
+    if existing and owner_id is None:
+        raise RuntimeError(
+            f"{existing} crawl_frontier rows exist but there is no collection scan "
+            "to attach them to. Every entry must have an owner — an unowned row is "
+            "reachable by no query and reported by nothing. Create the operator's "
+            "collection scan (sign up / run a collection scan), or delete these "
+            "rows if the backlog is not worth keeping, then re-run."
+        )
 
     # ONE batch block for the column, the constraint swap and the FK. SQLite can't
     # ALTER any of those in place — batch mode rebuilds the table around them — and
@@ -85,7 +108,15 @@ def upgrade() -> None:
     # runs the same ops directly, so this stays portable rather than just claiming to.
     with op.batch_alter_table(_TABLE) as batch:
         batch.add_column(sa.Column("scan_id", sa.Integer(), nullable=True))
-        # Existing rows stay NULL — legacy, drained by no scan.
+
+    if existing:
+        bind.execute(
+            sa.text(f"UPDATE {_TABLE} SET scan_id = :owner WHERE scan_id IS NULL"),
+            {"owner": owner_id},
+        )
+
+    with op.batch_alter_table(_TABLE) as batch:
+        batch.alter_column("scan_id", existing_type=sa.Integer(), nullable=False)
         _drop_unique(batch, _TABLE, _OLD_UNIQUE)
         batch.create_unique_constraint(_NEW_NAME, _NEW_UNIQUE)
         batch.create_foreign_key(f"fk_{_TABLE}_scan_id", "scans", ["scan_id"], ["id"])

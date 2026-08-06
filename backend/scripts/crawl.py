@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.crawl import runner
-from app.crawl.seed import seed_fan_collection
+from app.crawl.seed import operator_scan_id, seed_fan_collection
 from app.crawl.service import build_pagination_clients
 from app.db.models import CrawlFrontier
 from app.db.session import get_sessionmaker
@@ -31,8 +31,9 @@ from app.scraping.factory import build_gateway
 async def cmd_seed() -> int:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        url = await seed_fan_collection(session)
-    print(f"seeded FAN_COLLECTION: {url}")
+        scan_id = await operator_scan_id(session)
+        url = await seed_fan_collection(session, scan_id=scan_id)
+    print(f"seeded FAN_COLLECTION: {url} (scan {scan_id})")
     return 0
 
 
@@ -46,8 +47,10 @@ async def cmd_run(max_iters: int) -> int:
     col, fol, sup = build_pagination_clients(
         gateway, via_nimble=settings.pagination_via_nimble
     )
+    async with sessionmaker() as session:
+        scan_id = await operator_scan_id(session)
     outcomes = await runner.run_until_empty(
-        sessionmaker, gateway, seed_url=settings.bandcamp_fan_url,
+        sessionmaker, gateway, seed_url=settings.bandcamp_fan_url, scan_id=scan_id,
         collection_client=col, follows_client=fol, supporters_client=sup,
         max_depth=settings.crawl_max_depth, max_requests=settings.crawl_max_requests,
         max_iterations=max_iters,
@@ -64,14 +67,16 @@ async def cmd_status() -> int:
     async with sessionmaker() as session:
         rows = (
             await session.execute(
-                select(CrawlFrontier.status, CrawlFrontier.kind, func.count())
-                .group_by(CrawlFrontier.status, CrawlFrontier.kind)
+                select(CrawlFrontier.scan_id, CrawlFrontier.status,
+                       CrawlFrontier.kind, func.count())
+                .group_by(CrawlFrontier.scan_id, CrawlFrontier.status, CrawlFrontier.kind)
+                .order_by(CrawlFrontier.scan_id)
             )
         ).all()
     if not rows:
         print("frontier empty")
-    for status, kind, count in rows:
-        print(f"  {status:12} {kind:16} {count}")
+    for sid, status, kind, count in rows:
+        print(f"  scan {sid!s:<4} {status:12} {kind:16} {count}")
     return 0
 
 

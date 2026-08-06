@@ -39,7 +39,7 @@ logger = logging.getLogger("crate_digger.crawl")
 
 
 async def _enqueue_fans(
-    session: AsyncSession, fan_urls: list[str], *, scan_id: int | None, depth: int
+    session: AsyncSession, fan_urls: list[str], *, scan_id: int, depth: int
 ) -> int:
     added = 0
     for url in fan_urls:
@@ -51,7 +51,7 @@ async def _enqueue_fans(
 
 
 async def replay_album_fanout(
-    session: AsyncSession, url: str, *, scan_id: int | None, depth: int
+    session: AsyncSession, url: str, *, scan_id: int, depth: int
 ) -> int:
     """Enqueue the fan collections of everyone who supports this album."""
     urls = (
@@ -67,7 +67,7 @@ async def replay_album_fanout(
 
 
 async def replay_track_fanout(
-    session: AsyncSession, url: str, *, scan_id: int | None, depth: int
+    session: AsyncSession, url: str, *, scan_id: int, depth: int
 ) -> int:
     """Enqueue the fan collections of everyone who supports this track."""
     urls = (
@@ -83,7 +83,7 @@ async def replay_track_fanout(
 
 
 async def replay_fan_collection_fanout(
-    session: AsyncSession, url: str, *, scan_id: int | None, depth: int
+    session: AsyncSession, url: str, *, scan_id: int, depth: int
 ) -> int:
     """Enqueue the albums and tracks this fan owns.
 
@@ -120,7 +120,7 @@ async def replay_fan_collection_fanout(
 
 
 async def replay_fanout(
-    session: AsyncSession, url: str, kind: str, *, scan_id: int | None, depth: int
+    session: AsyncSession, url: str, kind: str, *, scan_id: int, depth: int
 ) -> int:
     """Enqueue whatever crawling `(url, kind)` would have revealed. → count added.
 

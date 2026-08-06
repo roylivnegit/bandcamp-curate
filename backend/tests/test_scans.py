@@ -308,7 +308,7 @@ async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -
         assert scan.status == str(ScanStatus.RUNNING)  # not finalized mid-chain
         assert await frontier.pending_count(s, scan_id=scan_id) > 0
         # …and that work belongs to THIS scan, not a shared pool.
-        assert await frontier.pending_count(s) == 0  # scan_id=None = legacy rows
+        assert await frontier.pending_count(s, scan_id=scan_id + 999) == 0
 
 
 async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN001
@@ -417,7 +417,7 @@ async def test_finalize_refuses_a_half_crawled_collection(sessionmaker_) -> None
         scan = await create_collection_scan(s, user)
         scan_id = scan.id
         # Own page enqueued but never crawled — exactly the out-of-credits state.
-        await frontier.enqueue(s, FAN_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, FAN_URL, CrawlKind.FAN_COLLECTION, scan_id=scan_id)
         await s.commit()
 
     with pytest.raises(ValueError, match="only partly crawled"):

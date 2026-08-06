@@ -51,6 +51,7 @@ ALBUM_URL = "https://cerebro-spinal.bandcamp.com/album/panchito"
 TRACK_URL = "https://jscottg.bandcamp.com/track/return-of-the-king-original-mix"
 SEED_URL = "https://bandcamp.com/guron"
 ME_URL = "https://bandcamp.com/me"  # the seed fan in the followed-filter tests
+SCAN = 1  # every frontier entry belongs to a scan; most tests only need one
 
 
 class FakeFetcher:
@@ -176,25 +177,29 @@ async def _count(session: AsyncSession, model) -> int:
 
 
 async def test_enqueue_is_idempotent(session: AsyncSession) -> None:
-    assert await frontier.enqueue(session, SEED_URL, CrawlKind.FAN_COLLECTION) is True
-    assert await frontier.enqueue(session, SEED_URL, CrawlKind.FAN_COLLECTION) is False
+    assert await frontier.enqueue(session, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN) is True
+    assert await frontier.enqueue(
+        session, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN
+    ) is False
     await session.commit()
     assert await _count(session, CrawlFrontier) == 1
 
 
 async def test_claim_next_orders_by_priority(session: AsyncSession) -> None:
-    await frontier.enqueue(session, "https://a", CrawlKind.ALBUM, priority=0)
-    await frontier.enqueue(session, "https://b", CrawlKind.FAN_COLLECTION, priority=100)
+    await frontier.enqueue(session, "https://a", CrawlKind.ALBUM, priority=0, scan_id=SCAN)
+    await frontier.enqueue(
+        session, "https://b", CrawlKind.FAN_COLLECTION, priority=100, scan_id=SCAN
+    )
     await session.commit()
 
-    entry = await frontier.claim_next(session)
+    entry = await frontier.claim_next(session, scan_id=SCAN)
     assert entry is not None and entry.url == "https://b"  # higher priority first
     assert entry.status == CrawlStatus.IN_PROGRESS
     assert entry.attempts == 1
 
 
 async def test_claim_next_returns_none_when_empty(session: AsyncSession) -> None:
-    assert await frontier.claim_next(session) is None
+    assert await frontier.claim_next(session, scan_id=SCAN) is None
 
 
 # ── Crawl operations ────────────────────────────────────────────────────────────
@@ -209,7 +214,7 @@ async def test_crawl_fan_collection_ingests_and_enqueues_albums(
     client = FakeCollectionClient([paged])
     outcome = await crawl_fan_collection(
         session, fetcher, SEED_URL, is_me=True, collection_client=client
-    )
+    , scan_id=SCAN)
 
     assert outcome.items == 3  # 2 embedded (album+track) + 1 paged album
     assert await _count(session, FanItem) == 3
@@ -239,7 +244,8 @@ async def test_crawl_fan_collection_propagates_depth_to_owned_items(
     await crawl_fan_collection(
         session, fetcher, SEED_URL, is_me=True,
         collection_client=FakeCollectionClient(), depth=1, max_depth=3,
-    )
+        scan_id=SCAN,
+)
     entries = (await session.execute(select(CrawlFrontier))).scalars().all()
     assert {e.kind for e in entries} == {CrawlKind.ALBUM, CrawlKind.TRACK}
     assert all(e.depth == 2 for e in entries)  # children at depth+1
@@ -254,7 +260,8 @@ async def test_crawl_fan_collection_at_max_depth_enqueues_nothing(
     outcome = await crawl_fan_collection(
         session, fetcher, SEED_URL, is_me=True,
         collection_client=FakeCollectionClient(), depth=3, max_depth=3,
-    )
+        scan_id=SCAN,
+)
     assert outcome.items == 2 and outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
 
@@ -280,13 +287,13 @@ async def test_frontier_is_scoped_per_scan(session: AsyncSession) -> None:
 async def test_a_scan_never_claims_legacy_entries(session: AsyncSession) -> None:
     """The July 2026 operator crawl left 11.5k rows behind and every later scan
     inherited them. Legacy rows (scan_id NULL) must be invisible to scans."""
-    await frontier.enqueue(session, ALBUM_URL, CrawlKind.ALBUM)  # scan_id=None
+    await frontier.enqueue(session, ALBUM_URL, CrawlKind.ALBUM, scan_id=SCAN)  # scan_id=None
     await session.commit()
 
     assert await frontier.claim_next(session, scan_id=7) is None  # not this scan's work
     assert await frontier.pending_count(session, scan_id=7) == 0
     # …but the legacy operator chain can still reach them.
-    assert (await frontier.claim_next(session)) is not None
+    assert (await frontier.claim_next(session, scan_id=SCAN)) is not None
 
 
 async def test_enqueue_survives_a_duplicate_race(session: AsyncSession) -> None:
@@ -498,7 +505,9 @@ async def test_visit_is_capped_and_returns_a_cursor(session: AsyncSession) -> No
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(100), per_page=4)
 
-    outcome = await crawl_fan_collection(session, fetcher, SEED_URL, collection_client=client)
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=client, scan_id=SCAN
+    )
 
     assert client.pages_fetched == PAGES_PER_VISIT  # stopped at the budget, not the end
     assert outcome.items == PAGES_PER_VISIT * 4  # …and everything it read was ingested
@@ -515,12 +524,14 @@ async def test_resume_continues_without_re_rendering_the_page(
     Re-rendering the fan page would burn a Nimble credit re-reading page one."""
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(100), per_page=4)
-    first = await crawl_fan_collection(session, fetcher, SEED_URL, collection_client=client)
+    first = await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=client, scan_id=SCAN
+    )
     assert len(fetcher.calls) == 1  # the one render
 
     second = await crawl_fan_collection(
         session, fetcher, SEED_URL, collection_client=client, cursor=first.cursor
-    )
+    , scan_id=SCAN)
 
     assert len(fetcher.calls) == 1  # NOT re-rendered — no second credit
     assert second.items == PAGES_PER_VISIT * 4  # the next 40 items
@@ -537,7 +548,7 @@ async def test_repeated_visits_drain_the_collection(session: AsyncSession) -> No
     while visits < 10:
         outcome = await crawl_fan_collection(
             session, fetcher, SEED_URL, collection_client=client, cursor=cursor
-        )
+        , scan_id=SCAN)
         visits += 1
         cursor = outcome.cursor
         if cursor is None:
@@ -556,7 +567,9 @@ async def test_pages_already_read_survive_a_crash(session: AsyncSession) -> None
     client = ExplodingCollectionClient(_many_items(100), per_page=4, fail_on_page=4)
 
     with pytest.raises(RuntimeError, match="blew up"):
-        await crawl_fan_collection(session, fetcher, SEED_URL, collection_client=client)
+        await crawl_fan_collection(
+            session, fetcher, SEED_URL, collection_client=client, scan_id=SCAN
+        )
 
     # Pages 1-3 were committed before the crash; only the 4th is lost.
     assert await _count(session, FanItem) == 12
@@ -568,11 +581,11 @@ async def test_runner_parks_a_partial_entry_as_pending_with_cursor(
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(100), per_page=4)
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
 
     async with sessionmaker_() as s:
-        outcome = await runner.process_one(s, fetcher, collection_client=client)
+        outcome = await runner.process_one(s, fetcher, collection_client=client, scan_id=SCAN)
     assert outcome is not None and outcome.cursor is not None
 
     async with sessionmaker_() as s:
@@ -590,11 +603,11 @@ async def test_runner_marks_done_and_clears_cursor_when_fully_paged(
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(12), per_page=4)  # 3 pages < budget
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
 
     async with sessionmaker_() as s:
-        await runner.process_one(s, fetcher, collection_client=client)
+        await runner.process_one(s, fetcher, collection_client=client, scan_id=SCAN)
 
     async with sessionmaker_() as s:
         entry = (await s.execute(
@@ -623,15 +636,16 @@ async def test_big_collections_take_turns_instead_of_hogging(
     })
     client = FakeCollectionClient(_many_items(200), per_page=4)
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, fan_a, CrawlKind.FAN_COLLECTION)
-        await frontier.enqueue(s, fan_b, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, fan_a, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
+        await frontier.enqueue(s, fan_b, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
 
     visited = []
     for _ in range(4):
         async with sessionmaker_() as s:
             outcome = await runner.process_one(
-                s, fetcher, collection_client=client, max_depth=0
+                s, fetcher, collection_client=client, max_depth=0,
+                scan_id=SCAN,
             )
         visited.append(outcome.url)
 
@@ -650,11 +664,12 @@ async def test_run_until_empty_drains_a_multi_visit_collection(
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(100), per_page=4)
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
 
     outcomes = await runner.run_until_empty(
-        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=20
+        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=20,
+        scan_id=SCAN,
     )
 
     assert len(outcomes) == 3  # 10 + 10 + 5 pages
@@ -663,7 +678,7 @@ async def test_run_until_empty_drains_a_multi_visit_collection(
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
         assert entry.status == CrawlStatus.DONE and entry.cursor is None
         assert await _count(s, FanItem) == 100
-        assert await frontier.pending_count(s) == 0
+        assert await frontier.pending_count(s, scan_id=SCAN) == 0
 
 
 async def test_a_run_that_stops_early_leaves_the_collection_resumable(
@@ -675,11 +690,12 @@ async def test_a_run_that_stops_early_leaves_the_collection_resumable(
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(100), per_page=4)
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
 
     await runner.run_until_empty(
-        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=1
+        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=1,
+        scan_id=SCAN,
     )
 
     async with sessionmaker_() as s:
@@ -691,7 +707,8 @@ async def test_a_run_that_stops_early_leaves_the_collection_resumable(
     # A later run picks up exactly where it left off, re-reading nothing.
     pages_before = client.pages_fetched
     await runner.run_until_empty(
-        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=20
+        sessionmaker_, fetcher, collection_client=client, max_depth=0, max_iterations=20,
+        scan_id=SCAN,
     )
     async with sessionmaker_() as s:
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
@@ -708,18 +725,18 @@ async def test_a_killed_visit_is_reclaimable_not_stranded(
     working. A plain PENDING-only claim would strand it and those pages would be
     unreachable forever."""
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
     async with sessionmaker_() as s:  # claim, then "die" mid-visit
-        await frontier.claim_next(s)
+        await frontier.claim_next(s, scan_id=SCAN)
         await s.commit()
 
     async with sessionmaker_() as s:
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
         assert entry.status == CrawlStatus.IN_PROGRESS  # durably claimed
-        assert await frontier.claim_next(s) is None  # nobody may steal a live claim
+        assert await frontier.claim_next(s, scan_id=SCAN) is None  # nobody may steal a live claim
         # Once the claim goes stale, it must become reclaimable.
-        reclaimed = await frontier.claim_next(s, stale_after=timedelta(seconds=0))
+        reclaimed = await frontier.claim_next(s, stale_after=timedelta(seconds=0), scan_id=SCAN)
         assert reclaimed is not None and reclaimed.id == entry.id
         assert reclaimed.attempts == 2
 
@@ -732,12 +749,14 @@ async def test_crash_mid_visit_keeps_the_resume_bookmark(
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = ExplodingCollectionClient(_many_items(100), per_page=4, fail_on_page=6)
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
 
     async with sessionmaker_() as s:
         with pytest.raises(RuntimeError, match="blew up"):
-            await runner.process_one(s, fetcher, collection_client=client, max_depth=0)
+            await runner.process_one(
+                s, fetcher, collection_client=client, max_depth=0, scan_id=SCAN
+            )
 
     async with sessionmaker_() as s:
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
@@ -756,16 +775,17 @@ async def test_killed_visit_recovers_and_resumes_without_re_buying_pages(
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(100), per_page=4)  # 25 pages
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=SCAN)
         await s.commit()
 
     # Claim and page 5, then vanish — no mark_done, no mark_error, no rollback.
     async with sessionmaker_() as s:
-        entry = await frontier.claim_next(s)
+        entry = await frontier.claim_next(s, scan_id=SCAN)
         await crawl_fan_collection(
             s, fetcher, SEED_URL, collection_client=client, max_depth=0,
             pages_per_visit=5, entry=entry,
-        )
+                scan_id=SCAN,
+    )
     async with sessionmaker_() as s:
         row = (await s.execute(select(CrawlFrontier))).scalar_one()
         assert row.status == CrawlStatus.IN_PROGRESS  # abandoned claim
@@ -776,6 +796,7 @@ async def test_killed_visit_recovers_and_resumes_without_re_buying_pages(
     await runner.run_until_empty(
         sessionmaker_, fetcher, collection_client=client, max_depth=0,
         max_iterations=20, stale_after=timedelta(seconds=0),
+        scan_id=SCAN,
     )
 
     async with sessionmaker_() as s:
@@ -791,14 +812,15 @@ async def test_cursor_is_checkpointed_on_every_page(session: AsyncSession) -> No
     # never point earlier (re-buying) or later (silently skipping items).
     fetcher = FakeFetcher({"bandcamp.com/guron": _fan_html_with_collection_token()})
     client = FakeCollectionClient(_many_items(100), per_page=4)
-    entry = CrawlFrontier(url=SEED_URL, kind=str(CrawlKind.FAN_COLLECTION),
+    entry = CrawlFrontier(scan_id=SCAN, url=SEED_URL,
+                          kind=str(CrawlKind.FAN_COLLECTION),
                           status=CrawlStatus.IN_PROGRESS)
     session.add(entry)
     await session.commit()
 
     outcome = await crawl_fan_collection(
         session, fetcher, SEED_URL, collection_client=client, entry=entry
-    )
+    , scan_id=SCAN)
 
     assert entry.cursor == outcome.cursor  # what's persisted == what's returned
     assert entry.cursor["collection"] == "40"
@@ -840,7 +862,7 @@ async def test_track_typed_item_with_album_url_enqueues_as_album(
 
     await crawl_fan_collection(
         session, fetcher, SEED_URL, collection_client=FakeCollectionClient([package])
-    )
+    , scan_id=SCAN)
 
     entry = (
         await session.execute(
@@ -862,7 +884,7 @@ async def test_album_typed_item_with_track_url_enqueues_as_track(
 
     await crawl_fan_collection(
         session, fetcher, SEED_URL, collection_client=FakeCollectionClient([mislabelled])
-    )
+    , scan_id=SCAN)
 
     entry = (
         await session.execute(
@@ -884,7 +906,7 @@ async def test_non_release_url_is_ingested_but_never_enqueued(
 
     outcome = await crawl_fan_collection(
         session, fetcher, SEED_URL, collection_client=FakeCollectionClient([merch])
-    )
+    , scan_id=SCAN)
 
     assert outcome.items == 3  # ingested like any other owned item
     assert outcome.enqueued == 2  # only the fixture's own album + track
@@ -929,7 +951,8 @@ async def test_followed_band_is_ingested_but_not_detail_crawled(
         session, fetcher, SEED_URL,
         collection_client=FakeCollectionClient([followed_item]),
         depth=2, max_depth=4, seed_fan_id=fan_id,
-    )
+        scan_id=SCAN,
+)
 
     assert outcome.items == 3  # still ingested — co-ownership needs the edge
     assert await _count(session, FanItem) == 3
@@ -953,7 +976,8 @@ async def test_followed_label_matched_by_url_host(session: AsyncSession) -> None
         session, fetcher, SEED_URL,
         collection_client=FakeCollectionClient([label_release]),
         depth=2, max_depth=4, seed_fan_id=fan_id,
-    )
+        scan_id=SCAN,
+)
 
     assert outcome.skipped_followed == 1
     assert "https://paged.bandcamp.com/album/extra" not in await _frontier_urls(session)
@@ -973,7 +997,8 @@ async def test_followed_filter_is_off_above_min_depth(session: AsyncSession) -> 
         collection_client=FakeCollectionClient([followed_item]),
         follows_client=FakeFollowsClient(),
         depth=FOLLOWED_FILTER_MIN_DEPTH - 1, max_depth=4, seed_fan_id=fan_id,
-    )
+        scan_id=SCAN,
+)
 
     assert outcome.skipped_followed == 0
     assert "https://paged.bandcamp.com/album/extra" in await _frontier_urls(session)
@@ -990,7 +1015,7 @@ async def test_followed_filter_needs_a_seed_fan(session: AsyncSession) -> None:
         collection_client=FakeCollectionClient(
             [_album_item(555001, "https://paged.bandcamp.com/album/extra")]
         ),
-        depth=2, max_depth=4, seed_fan_id=None,
+        depth=2, max_depth=4, seed_fan_id=None, scan_id=SCAN,
     )
     assert outcome.skipped_followed == 0 and outcome.enqueued == 3
 
@@ -1179,7 +1204,8 @@ async def test_crawl_fan_collection_pages_all_follows(session: AsyncSession) -> 
         session, fetcher, SEED_URL, is_me=True,
         collection_client=FakeCollectionClient(),
         follows_client=FakeFollowsClient([extra]),
-    )
+        scan_id=SCAN,
+)
     n = (await session.execute(select(func.count()).select_from(Follow))).scalar_one()
     assert n == 3  # 2 embedded + 1 paged
 
@@ -1216,7 +1242,8 @@ async def test_crawl_fan_collection_pages_all_wishlist(session: AsyncSession) ->
         session, fetcher, SEED_URL, is_me=True,
         collection_client=FakeCollectionClient(wishlist=extra),
         follows_client=FakeFollowsClient(),
-    )
+        scan_id=SCAN,
+)
     wished = (await session.execute(
         select(func.count()).select_from(FanItem).where(FanItem.is_wishlist.is_(True))
     )).scalar_one()
@@ -1231,7 +1258,8 @@ async def test_follows_not_paged_for_other_fans(session: AsyncSession) -> None:
     await crawl_fan_collection(
         session, fetcher, SEED_URL, is_me=False,
         collection_client=FakeCollectionClient(), follows_client=called,
-    )
+        scan_id=SCAN,
+)
     # not is_me → follows aren't ingested at all
     n = (await session.execute(select(func.count()).select_from(Follow))).scalar_one()
     assert n == 0
@@ -1276,7 +1304,7 @@ async def test_crawl_album_ingests_supporters_and_enqueues_them(
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
     outcome = await crawl_album(
         session, fetcher, ALBUM_URL, supporters_client=FakeSupportersClient()
-    )
+    , scan_id=SCAN)
 
     assert outcome.supporters == 3
     assert await _count(session, Album) == 1
@@ -1300,7 +1328,7 @@ async def test_crawl_album_pages_extra_supporters(session: AsyncSession) -> None
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
     # The thumbs XHR yields two supporters beyond the 3 embedded in the page.
     client = FakeSupportersClient([_supporter("late_fan"), _supporter("night_owl")])
-    outcome = await crawl_album(session, fetcher, ALBUM_URL, supporters_client=client)
+    outcome = await crawl_album(session, fetcher, ALBUM_URL, supporters_client=client, scan_id=SCAN)
 
     assert outcome.supporters == 5
     assert await _count(session, AlbumSupporter) == 5
@@ -1317,7 +1345,8 @@ async def test_crawl_album_propagates_depth(session: AsyncSession) -> None:
     await crawl_album(
         session, fetcher, ALBUM_URL, depth=1, max_depth=3,
         supporters_client=FakeSupportersClient(),
-    )
+        scan_id=SCAN,
+)
     fans = (
         await session.execute(
             select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
@@ -1332,7 +1361,8 @@ async def test_crawl_album_at_max_depth_enqueues_nothing(session: AsyncSession) 
     outcome = await crawl_album(
         session, fetcher, ALBUM_URL, depth=3, max_depth=3,
         supporters_client=FakeSupportersClient(),
-    )
+        scan_id=SCAN,
+)
     assert outcome.supporters == 3  # still ingested
     assert outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
@@ -1344,7 +1374,7 @@ async def test_crawl_track_ingests_supporters_and_enqueues_them(
     fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
     outcome = await crawl_track(
         session, fetcher, TRACK_URL, supporters_client=FakeSupportersClient()
-    )
+    , scan_id=SCAN)
 
     assert outcome.kind == str(CrawlKind.TRACK)
     assert outcome.supporters == 3
@@ -1368,7 +1398,7 @@ async def test_crawl_track_ingests_supporters_and_enqueues_them(
 async def test_crawl_track_pages_extra_supporters(session: AsyncSession) -> None:
     fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
     client = FakeSupportersClient([_supporter("late_fan")])
-    outcome = await crawl_track(session, fetcher, TRACK_URL, supporters_client=client)
+    outcome = await crawl_track(session, fetcher, TRACK_URL, supporters_client=client, scan_id=SCAN)
 
     assert outcome.supporters == 4
     assert await _count(session, TrackSupporter) == 4
@@ -1379,7 +1409,8 @@ async def test_crawl_track_at_max_depth_enqueues_nothing(session: AsyncSession) 
     outcome = await crawl_track(
         session, fetcher, TRACK_URL, depth=3, max_depth=3,
         supporters_client=FakeSupportersClient(),
-    )
+        scan_id=SCAN,
+)
     assert outcome.supporters == 3  # still ingested
     assert outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
@@ -1390,11 +1421,12 @@ async def test_runner_dispatches_track_kind(
 ) -> None:
     fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
     async with sessionmaker_() as s:
-        await frontier.enqueue(s, TRACK_URL, CrawlKind.TRACK)
+        await frontier.enqueue(s, TRACK_URL, CrawlKind.TRACK, scan_id=SCAN)
         await s.commit()
 
     outcomes = await runner.run_until_empty(
         sessionmaker_, fetcher, supporters_client=FakeSupportersClient(),
+        scan_id=SCAN,
     )
     assert [o.kind for o in outcomes] == [str(CrawlKind.TRACK)]
     async with sessionmaker_() as s:
@@ -1413,7 +1445,7 @@ async def test_runner_walks_the_graph(
         "bandcamp.com/guron": FAN_HTML, "/album/": ALBUM_HTML, "/track/": TRACK_HTML,
     })
     async with sessionmaker_() as s:
-        await seed_fan_collection(s, SEED_URL)
+        await seed_fan_collection(s, SEED_URL, scan_id=SCAN)
 
     # Bound iterations: guron's collection routes to panchito + the owned track; the
     # other supporter fan pages have no fake route, so those entries error out and
@@ -1422,6 +1454,7 @@ async def test_runner_walks_the_graph(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(),
         supporters_client=FakeSupportersClient(), max_iterations=25,
+        scan_id=SCAN,
     )
 
     kinds = [o.kind for o in outcomes]
@@ -1439,7 +1472,7 @@ async def test_runner_walks_the_graph(
         # …as were the owned track's own supporters.
         assert await _count(s, TrackSupporter) == 3
         # No entries left PENDING (all DONE or ERROR).
-        assert await frontier.pending_count(s) == 0
+        assert await frontier.pending_count(s, scan_id=SCAN) == 0
 
 
 async def test_runner_threads_seed_fan_id_into_the_filter(
@@ -1452,7 +1485,7 @@ async def test_runner_threads_seed_fan_id_into_the_filter(
         fan_id = await _seed_fan_following(
             s, band_bandcamp_id=999999, band_url="https://cerebro-spinal.bandcamp.com"
         )
-        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, depth=2)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, depth=2, scan_id=SCAN)
         await s.commit()
 
     fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
@@ -1460,6 +1493,7 @@ async def test_runner_threads_seed_fan_id_into_the_filter(
         sessionmaker_, fetcher, seed_fan_id=fan_id,
         collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
         max_depth=4, max_iterations=5,
+        scan_id=SCAN,
     )
 
     assert [o.skipped_followed for o in outcomes] == [1]
@@ -1476,7 +1510,7 @@ async def test_budget_stops_the_run(
     async with sessionmaker_() as s:
         for _ in range(5):
             s.add(ProviderUsage(provider="nimble", ok=True))
-        await seed_fan_collection(s, SEED_URL)
+        await seed_fan_collection(s, SEED_URL, scan_id=SCAN)
         await s.commit()
 
     fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
@@ -1484,11 +1518,12 @@ async def test_budget_stops_the_run(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
         max_requests=5, max_iterations=25,
+        scan_id=SCAN,
     )
     assert outcomes == []  # budget exhausted before any work
     assert fetcher.calls == []
     async with sessionmaker_() as s:
-        assert await frontier.pending_count(s) == 1  # seed still pending
+        assert await frontier.pending_count(s, scan_id=SCAN) == 1  # seed still pending
 
 
 async def test_budget_helpers(session: AsyncSession) -> None:
@@ -1509,7 +1544,7 @@ async def test_runner_respects_max_depth(
         "bandcamp.com/guron": FAN_HTML, "/album/": ALBUM_HTML, "/track/": TRACK_HTML,
     })
     async with sessionmaker_() as s:
-        await seed_fan_collection(s, SEED_URL)  # depth 0
+        await seed_fan_collection(s, SEED_URL, scan_id=SCAN)  # depth 0
 
     # max_depth=1: seed (0) → owned albums/tracks (1) → album/track crawl at
     # depth 1 == max, so supporter fan-collections (depth 2) are never enqueued.
@@ -1517,6 +1552,7 @@ async def test_runner_respects_max_depth(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(),
         supporters_client=FakeSupportersClient(), max_depth=1, max_iterations=25,
+        scan_id=SCAN,
     )
 
     async with sessionmaker_() as s:
@@ -1532,4 +1568,4 @@ async def test_runner_respects_max_depth(
         # Supporters were still ingested from the album and track pages.
         assert await _count(s, AlbumSupporter) == 3
         assert await _count(s, TrackSupporter) == 3
-        assert await frontier.pending_count(s) == 0
+        assert await frontier.pending_count(s, scan_id=SCAN) == 0

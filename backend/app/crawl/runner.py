@@ -135,13 +135,13 @@ async def process_one(
     session: AsyncSession,
     fetcher: Fetcher,
     *,
+    scan_id: int,
     seed_url: str | None = None,
     seed_fan_id: int | None = None,
     collection_client: CollectionApiClient | None = None,
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
-    scan_id: int | None = None,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> CrawlOutcome | None:
     """Claim and process a single frontier entry. Returns None if none pending."""
@@ -185,6 +185,7 @@ async def run_until_empty(
     sessionmaker: async_sessionmaker[AsyncSession],
     fetcher: Fetcher,
     *,
+    scan_id: int,
     seed_url: str | None = None,
     seed_fan_id: int | None = None,
     collection_client: CollectionApiClient | None = None,
@@ -193,7 +194,6 @@ async def run_until_empty(
     max_depth: int | None = None,
     max_requests: int | None = None,
     max_iterations: int = 1000,
-    scan_id: int | None = None,
     concurrency: int = 1,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> list[CrawlOutcome]:
