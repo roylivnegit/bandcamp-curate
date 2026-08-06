@@ -306,17 +306,16 @@ async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:
 
 
 class FakeCollectionClient:
-    """The collection/wishlist XHRs return nothing extra beyond the embedded page."""
+    """The collection/wishlist XHRs return nothing extra beyond the embedded page,
+    so every page is empty and `more_available` is false — one visit finishes."""
 
-    async def iter_items(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
-        return
-        yield  # pragma: no cover
+    async def fetch_page(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+        return [], None, False
 
 
 class FakeFollowsClient:
-    async def iter_bands(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
-        return
-        yield  # pragma: no cover
+    async def fetch_page(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+        return [], None, False
 
 
 async def _run_collection_scan(sessionmaker_, user_id: int, scan_id: int):  # noqa: ANN001,ANN202

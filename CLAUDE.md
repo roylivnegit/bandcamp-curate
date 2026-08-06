@@ -79,6 +79,22 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   budget, exactly like renders. `build_pagination_clients(gateway, via_nimble=…)` wires the worker +
   CLI; flip `PAGINATION_VIA_NIMBLE=false` for the free direct path. `FetchRequest.cache_key` now folds
   in an `extra` digest so same-URL POSTs don't collide in the cache.
+- **Pagination is bounded per visit and resumable** (`service.PAGES_PER_VISIT = 10`). A visit to a
+  fan collection spends at most 10 pagination requests and **commits after every page**; leftover
+  tokens come back as `CrawlOutcome.cursor` and the runner parks the entry back as PENDING carrying
+  them (`frontier.mark_partial` → `crawl_frontier.cursor`, JSON `{fan_id, collection, wishlist,
+  follows}`, migration `0009`). A resumed visit **skips the fan-page render** — the cursor holds
+  everything needed, so it costs only its pagination. `claim_next` now orders by `priority DESC,
+  attempts ASC, id ASC`: `attempts` makes the queue sweep in *passes*, so every collection gets a
+  bounded slice before any gets a second, instead of one whale monopolising the crawl.
+  - **Why:** collections are big (p90 ≈ 1,700 items ≈ 43 pages) and the old loop accumulated every
+    page in memory, committing once at the end. On 2026-08-06 that blew past ARQ's `job_timeout`
+    (600s) twice: **245 Nimble credits spent, zero rows persisted**, frontier counts unmoved.
+    Per-page commits mean an interruption now costs one page, not the whole collection.
+  - Newly discovered work (`attempts=0`) still outranks a parked collection (`attempts=1`), so a
+    pass discovers broadly and then spends the budget tag-crawling what it found. Note that
+    `run_scan`'s own-collection branch is NOT frontier-backed, so it drains visits in a loop
+    (`MAX_COLLECTION_VISITS`) — your wishlist/follows must be complete or curation under-excludes.
 - **Fan-out is bounded by depth** (`crawl_frontier.depth`, seed=0; `crawl_max_depth` config,
   default 3) **and by a request budget** (`crawl_max_requests`, default 100 = cumulative successful
   provider fetches; enforced in `runner.run_until_empty` + the ARQ `crawl_next` chain). Ingest

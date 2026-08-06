@@ -345,6 +345,13 @@ class CrawlFrontier(Base, TimestampMixin):
     # Distance from the seed (seed=0). Bounds the supporter→collection fan-out.
     depth: Mapped[int] = mapped_column(Integer, default=0, index=True)
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Resumable-pagination bookmark. A fan collection can run to thousands of items
+    # (p90 here is ~1,700), far more than one job should page in one sitting, so a
+    # visit pages a bounded slice and parks the next-page tokens here; the entry
+    # stays PENDING and the next visit resumes from them instead of restarting.
+    # NULL = nothing in flight (never visited, or fully paged).
+    # Shape: {"collection": tok|None, "wishlist": tok|None, "follows": tok|None}
+    cursor: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class ProviderUsage(Base):

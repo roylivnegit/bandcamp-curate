@@ -29,9 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bandcamp.collection_api import WISHLIST_ITEMS_URL, CollectionApiClient
 from app.bandcamp.follows_api import FollowsApiClient
 from app.bandcamp.mapper import (
+    get_or_create_fan,
     ingest_album,
     ingest_album_supporters,
-    ingest_fan_collection,
+    ingest_follows_batch,
+    ingest_items_batch,
     ingest_track_page,
     ingest_track_supporters,
 )
@@ -45,7 +47,7 @@ from app.bandcamp.parse import (
 from app.bandcamp.supporters_api import SupportersApiClient
 from app.bandcamp.urls import url_host
 from app.crawl.frontier import enqueue
-from app.db.models import Album, Band, Follow, Track
+from app.db.models import Album, Band, CrawlFrontier, Fan, Follow, Track
 from app.enums import CrawlKind
 from app.scraping.base import FetchRequest, FetchResult
 
@@ -58,6 +60,19 @@ logger = logging.getLogger("crate_digger.crawl")
 # wasted credits. 2 = "the collections of my albums' supporters" — everything
 # shallower (my own collection at 0, its albums at 1) is always crawled in full.
 FOLLOWED_FILTER_MIN_DEPTH = 2
+
+# Pagination requests one visit to a fan collection may spend before it parks
+# itself and lets the rest of the frontier have a turn. Collections are big
+# (p90 ≈ 1,700 items ≈ 43 pages), and paging one to the end in a single job is
+# what blew past ARQ's `job_timeout` and threw the whole collection away. A
+# bounded slice per visit keeps every job short, and the leftover tokens
+# (`CrawlOutcome.cursor` → `crawl_frontier.cursor`) resume the rest next pass.
+PAGES_PER_VISIT = 10
+
+# The three independently-paginated lists behind one fan page. Only `collection`
+# is paged for other people; the wishlist and follows lists matter for your own
+# account, where they gate curation's exclusions.
+_CURSOR_STREAMS = ("collection", "wishlist", "follows")
 
 
 class Fetcher(Protocol):
@@ -87,6 +102,9 @@ class CrawlOutcome:
     enqueued: int = 0  # new frontier rows added
     skipped_followed: int = 0  # owned items not enqueued — band already followed
     fan_id: int | None = None  # the ingested Fan's id (fan collection only)
+    # Left-over pagination tokens when a fan collection outran its page budget.
+    # None = fully paged. The runner parks a cursored entry back as PENDING.
+    cursor: dict | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -180,6 +198,43 @@ def kind_for_url(url: str) -> CrawlKind | None:
     return _URL_KIND[m.group(1).lower()] if m else None
 
 
+async def _enqueue_items(
+    session: AsyncSession,
+    items: list[ParsedItem],
+    *,
+    depth: int,
+    max_depth: int | None,
+    followed: FollowedBands,
+) -> tuple[int, int]:
+    """Enqueue one page of owned items as ALBUM/TRACK crawls → (enqueued, skipped).
+
+    Kind comes from the URL (`kind_for_url`), never `item_type`. Items by an
+    artist/label the seed fan already follows are counted as skipped, not queued.
+    """
+    if not _within_depth(depth, max_depth):
+        return 0, 0
+    enqueued = skipped = 0
+    for item in items:
+        if not item.url:
+            continue
+        kind = kind_for_url(item.url)
+        if kind is None:  # not a release page — don't guess a parser for it
+            logger.debug("not enqueuing %s: neither an album nor a track URL", item.url)
+            continue
+        if followed and followed.covers(item):
+            skipped += 1
+            continue
+        if await enqueue(session, item.url, kind, depth=depth + 1):
+            enqueued += 1
+    return enqueued, skipped
+
+
+def _next_token(current: str | None, nxt: str | None, more: bool) -> str | None:
+    """The token to page from next, or None when this stream is exhausted.
+    Guards against a provider echoing the same token back forever."""
+    return nxt if (more and nxt and nxt != current) else None
+
+
 async def crawl_fan_collection(
     session: AsyncSession,
     fetcher: Fetcher,
@@ -191,87 +246,153 @@ async def crawl_fan_collection(
     depth: int = 0,
     max_depth: int | None = None,
     seed_fan_id: int | None = None,
+    cursor: dict | None = None,
+    pages_per_visit: int = PAGES_PER_VISIT,
+    entry: CrawlFrontier | None = None,
 ) -> CrawlOutcome:
-    """Fetch a fan page, ingest their whole collection, and enqueue each owned item.
+    """Ingest a bounded slice of a fan's collection and enqueue what it reveals.
 
-    The rendered page gives the first page + fan_id + pagination token; the rest is
-    pulled by mimicking the `collection_items` XHR (deterministic, no auto-scroll).
-    For your own account (`is_me`) we also page the *full* follows list so curation
-    can exclude every artist/label you follow (the page embeds only the first ~45).
+    A visit spends at most `pages_per_visit` pagination requests and **commits
+    after every page**, so the work already done survives a timeout, a restart,
+    or a crash. If the collection outruns the budget, the leftover tokens come
+    back as `outcome.cursor`; the runner parks the entry as PENDING carrying
+    them, and a later pass resumes from exactly there (see `frontier.mark_partial`).
+    Collections are large — p90 in our data is ~1,700 items ≈ 43 pages — so this
+    is the normal path, not an edge case.
+
+    First visit (`cursor is None`) renders the fan page: that's where the fan_id,
+    the embedded first page, and the initial tokens live. **Resuming skips the
+    render entirely** — the tokens carry everything needed, so a resumed visit
+    costs only its pagination.
+
     Owned items are enqueued at `depth + 1` (capped by `max_depth`) as ALBUM or
     TRACK per `kind_for_url` — the item's *URL*, not its `item_type`, which lies
-    often enough to corrupt data (see that function). Items whose URL is neither
-    are skipped rather than crawled with a guessed parser.
+    often enough to corrupt data. For your own account (`is_me`) the wishlist and
+    follows lists are paged too, from the same budget, since both gate curation.
 
     `seed_fan_id` is the fan the walk is *for* (the scan owner's own Fan). From
     `FOLLOWED_FILTER_MIN_DEPTH` down, items by an artist/label that fan already
     follows are still ingested — the ownership edge is the co-ownership signal —
     but are not enqueued for a detail crawl, since curation excludes them anyway.
     Passing None (the legacy operator crawl) disables the filter.
+
+    Pass the frontier `entry` to have the bookmark **checkpointed into each page's
+    commit**, so a crash leaves the position as durable as the data. Without it the
+    cursor is only returned at the end, and an interruption re-buys the whole
+    visit's pages on the next run.
     """
-    result = await fetcher.fetch(fan_collection_request(url))
-    if not result.html:
-        raise ValueError(f"no HTML returned for fan page {url}")
+    col_client = collection_client or CollectionApiClient()
+    fol_client = follows_client or FollowsApiClient()
 
-    fc = parse_fan_page(result.html)
+    followed = EMPTY_FOLLOWS
+    if depth >= FOLLOWED_FILTER_MIN_DEPTH and seed_fan_id is not None:
+        followed = await followed_bands(session, seed_fan_id)
 
-    # Page through the remainder of the collection via the XHR API.
-    client = collection_client or CollectionApiClient()
-    if fc.more_available and fc.last_token and fc.fan.fan_id:
-        seen = {i.item_id for i in fc.items}
-        async for item in client.iter_items(fc.fan.fan_id, fc.last_token):
-            if item.item_id not in seen:
-                seen.add(item.item_id)
-                fc.items.append(item)
+    ingested = enqueued = skipped = 0
+    fan: Fan
+    bc_fan_id: int
+    tokens: dict[str, str | None]
 
-    # Page through the rest of my wishlist too (is_me only — it gates curation).
-    if is_me and fc.wishlist_more_available and fc.wishlist_last_token and fc.fan.fan_id:
-        seen_w = {i.item_id for i in fc.wishlist}
-        async for item in client.iter_items(
-            fc.fan.fan_id, fc.wishlist_last_token, url=WISHLIST_ITEMS_URL
-        ):
-            if item.item_id not in seen_w:
-                seen_w.add(item.item_id)
-                fc.wishlist.append(item)
+    def snapshot() -> dict | None:
+        """The resume bookmark for the tokens as they stand, or None if exhausted."""
+        return {"fan_id": bc_fan_id, **tokens} if any(tokens.values()) else None
 
-    # Page through the rest of my follows (only relevant for is_me — they gate curation).
-    if is_me and fc.follows_more_available and fc.follows_last_token and fc.fan.fan_id:
-        fclient = follows_client or FollowsApiClient()
-        seen_bands = {b.bandcamp_id for b in fc.follows}
-        async for band in fclient.iter_bands(fc.fan.fan_id, fc.follows_last_token):
-            if band.bandcamp_id not in seen_bands:
-                seen_bands.add(band.bandcamp_id)
-                fc.follows.append(band)
+    async def checkpoint() -> None:
+        """Commit the page's work AND its bookmark together, so an interruption
+        can never leave ingested pages the next run doesn't know it already has."""
+        if entry is not None:
+            entry.cursor = snapshot()
+        await session.commit()
 
-    counts = await ingest_fan_collection(session, fc, is_me=is_me)
+    async def absorb(batch: list[ParsedItem], *, is_wishlist: bool = False) -> None:
+        """Ingest a page, queue what it reveals, checkpoint — one durable unit.
+        Callers must advance `tokens` BEFORE calling, so the bookmark committed
+        here means "everything up to and including this page is ingested"."""
+        nonlocal ingested, enqueued, skipped
+        ingested += await ingest_items_batch(session, fan, batch, is_wishlist=is_wishlist)
+        if not is_wishlist:
+            e, s = await _enqueue_items(
+                session, batch, depth=depth, max_depth=max_depth, followed=followed
+            )
+            enqueued += e
+            skipped += s
+        await checkpoint()
 
-    enqueued = 0
-    skipped = 0
-    if _within_depth(depth, max_depth):
-        followed = EMPTY_FOLLOWS
-        if depth >= FOLLOWED_FILTER_MIN_DEPTH and seed_fan_id is not None:
-            followed = await followed_bands(session, seed_fan_id)
-        for item in fc.items:
-            if not item.url:
-                continue
-            kind = kind_for_url(item.url)
-            if kind is None:  # not a release page — don't guess a parser for it
-                logger.debug("not enqueuing %s: neither an album nor a track URL", item.url)
-                continue
-            if followed and followed.covers(item):
-                skipped += 1
-                continue
-            if await enqueue(session, item.url, kind, depth=depth + 1):
-                enqueued += 1
-    await session.commit()
+    if cursor:
+        # Resuming: no render needed, the cursor holds the fan and the tokens.
+        bc_fan_id = cursor["fan_id"]
+        found = (
+            await session.execute(select(Fan).where(Fan.bandcamp_fan_id == bc_fan_id))
+        ).scalar_one_or_none()
+        if found is None:
+            raise ValueError(f"cannot resume {url}: fan {bc_fan_id} was never ingested")
+        fan = found
+        tokens = {k: cursor.get(k) for k in _CURSOR_STREAMS}
+    else:
+        result = await fetcher.fetch(fan_collection_request(url))
+        if not result.html:
+            raise ValueError(f"no HTML returned for fan page {url}")
+        fc = parse_fan_page(result.html)
+        bc_fan_id = fc.fan.fan_id
+        fan = await get_or_create_fan(
+            session, fc.fan.fan_id, fc.fan.username,
+            name=fc.fan.name, url=fc.fan.url, is_me=is_me,
+        )
+        # Tokens first: `absorb` checkpoints them, so they must already describe
+        # what remains AFTER the embedded page it's about to ingest.
+        tokens = {
+            "collection": _next_token(None, fc.last_token, fc.more_available),
+            "wishlist": _next_token(None, fc.wishlist_last_token, fc.wishlist_more_available)
+            if is_me else None,
+            "follows": _next_token(None, fc.follows_last_token, fc.follows_more_available)
+            if is_me else None,
+        }
+        # The page embeds the first page of each list — free with the render.
+        await absorb(fc.items)
+        if is_me:
+            await absorb(fc.wishlist, is_wishlist=True)
+            await ingest_follows_batch(session, fan, fc.follows)
+            await checkpoint()
+
+    # Spend the visit's page budget: collection first, then (is_me only) the
+    # wishlist and follows lists that gate curation.
+    pages_left = pages_per_visit
+    while pages_left > 0 and tokens["collection"]:
+        batch, nxt, more = await col_client.fetch_page(bc_fan_id, tokens["collection"])
+        pages_left -= 1
+        tokens["collection"] = _next_token(tokens["collection"], nxt, more)
+        await absorb(batch)
+
+    while is_me and pages_left > 0 and tokens["wishlist"]:
+        batch, nxt, more = await col_client.fetch_page(
+            bc_fan_id, tokens["wishlist"], url=WISHLIST_ITEMS_URL
+        )
+        pages_left -= 1
+        tokens["wishlist"] = _next_token(tokens["wishlist"], nxt, more)
+        await absorb(batch, is_wishlist=True)
+
+    while is_me and pages_left > 0 and tokens["follows"]:
+        bands, nxt, more = await fol_client.fetch_page(bc_fan_id, tokens["follows"])
+        pages_left -= 1
+        tokens["follows"] = _next_token(tokens["follows"], nxt, more)
+        await ingest_follows_batch(session, fan, bands)
+        await checkpoint()
+
+    leftover = snapshot()
+    if leftover is not None:
+        logger.info(
+            "%s paged out at %d pages; resuming later from %s",
+            url, pages_per_visit, {k: bool(v) for k, v in tokens.items()},
+        )
 
     return CrawlOutcome(
         url=url,
         kind=str(CrawlKind.FAN_COLLECTION),
-        items=counts.fan_items,
+        items=ingested,
         enqueued=enqueued,
         skipped_followed=skipped,
-        fan_id=counts.fan_id,
+        fan_id=fan.id,
+        cursor=leftover,
     )
 
 

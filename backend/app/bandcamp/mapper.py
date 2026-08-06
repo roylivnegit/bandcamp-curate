@@ -230,6 +230,39 @@ async def upsert_follow(session: AsyncSession, band: Band, *, fan_id: int) -> bo
     return True
 
 
+async def ingest_items_batch(
+    session: AsyncSession, fan: Fan, items: list[ParsedItem], *, is_wishlist: bool = False
+) -> int:
+    """Ingest ONE page of collection items. Returns new ownership edges created.
+
+    Flushes but does NOT commit — the caller commits once per page, together with
+    the frontier rows those items reveal, so a page lands atomically or not at all.
+    Committing per page is what makes a long pagination resumable: a fan with
+    2,000 items is ~50 pages, and if the job dies at page 40 the first 39 pages
+    are already durable. The old whole-collection ingest accumulated everything
+    in memory and committed once at the end, so any interruption discarded the
+    lot — and the Nimble credits that paid for it.
+    """
+    counts = IngestCounts()
+    for item in items:
+        await ingest_item(session, fan, item, counts, is_wishlist=is_wishlist)
+    await session.flush()
+    return counts.fan_items
+
+
+async def ingest_follows_batch(
+    session: AsyncSession, fan: Fan, bands: list[ParsedBand]
+) -> int:
+    """Ingest one page of followed bands. Returns new follows created. Caller commits."""
+    created = 0
+    for pb in bands:
+        band = await get_or_create_band(session, pb)
+        if band is not None and await upsert_follow(session, band, fan_id=fan.id):
+            created += 1
+    await session.flush()
+    return created
+
+
 async def ingest_fan_collection(
     session: AsyncSession, fc: FanCollection, *, is_me: bool = False
 ) -> IngestCounts:
