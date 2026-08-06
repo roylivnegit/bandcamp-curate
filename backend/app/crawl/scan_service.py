@@ -42,6 +42,10 @@ SELF_FAN_PRIORITY = 100  # the owner's own collection drains first (cf. seed.SEE
 # is one ~30s round, not 50 sequential fetches.
 SCAN_SLICE_ENTRIES = 10
 
+# Entries offered per worker within a slice. >1 so workers loop and the slice's
+# time bound is re-checked between entries rather than only at the start.
+ENTRIES_PER_WORKER = 8
+
 # Backstop on the chain so a bug can't schedule slices forever. At 10 entries each
 # that's 100k entries — far past any real scan, which stops on the credit budget.
 MAX_SCAN_SLICES = 10_000
@@ -274,12 +278,14 @@ async def advance_scan(
     """
     plan = await start_scan(sessionmaker, scan_id)  # idempotent
 
-    # A slice must offer at least as many entries as there are workers, or the
-    # workers starve: with slice_entries=10 and concurrency=50, ten crawl and forty
-    # return immediately, so the effective parallelism is the slice bound. These
-    # two were set in different PRs for different reasons and never reconciled —
-    # the slice exists to bound job *duration*, which parallelism already shortens.
-    slice_entries = max(slice_entries, concurrency)
+    # Entries are the safety cap; TIME is the real bound (`slice_seconds`). Offer
+    # workers several entries each so they keep cycling and the deadline actually
+    # gets checked between entries — at exactly one entry per worker every worker
+    # is busy from the first instant, the deadline is never re-consulted, and the
+    # slice runs as long as its slowest entry (a fan collection is 11 sequential
+    # fetches). That produced 4-minute slices which never completed, so the
+    # post-slice curate never ran and the live feed stayed empty.
+    slice_entries = max(slice_entries, concurrency * ENTRIES_PER_WORKER)
 
     # `seed_fan_id` is fixed for the whole slice, but the owner's Fan doesn't exist
     # until their own page is ingested — so on a first-ever collection scan a

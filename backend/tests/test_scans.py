@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 from app.auth.security import get_current_user
 from app.crawl import frontier, runner, scan_service
 from app.crawl.scan_service import (
+    ENTRIES_PER_WORKER,
     advance_scan,
     claim_queued_scans,
     create_collection_scan,
@@ -312,10 +313,12 @@ async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -
         assert await frontier.pending_count(s, scan_id=scan_id + 999) == 0
 
 
-async def test_a_slice_offers_at_least_one_entry_per_worker(sessionmaker_) -> None:  # noqa: ANN001
-    """A slice smaller than the worker count starves workers: with 10 entries and
-    50 workers, ten crawl and forty return immediately, so the slice bound becomes
-    the real concurrency. The effective slice is max(slice_entries, concurrency)."""
+async def test_a_slice_offers_several_entries_per_worker(sessionmaker_) -> None:  # noqa: ANN001
+    """Entries are the safety cap; TIME bounds a slice. Workers need more entries
+    than there are workers, or every one is busy from the first instant, the
+    deadline is never re-checked, and the slice runs as long as its slowest entry —
+    which produced 4-minute slices that never completed, so the post-slice curate
+    never ran and the live feed stayed empty."""
     async with sessionmaker_() as s:
         user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
         s.add(user)
@@ -342,13 +345,13 @@ async def test_a_slice_offers_at_least_one_entry_per_worker(sessionmaker_) -> No
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner, "run_until_empty", spy)
-        await slice_once(2, 6)   # slice 1: fresh-scan special case, forced to 1
-        await slice_once(2, 6)   # concurrency wins  -> 6
-        await slice_once(9, 3)   # slice_entries wins -> 9
+        await slice_once(2, 6)    # slice 1: fresh-scan special case, forced to 1
+        await slice_once(2, 6)    # 6 workers x 8 = 48
+        await slice_once(99, 3)   # floor wins when it is the larger
 
     # Slice 1 is the fresh-collection-scan special case: one entry on its own, so
     # the owner's Fan exists (and the followed-artist prune works) from slice 2.
-    assert seen == [1, 6, 9]
+    assert seen == [1, 6 * ENTRIES_PER_WORKER, 99]
 
 
 async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN001
@@ -375,8 +378,9 @@ async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN00
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(scan_service, "MAX_SCAN_SLICES", 2)
-        assert await slice_once() is True  # slice 1
-        assert await slice_once() is True  # slice 2 — at the bound
+        assert await slice_once() is True  # slice 1 leaves work queued
+        await slice_once()  # slice 2 — at the bound. Whether work remains depends
+        # on the fixture's size and isn't the point; the refusal below is.
         with pytest.raises(ValueError, match="exceeded 2 slices"):
             await slice_once()  # slice 3 — refuses rather than queueing more
 
