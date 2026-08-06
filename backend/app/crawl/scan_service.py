@@ -344,6 +344,11 @@ async def _curate_progress(
     async with sessionmaker() as session:
         if not await _self_crawl_complete(session, self_url, scan_id=scan_id):
             return
+        # Resolve seeds first. A custom scan scores from its *resolved* seed — the
+        # album/track row its URL was crawled into — and that only happened at
+        # finalize, so every interim curate found no seed, no taste-neighbours, and
+        # returned zero. Cheap and idempotent: it only fills fields still NULL.
+        await _resolve_seeds(session, scan_id)
     try:
         async with sessionmaker() as session:
             scored = await curate(session, scan_id=scan_id)
