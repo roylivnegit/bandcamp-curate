@@ -22,6 +22,7 @@ from app.crawl.service import (
     crawl_fan_collection,
     crawl_track,
     followed_bands,
+    kind_for_url,
 )
 from app.db.base import Base
 from app.db.models import (
@@ -216,6 +217,93 @@ async def test_crawl_fan_collection_at_max_depth_enqueues_nothing(
     )
     assert outcome.items == 2 and outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
+
+
+# ── Frontier kind comes from the URL, never from item_type ─────────────────────
+
+
+def _track_item(item_id: int, url: str) -> ParsedItem:
+    """A "track"-typed collection item — which is what `parse_collection_item`
+    calls anything Bandcamp doesn't label an "album", `package` (vinyl/CD) included."""
+    return ParsedItem(
+        item_id=item_id, item_type="track",
+        band=ParsedBand(bandcamp_id=item_id + 1, name="Paged Band"),
+        title="A Package", url=url,
+    )
+
+
+def test_kind_for_url() -> None:
+    assert kind_for_url("https://b.bandcamp.com/album/x") == CrawlKind.ALBUM
+    assert kind_for_url("https://b.bandcamp.com/track/x") == CrawlKind.TRACK
+    assert kind_for_url("https://B.BANDCAMP.COM/Album/X") == CrawlKind.ALBUM  # case-insensitive
+    # Neither → None, so the caller skips rather than guessing a parser.
+    assert kind_for_url("https://b.bandcamp.com/merch/x") is None
+    assert kind_for_url("https://bandcamp.com/guron") is None
+    assert kind_for_url("https://b.bandcamp.com/album") is None  # no slug
+    assert kind_for_url("not a url") is None
+
+
+async def test_track_typed_item_with_album_url_enqueues_as_album(
+    session: AsyncSession,
+) -> None:
+    """Regression: a vinyl/`package` purchase arrives as item_type "track" carrying
+    the /album/ URL. Enqueueing it as TRACK sends album HTML to `parse_track_page`,
+    which silently writes a phantom Track under the *album's* id with the album's
+    supporters attached. Route on the URL: it's an album page, so crawl it as one."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    package = _track_item(555001, "https://paged.bandcamp.com/album/vinyl-reissue")
+
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=FakeCollectionClient([package])
+    )
+
+    entry = (
+        await session.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.url == "https://paged.bandcamp.com/album/vinyl-reissue"
+            )
+        )
+    ).scalar_one()
+    assert entry.kind == CrawlKind.ALBUM  # NOT TRACK, despite item_type == "track"
+
+
+async def test_album_typed_item_with_track_url_enqueues_as_track(
+    session: AsyncSession,
+) -> None:
+    # The mirror case — the URL wins in both directions, so there's no path where
+    # a page reaches the parser built for the other kind.
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    mislabelled = _album_item(555001, "https://paged.bandcamp.com/track/single")
+
+    await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=FakeCollectionClient([mislabelled])
+    )
+
+    entry = (
+        await session.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.url == "https://paged.bandcamp.com/track/single"
+            )
+        )
+    ).scalar_one()
+    assert entry.kind == CrawlKind.TRACK
+
+
+async def test_non_release_url_is_ingested_but_never_enqueued(
+    session: AsyncSession,
+) -> None:
+    # A URL that's neither /album/ nor /track/ has no parser we can trust, so it is
+    # ingested (ownership still counts) but never handed to one.
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    merch = _track_item(555001, "https://paged.bandcamp.com/merch/t-shirt")
+
+    outcome = await crawl_fan_collection(
+        session, fetcher, SEED_URL, collection_client=FakeCollectionClient([merch])
+    )
+
+    assert outcome.items == 3  # ingested like any other owned item
+    assert outcome.enqueued == 2  # only the fixture's own album + track
+    assert await _frontier_urls(session) == {ALBUM_URL, TRACK_URL}
 
 
 # ── Followed-artist pruning (depth ≥ FOLLOWED_FILTER_MIN_DEPTH) ────────────────

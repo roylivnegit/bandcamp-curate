@@ -18,6 +18,8 @@ Operations take a `Fetcher` (satisfied by `ScraperGateway`) so they can be unit
 tested against a fake that replays saved fixtures — no live credits spent.
 """
 
+import logging
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -46,6 +48,8 @@ from app.crawl.frontier import enqueue
 from app.db.models import Album, Band, Follow, Track
 from app.enums import CrawlKind
 from app.scraping.base import FetchRequest, FetchResult
+
+logger = logging.getLogger("crate_digger.crawl")
 
 # From this depth down, a neighbour's owned item whose artist/label the seed fan
 # already follows is ingested but NOT enqueued for a detail crawl. Its ownership
@@ -151,6 +155,31 @@ def _within_depth(depth: int, max_depth: int | None) -> bool:
     return max_depth is None or depth < max_depth
 
 
+# A Bandcamp release URL: /album/<slug> or /track/<slug> on any host.
+_ITEM_PATH_RE = re.compile(r"^https?://[^/]+/(album|track)/", re.IGNORECASE)
+_URL_KIND = {"album": CrawlKind.ALBUM, "track": CrawlKind.TRACK}
+
+
+def kind_for_url(url: str) -> CrawlKind | None:
+    """The crawl kind a URL's own path implies — None if it's neither.
+
+    Route the frontier on this, never on a collection item's `item_type`. The two
+    disagree routinely, and only the URL can be trusted here: `item_type` describes
+    the *item you own*, while the frontier's kind picks the *parser*, and each
+    parser reads the release id straight off the page it's given.
+
+    `parse_collection_item` labels anything Bandcamp doesn't call an "album" a
+    track — which sweeps in `package` items (vinyl/CD), whose URL is the /album/
+    page. Handing that to `parse_track_page` doesn't fail; it reads the album's
+    tralbum id and writes a phantom Track under it, carrying the album's supporters
+    as TrackSupporters. Curation then scores that ghost against the real album, and
+    one-per-band dedup can let it win. It also defeats the frontier's (url, kind)
+    dedup, so the page is rendered twice.
+    """
+    m = _ITEM_PATH_RE.match(url)
+    return _URL_KIND[m.group(1).lower()] if m else None
+
+
 async def crawl_fan_collection(
     session: AsyncSession,
     fetcher: Fetcher,
@@ -169,8 +198,10 @@ async def crawl_fan_collection(
     pulled by mimicking the `collection_items` XHR (deterministic, no auto-scroll).
     For your own account (`is_me`) we also page the *full* follows list so curation
     can exclude every artist/label you follow (the page embeds only the first ~45).
-    Owned albums (ALBUM) and owned standalone tracks (TRACK) are both enqueued at
-    `depth + 1`, capped by `max_depth`.
+    Owned items are enqueued at `depth + 1` (capped by `max_depth`) as ALBUM or
+    TRACK per `kind_for_url` — the item's *URL*, not its `item_type`, which lies
+    often enough to corrupt data (see that function). Items whose URL is neither
+    are skipped rather than crawled with a guessed parser.
 
     `seed_fan_id` is the fan the walk is *for* (the scan owner's own Fan). From
     `FOLLOWED_FILTER_MIN_DEPTH` down, items by an artist/label that fan already
@@ -223,15 +254,15 @@ async def crawl_fan_collection(
         for item in fc.items:
             if not item.url:
                 continue
+            kind = kind_for_url(item.url)
+            if kind is None:  # not a release page — don't guess a parser for it
+                logger.debug("not enqueuing %s: neither an album nor a track URL", item.url)
+                continue
             if followed and followed.covers(item):
                 skipped += 1
                 continue
-            if item.item_type == "album":
-                if await enqueue(session, item.url, CrawlKind.ALBUM, depth=depth + 1):
-                    enqueued += 1
-            elif item.item_type == "track":
-                if await enqueue(session, item.url, CrawlKind.TRACK, depth=depth + 1):
-                    enqueued += 1
+            if await enqueue(session, item.url, kind, depth=depth + 1):
+                enqueued += 1
     await session.commit()
 
     return CrawlOutcome(
