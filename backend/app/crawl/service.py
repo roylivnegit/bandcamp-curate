@@ -101,6 +101,7 @@ class CrawlOutcome:
     supporters: int = 0  # supporter edges ingested (album)
     enqueued: int = 0  # new frontier rows added
     skipped_followed: int = 0  # owned items not enqueued — band already followed
+    reused: bool = False  # completed from another scan's crawl, no fetch spent
     fan_id: int | None = None  # the ingested Fan's id (fan collection only)
     # Left-over pagination tokens when a fan collection outran its page budget.
     # None = fully paged. The runner parks a cursored entry back as PENDING.
@@ -205,6 +206,7 @@ async def _enqueue_items(
     depth: int,
     max_depth: int | None,
     followed: FollowedBands,
+    scan_id: int,
 ) -> tuple[int, int]:
     """Enqueue one page of owned items as ALBUM/TRACK crawls → (enqueued, skipped).
 
@@ -224,7 +226,7 @@ async def _enqueue_items(
         if followed and followed.covers(item):
             skipped += 1
             continue
-        if await enqueue(session, item.url, kind, depth=depth + 1):
+        if await enqueue(session, item.url, kind, scan_id=scan_id, depth=depth + 1):
             enqueued += 1
     return enqueued, skipped
 
@@ -249,6 +251,7 @@ async def crawl_fan_collection(
     cursor: dict | None = None,
     pages_per_visit: int = PAGES_PER_VISIT,
     entry: CrawlFrontier | None = None,
+    scan_id: int,
 ) -> CrawlOutcome:
     """Ingest a bounded slice of a fan's collection and enqueue what it reveals.
 
@@ -312,7 +315,8 @@ async def crawl_fan_collection(
         ingested += await ingest_items_batch(session, fan, batch, is_wishlist=is_wishlist)
         if not is_wishlist:
             e, s = await _enqueue_items(
-                session, batch, depth=depth, max_depth=max_depth, followed=followed
+                session, batch, depth=depth,
+                max_depth=max_depth, followed=followed, scan_id=scan_id,
             )
             enqueued += e
             skipped += s
@@ -404,6 +408,7 @@ async def crawl_album(
     depth: int = 0,
     max_depth: int | None = None,
     supporters_client: SupportersApiClient | None = None,
+    scan_id: int,
 ) -> CrawlOutcome:
     """Fetch an album page, ingest album/tracks/tags/supporters, enqueue supporters.
 
@@ -441,7 +446,7 @@ async def crawl_album(
     if _within_depth(depth, max_depth):
         for s in sup.supporters:
             if s.url and await enqueue(
-                session, s.url, CrawlKind.FAN_COLLECTION, depth=depth + 1
+                session, s.url, CrawlKind.FAN_COLLECTION, scan_id=scan_id, depth=depth + 1
             ):
                 enqueued += 1
     await session.commit()
@@ -463,6 +468,7 @@ async def crawl_track(
     depth: int = 0,
     max_depth: int | None = None,
     supporters_client: SupportersApiClient | None = None,
+    scan_id: int,
 ) -> CrawlOutcome:
     """Fetch a standalone track page, ingest track/band/tags/supporters, enqueue
     supporters. Mirrors `crawl_album` but scoped to one track — its own supporters
@@ -499,7 +505,7 @@ async def crawl_track(
     if _within_depth(depth, max_depth):
         for s in sup.supporters:
             if s.url and await enqueue(
-                session, s.url, CrawlKind.FAN_COLLECTION, depth=depth + 1
+                session, s.url, CrawlKind.FAN_COLLECTION, scan_id=scan_id, depth=depth + 1
             ):
                 enqueued += 1
     await session.commit()

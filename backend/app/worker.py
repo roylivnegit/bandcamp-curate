@@ -26,7 +26,7 @@ from arq.connections import RedisSettings
 
 from app.config import get_settings
 from app.crawl import frontier, runner, scan_service
-from app.crawl.seed import seed_fan_collection
+from app.crawl.seed import operator_scan_id, seed_fan_collection
 from app.crawl.service import build_pagination_clients
 from app.db.session import get_sessionmaker
 from app.scraping.factory import build_gateway
@@ -48,19 +48,26 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["seed_url"] = settings.bandcamp_fan_url
     ctx["max_depth"] = settings.crawl_max_depth
     ctx["max_requests"] = settings.crawl_max_requests
+    ctx["concurrency"] = settings.crawl_concurrency
 
 
 async def seed_crawl(ctx: dict[str, Any], url: str | None = None) -> str:
     """Enqueue the seed fan collection and start the crawl chain."""
     async with ctx["sessionmaker"]() as session:
-        seed_url = await seed_fan_collection(session, url, settings=ctx["settings"])
-    await ctx["redis"].enqueue_job("crawl_next")
+        scan_id = await operator_scan_id(session)
+        seed_url = await seed_fan_collection(
+            session, url, settings=ctx["settings"], scan_id=scan_id
+        )
+    await ctx["redis"].enqueue_job("crawl_next", scan_id)
     logger.info("seeded crawl from %s", seed_url)
     return seed_url
 
 
-async def crawl_next(ctx: dict[str, Any]) -> bool:
-    """Process one frontier entry; re-enqueue self while work + budget remain."""
+async def crawl_next(ctx: dict[str, Any], scan_id: int) -> bool:
+    """Process one frontier entry; re-enqueue self while work + budget remain.
+
+    `scan_id` names the queue to drain — the operator chain owns its entries like
+    any scan does, since the frontier has no unowned rows."""
     max_requests = ctx.get("max_requests")
     async with ctx["sessionmaker"]() as session:
         if await runner.budget_exhausted(session, max_requests):
@@ -72,15 +79,15 @@ async def crawl_next(ctx: dict[str, Any]) -> bool:
                 collection_client=ctx.get("collection_client"),
                 follows_client=ctx.get("follows_client"),
                 supporters_client=ctx.get("supporters_client"),
-                max_depth=ctx.get("max_depth"),
+                max_depth=ctx.get("max_depth"), scan_id=scan_id,
             )
         except Exception:  # noqa: BLE001 — already recorded on the frontier
             outcome = None
-        remaining = await frontier.pending_count(session)
+        remaining = await frontier.pending_count(session, scan_id=scan_id)
         over_budget = await runner.budget_exhausted(session, max_requests)
 
     if remaining > 0 and not over_budget:
-        await ctx["redis"].enqueue_job("crawl_next")
+        await ctx["redis"].enqueue_job("crawl_next", scan_id)
     return outcome is not None
 
 
@@ -103,6 +110,7 @@ async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
             follows_client=ctx.get("follows_client"),
             supporters_client=ctx.get("supporters_client"),
             max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
+            concurrency=ctx.get("concurrency", 1),
         )
     except Exception as exc:  # noqa: BLE001 — surface it on the scan, then re-raise
         await scan_service.fail_scan(ctx["sessionmaker"], scan_id, exc)
