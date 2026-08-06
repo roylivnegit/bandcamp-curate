@@ -10,24 +10,31 @@ resulting recommendations are per-scan.
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.crawl import frontier, runner
-from app.crawl.service import PAGES_PER_VISIT, Fetcher, crawl_fan_collection
-from app.db.models import Album, Scan, ScanSeed, Track, User
-from app.enums import CrawlKind, ItemType, ScanKind, ScanStatus
+from app.crawl.service import Fetcher
+from app.db.models import Album, CrawlFrontier, Scan, ScanSeed, Track, User
+from app.enums import CrawlKind, CrawlStatus, ItemType, ScanKind, ScanStatus
 
 logger = logging.getLogger("crate_digger.scan")
 
-SEED_PRIORITY = 90  # below the is_me fan seed (100), above ordinary discovery
+SEED_PRIORITY = 90  # below the owner's own fan page, above ordinary discovery
+SELF_FAN_PRIORITY = 100  # the owner's own collection drains first (cf. seed.SEED_PRIORITY)
 
-# Safety bound on draining your own collection (10 pages × 40 items per visit),
-# so a provider that never stops paginating can't spin here forever. 50 visits
-# ≈ 20,000 items — comfortably past the largest real collection we've seen (2,040).
-MAX_COLLECTION_VISITS = 50
+# Frontier entries one slice may process. Each slice is a whole ARQ job, so this
+# is what keeps jobs short: ~10 entries is well inside any timeout, and the chain
+# just runs more of them. The frontier holds tens of thousands of entries —
+# draining it inside one job is what used to blow past `job_timeout`.
+SCAN_SLICE_ENTRIES = 10
+
+# Backstop on the chain so a bug can't schedule slices forever. At 10 entries each
+# that's 100k entries — far past any real scan, which stops on the credit budget.
+MAX_SCAN_SLICES = 10_000
 
 # A Bandcamp album/track URL: any host, path starting /album/<slug> or /track/<slug>.
 _SEED_RE = re.compile(r"^(https?://[^/]+/(album|track)/[^/?#]+)", re.IGNORECASE)
@@ -120,6 +127,217 @@ async def _resolve_seeds(session: AsyncSession, scan_id: int) -> None:
     await session.commit()
 
 
+@dataclass(slots=True)
+class ScanPlan:
+    """What a slice needs to know, re-derived cheaply before each one."""
+
+    self_url: str | None  # the owner's own fan page, when this scan crawls it
+    seed_fan_id: int | None  # the owner's Fan, once their page has been ingested
+
+
+async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: int) -> ScanPlan:
+    """Put the scan's work on the frontier. Idempotent and fetch-free — cheap
+    enough to re-run before every slice, which is exactly how the chain uses it.
+
+    A `collection` scan enqueues the owner's own fan page at `SELF_FAN_PRIORITY`
+    so it drains first; the runner recognises it as `is_me` by URL, which is what
+    records the wishlist and follows that gate curation. A `custom` scan enqueues
+    its seeds. Both are `frontier.enqueue`, so re-running adds nothing.
+
+    Also counts the slice. The count lives here rather than in either caller so
+    that BOTH the blocking runner and the ARQ chain are bounded by the same
+    `MAX_SCAN_SLICES` — the chain re-enqueues purely on "more work?", so without a
+    persisted counter a perpetually-nonempty frontier would spawn jobs forever and
+    leave the scan `running` indefinitely.
+    """
+    async with sessionmaker() as session:
+        scan = await session.get(Scan, scan_id)
+        if scan is None:
+            raise ValueError("scan not found")
+        owner = await session.get(User, scan.user_id)
+        if owner is None:
+            raise ValueError("scan's owning user not found")
+
+        # A scan that isn't already running is starting fresh — reset the per-run
+        # bookkeeping (credit baseline + slice count) rather than continuing a
+        # previous run's totals. Re-running via the API sets status back to queued.
+        stats = dict(scan.stats or {})
+        if scan.status != str(ScanStatus.RUNNING):
+            scan.status = str(ScanStatus.RUNNING)
+            scan.error = None
+            stats = {"credits_at_start": await runner.requests_used(session), "slices_run": 0}
+        stats.setdefault("credits_at_start", await runner.requests_used(session))
+        stats["slices_run"] = stats.get("slices_run", 0) + 1
+        scan.stats = stats
+        if stats["slices_run"] > MAX_SCAN_SLICES:
+            await session.commit()  # keep the count; the caller marks the scan failed
+            raise ValueError(
+                f"scan exceeded {MAX_SCAN_SLICES} slices "
+                f"({MAX_SCAN_SLICES * SCAN_SLICE_ENTRIES} frontier entries) without "
+                "finishing — stopping rather than queueing more work"
+            )
+
+        self_url: str | None = None
+        if scan.kind == str(ScanKind.COLLECTION):
+            if not owner.bandcamp_fan_url:
+                raise ValueError("no bandcamp_fan_url set for this user")
+            self_url = owner.bandcamp_fan_url
+            await frontier.enqueue(
+                session, self_url, CrawlKind.FAN_COLLECTION,
+                priority=SELF_FAN_PRIORITY, depth=0,
+            )
+
+        seeds = (
+            await session.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))
+        ).scalars().all()
+        for seed in seeds:
+            kind = CrawlKind.ALBUM if seed.seed_type == str(ItemType.ALBUM) else CrawlKind.TRACK
+            await frontier.enqueue(session, seed.url, kind, priority=SEED_PRIORITY, depth=0)
+
+        await session.commit()
+        return ScanPlan(self_url=self_url, seed_fan_id=owner.fan_id)
+
+
+async def advance_scan(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    fetcher: Fetcher,
+    scan_id: int,
+    *,
+    collection_client=None,
+    follows_client=None,
+    supporters_client=None,
+    max_depth: int | None = None,
+    max_requests: int | None = None,
+    slice_entries: int = SCAN_SLICE_ENTRIES,
+) -> bool:
+    """Crawl ONE bounded slice of this scan. True if more work remains.
+
+    Slices are what keep every job short: the frontier can hold tens of thousands
+    of entries, and draining it inside a single job is what used to run past ARQ's
+    `job_timeout`. Each slice is independently durable, so the chain can stop or
+    restart between any two of them and lose nothing.
+    """
+    plan = await start_scan(sessionmaker, scan_id)  # idempotent
+
+    # `seed_fan_id` is fixed for the whole slice, but the owner's Fan doesn't exist
+    # until their own page is ingested — so on a first-ever collection scan a
+    # multi-entry slice would crawl the rest of itself with the followed-artist
+    # prune switched off, spending credits on albums curation will drop anyway.
+    # Give that one page a slice to itself; every slice after it has the id.
+    entries = 1 if (plan.self_url is not None and plan.seed_fan_id is None) else slice_entries
+
+    outcomes = await runner.run_until_empty(
+        sessionmaker, fetcher,
+        seed_url=plan.self_url, seed_fan_id=plan.seed_fan_id,
+        collection_client=collection_client, follows_client=follows_client,
+        supporters_client=supporters_client,
+        max_depth=max_depth, max_requests=max_requests,
+        max_iterations=entries,
+    )
+
+    # The owner's own page may have been ingested this slice — link the Fan as soon
+    # as it is, since `seed_fan_id` (the followed-artist prune) and curation both
+    # key off it. Taken from the outcome rather than matched by URL, which would be
+    # fragile: the Fan row is created with the page's own trackpipe_url.
+    fan_id = next(
+        (o.fan_id for o in outcomes
+         if o.kind == str(CrawlKind.FAN_COLLECTION)
+         and o.url == plan.self_url and o.fan_id is not None),
+        None,
+    )
+    if fan_id is not None:
+        async with sessionmaker() as session:
+            scan = await session.get(Scan, scan_id)
+            owner = await session.get(User, scan.user_id)
+            if owner is not None and owner.fan_id is None:
+                owner.fan_id = fan_id
+                await session.commit()
+
+    async with sessionmaker() as session:
+        if await runner.budget_exhausted(session, max_requests):
+            return False  # out of credits — finalize with what we have
+        return await frontier.pending_count(session) > 0
+
+
+async def _self_crawl_complete(session: AsyncSession, self_url: str | None) -> bool:
+    """Whether the owner's own fan page has been crawled to the last page."""
+    if self_url is None:
+        return True  # custom scan — exclusions come from an earlier collection scan
+    entry = (
+        await session.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.url == self_url,
+                CrawlFrontier.kind == str(CrawlKind.FAN_COLLECTION),
+            )
+        )
+    ).scalar_one_or_none()
+    return entry is not None and entry.status == CrawlStatus.DONE
+
+
+async def finalize_scan(
+    sessionmaker: async_sessionmaker[AsyncSession], scan_id: int
+) -> Scan:
+    """Resolve seeds, curate, mark the scan done.
+
+    Refuses to curate a `collection` scan whose own fan page isn't fully paged:
+    every exclusion (owned / wishlisted / followed) comes from that crawl, so
+    curating early would silently surface artists the user already has, with
+    nothing in the feed revealing why. The scan errors instead — visible,
+    re-runnable, and cheap to resume since its pages are already committed.
+    """
+    from app.curation.engine import curate  # local import avoids an import cycle
+
+    async with sessionmaker() as session:
+        scan = await session.get(Scan, scan_id)
+        if scan is None:
+            raise ValueError("scan not found")
+        owner = await session.get(User, scan.user_id)
+        self_url = (
+            owner.bandcamp_fan_url
+            if owner is not None and scan.kind == str(ScanKind.COLLECTION)
+            else None
+        )
+        if not await _self_crawl_complete(session, self_url):
+            raise ValueError(
+                "your collection is only partly crawled (the crawl budget ran out "
+                "before it finished); refusing to curate on incomplete exclusions — "
+                "raise CRAWL_MAX_REQUESTS and re-run to resume where it stopped"
+            )
+        credits_at_start = (scan.stats or {}).get("credits_at_start", 0)
+
+    async with sessionmaker() as session:
+        await _resolve_seeds(session, scan_id)
+    async with sessionmaker() as session:
+        scored = await curate(session, scan_id=scan_id)
+        used_after = await runner.requests_used(session)
+
+    async with sessionmaker() as session:
+        scan = await session.get(Scan, scan_id)
+        scan.status = str(ScanStatus.DONE)
+        scan.last_run_at = datetime.now(UTC)
+        scan.stats = {
+            "recommendations": len(scored),
+            "credits": used_after - credits_at_start,
+        }
+        await session.commit()
+        await session.refresh(scan)
+        return scan
+
+
+async def fail_scan(
+    sessionmaker: async_sessionmaker[AsyncSession], scan_id: int, exc: BaseException
+) -> None:
+    """Record a failure on the scan. Used by both the blocking runner and the
+    chained worker jobs, so a crash in either surfaces the same way in the UI."""
+    async with sessionmaker() as session:
+        scan = await session.get(Scan, scan_id)
+        if scan is not None:
+            scan.status = str(ScanStatus.ERROR)
+            scan.error = f"{type(exc).__name__}: {exc}"
+            await session.commit()
+    logger.warning("scan %s failed: %s", scan_id, exc)
+
+
 async def run_scan(
     sessionmaker: async_sessionmaker[AsyncSession],
     fetcher: Fetcher,
@@ -130,121 +348,31 @@ async def run_scan(
     supporters_client=None,
     max_depth: int | None = None,
     max_requests: int | None = None,
+    max_slices: int = MAX_SCAN_SLICES,
 ) -> Scan:
-    """Crawl a scan's seeds, drain the frontier, resolve seeds, curate the scan.
+    """Run a scan to completion in-process: slice, slice, … then finalize.
 
-    Marks the scan running → done (or error), recording credits spent + rec count
-    in `scan.stats`. Idempotent-ish: already-crawled seeds aren't re-fetched (the
-    frontier dedups on url), but the scan is always re-curated."""
-    from app.curation.engine import curate  # local import avoids an import cycle
-
-    async with sessionmaker() as session:
-        scan = await session.get(Scan, scan_id)
-        if scan is None:
-            raise ValueError("scan not found")
-        scan.status = str(ScanStatus.RUNNING)
-        scan.error = None
-        await session.commit()
-        seeds = (
-            await session.execute(select(ScanSeed).where(ScanSeed.scan_id == scan_id))
-        ).scalars().all()
-        seed_urls = [(s.url, s.seed_type) for s in seeds]
-        used_before = await runner.requests_used(session)
-        scan_kind, scan_user_id = scan.kind, scan.user_id
-        # The fan this walk is *for* — its `follows` prune detail crawls of
-        # already-followed artists/labels deep in the walk. Unset until the owner's
-        # collection scan has run (the branch below sets it), which just means the
-        # filter is inactive on that first run.
-        owner = await session.get(User, scan_user_id)
-        seed_fan_id = owner.fan_id if owner is not None else None
-
+    This is the blocking form, for the CLI and tests. Production uses the same
+    pieces spread across a chain of short ARQ jobs (`app.worker.run_scan`) so no
+    single job can outlive its timeout. Marks the scan running → done (or error),
+    recording credits spent + rec count in `scan.stats`.
+    """
     try:
-        # A `collection` scan has no ScanSeed rows — it seeds from the owning
-        # user's own Bandcamp fan page directly (their collection/wishlist/follows
-        # + owned albums enqueued at depth 1), then falls into the same
-        # frontier-drain + curate steps as any custom scan below.
-        if scan_kind == str(ScanKind.COLLECTION):
-            async with sessionmaker() as session:
-                user = await session.get(User, scan_user_id)
-                if user is None:
-                    raise ValueError("scan's owning user not found")
-                if not user.bandcamp_fan_url:
-                    raise ValueError("no bandcamp_fan_url set for this user")
-                # Your OWN collection must be paged to the end, not sliced: the
-                # wishlist and follows lists gate every curation exclusion, so a
-                # partial read would leak owned/followed artists into your feed.
-                # This path isn't frontier-backed, so there's no entry to park a
-                # cursor on — we drain the visits here instead. Each page is still
-                # committed as it lands, so an interruption keeps its progress
-                # (it just re-pages from the top next run; ingest is idempotent).
-                cursor: dict | None = None
-                for _ in range(MAX_COLLECTION_VISITS):
-                    outcome = await crawl_fan_collection(
-                        session, fetcher, user.bandcamp_fan_url, is_me=True,
-                        collection_client=collection_client, follows_client=follows_client,
-                        depth=0, max_depth=max_depth, seed_fan_id=seed_fan_id,
-                        cursor=cursor,
-                    )
-                    cursor = outcome.cursor
-                    if cursor is None:
-                        break
-                else:
-                    # Fail loudly rather than curate on a half-read collection.
-                    # Every exclusion (owned / wishlisted / followed) comes from
-                    # this crawl, so proceeding would silently surface artists the
-                    # user already has — wrong in a way nothing in the feed reveals.
-                    # An errored scan is visible and re-runnable; it also resumes
-                    # cheaply, since the pages read so far are already committed.
-                    raise ValueError(
-                        f"own collection still unfinished after {MAX_COLLECTION_VISITS} "
-                        f"visits ({MAX_COLLECTION_VISITS * PAGES_PER_VISIT} pages); "
-                        "refusing to curate on incomplete exclusions"
-                    )
-                if outcome.fan_id is not None:
-                    user.fan_id = outcome.fan_id
-                await session.commit()
-                # This crawl is what *populates* the follows we filter on, so pick
-                # the fan up here — the drain below is where the filter applies.
-                seed_fan_id = user.fan_id
-
-        # Enqueue seeds at the frontier (dedup'd), then drain.
-        async with sessionmaker() as session:
-            for url, seed_type in seed_urls:
-                if seed_type == str(ItemType.ALBUM):
-                    await frontier.enqueue(
-                        session, url, CrawlKind.ALBUM, priority=SEED_PRIORITY, depth=0
-                    )
-                elif seed_type == str(ItemType.TRACK):
-                    await frontier.enqueue(
-                        session, url, CrawlKind.TRACK, priority=SEED_PRIORITY, depth=0
-                    )
-            await session.commit()
-
-        await runner.run_until_empty(
-            sessionmaker, fetcher, seed_fan_id=seed_fan_id,
-            collection_client=collection_client, follows_client=follows_client,
-            supporters_client=supporters_client,
-            max_depth=max_depth, max_requests=max_requests,
-        )
-        async with sessionmaker() as session:
-            await _resolve_seeds(session, scan_id)
-        async with sessionmaker() as session:
-            scored = await curate(session, scan_id=scan_id)
-            used_after = await runner.requests_used(session)
+        for _ in range(max_slices):
+            more = await advance_scan(
+                sessionmaker, fetcher, scan_id,
+                collection_client=collection_client, follows_client=follows_client,
+                supporters_client=supporters_client,
+                max_depth=max_depth, max_requests=max_requests,
+            )
+            if not more:
+                break
+        else:
+            raise ValueError(
+                f"scan still unfinished after {max_slices} slices "
+                f"({max_slices * SCAN_SLICE_ENTRIES} frontier entries)"
+            )
+        return await finalize_scan(sessionmaker, scan_id)
     except Exception as exc:  # noqa: BLE001 — record on the scan and surface
-        async with sessionmaker() as session:
-            scan = await session.get(Scan, scan_id)
-            scan.status = str(ScanStatus.ERROR)
-            scan.error = f"{type(exc).__name__}: {exc}"
-            await session.commit()
-        logger.warning("scan %s failed: %s", scan_id, exc)
+        await fail_scan(sessionmaker, scan_id, exc)
         raise
-
-    async with sessionmaker() as session:
-        scan = await session.get(Scan, scan_id)
-        scan.status = str(ScanStatus.DONE)
-        scan.last_run_at = datetime.now(UTC)
-        scan.stats = {"recommendations": len(scored), "credits": used_after - used_before}
-        await session.commit()
-        await session.refresh(scan)
-        return scan

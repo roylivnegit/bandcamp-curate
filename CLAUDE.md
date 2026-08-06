@@ -79,6 +79,21 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
   budget, exactly like renders. `build_pagination_clients(gateway, via_nimble=…)` wires the worker +
   CLI; flip `PAGINATION_VIA_NIMBLE=false` for the free direct path. `FetchRequest.cache_key` now folds
   in an `extra` digest so same-URL POSTs don't collide in the cache.
+- **A scan is a CHAIN of short jobs, not one long one** (`scan_service.SCAN_SLICE_ENTRIES = 10`).
+  `advance_scan` drains at most 10 frontier entries and returns "more?"; the ARQ `run_scan` job
+  re-enqueues itself while that's true (same self-perpetuating shape as the legacy `crawl_next`),
+  then calls `finalize_scan`. No single job can outlive `job_timeout` however big the crawl is, the
+  chain survives worker restarts, and the UI sees progress as it goes (the frontend already polls
+  `scan.status`). `run_scan` is kept as the blocking form for the CLI/tests: start → slices → finalize.
+  - **The owner's own fan page is now an ordinary frontier entry** (`SELF_FAN_PRIORITY = 100`, so it
+    drains first; the runner marks it `is_me` by URL). It resumes via the same cursor as everyone
+    else, which retired `MAX_COLLECTION_VISITS`. `user.fan_id` is linked from the crawl outcome the
+    slice that ingests it — so slice 1 has no `seed_fan_id` and the followed-artist prune is inactive
+    for that slice only (harmless: depth-2 entries aren't reached that early, and curation excludes
+    them regardless).
+  - `finalize_scan` **refuses to curate** if that self-crawl entry isn't DONE (e.g. the credit budget
+    ran out mid-collection) — every exclusion comes from it, so curating early silently surfaces
+    artists you already own/follow. The scan errors instead: visible, re-runnable, resumes cheaply.
 - **Pagination is bounded per visit and resumable** (`service.PAGES_PER_VISIT = 10`). A visit to a
   fan collection spends at most 10 pagination requests and **commits after every page**; leftover
   tokens come back as `CrawlOutcome.cursor` and the runner parks the entry back as PENDING carrying
