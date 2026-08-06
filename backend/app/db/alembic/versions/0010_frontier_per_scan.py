@@ -62,32 +62,35 @@ def _find_unique(table: str, columns: list[str]) -> tuple[str, str] | None:
     return None
 
 
-def _drop_unique(table: str, columns: list[str]) -> None:
+def _drop_unique(batch, table: str, columns: list[str]) -> None:  # noqa: ANN001
+    """Drop the unique over exactly `columns`, via the batch op so SQLite (which
+    cannot ALTER a constraint in place) rebuilds the table instead of failing."""
     found = _find_unique(table, columns)
     if found is None:
         return
     name, kind = found
     if kind == "constraint":
-        op.drop_constraint(name, table, type_="unique")
+        batch.drop_constraint(name, type_="unique")
     else:
-        op.drop_index(name, table_name=table)
+        batch.drop_index(name)
 
 
 def upgrade() -> None:
     if _has_column(_TABLE, "scan_id"):
         return  # fresh DB built from ORM metadata, or already migrated
 
-    # SQLite can't ALTER constraints in place; batch_alter_table rebuilds the table.
+    # ONE batch block for the column, the constraint swap and the FK. SQLite can't
+    # ALTER any of those in place — batch mode rebuilds the table around them — and
+    # splitting them across blocks (or doing some outside) breaks there. Postgres
+    # runs the same ops directly, so this stays portable rather than just claiming to.
     with op.batch_alter_table(_TABLE) as batch:
         batch.add_column(sa.Column("scan_id", sa.Integer(), nullable=True))
+        # Existing rows stay NULL — legacy, drained by no scan.
+        _drop_unique(batch, _TABLE, _OLD_UNIQUE)
+        batch.create_unique_constraint(_NEW_NAME, _NEW_UNIQUE)
+        batch.create_foreign_key(f"fk_{_TABLE}_scan_id", "scans", ["scan_id"], ["id"])
 
     op.create_index(f"ix_{_TABLE}_scan_id", _TABLE, ["scan_id"])
-    # Existing rows stay NULL — legacy, drained by nothing.
-    _drop_unique(_TABLE, _OLD_UNIQUE)
-    op.create_unique_constraint(_NEW_NAME, _TABLE, _NEW_UNIQUE)
-    op.create_foreign_key(
-        f"fk_{_TABLE}_scan_id", _TABLE, "scans", ["scan_id"], ["id"]
-    )
 
 
 def downgrade() -> None:
@@ -101,7 +104,8 @@ def downgrade() -> None:
             f"(SELECT MIN(id) FROM {_TABLE} GROUP BY url, kind)"
         )
     )
-    _drop_unique(_TABLE, _NEW_UNIQUE)
+    op.drop_index(f"ix_{_TABLE}_scan_id", table_name=_TABLE)
     with op.batch_alter_table(_TABLE) as batch:
+        _drop_unique(batch, _TABLE, _NEW_UNIQUE)
         batch.drop_column("scan_id")
-    op.create_unique_constraint("uq_frontier_url_kind", _TABLE, _OLD_UNIQUE)
+        batch.create_unique_constraint("uq_frontier_url_kind", _OLD_UNIQUE)

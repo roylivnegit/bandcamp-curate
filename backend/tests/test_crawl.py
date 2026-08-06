@@ -358,6 +358,54 @@ async def test_reuse_skips_the_fetch_and_replays_the_fanout(
         assert album_entry.status == CrawlStatus.DONE
 
 
+async def test_the_owners_own_page_is_never_reused(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """A collector's own page is very likely to have been crawled already as
+    somebody else's neighbour — with is_me=False, so no wishlist and no follows.
+    Reusing that for their own collection scan would mark the entry DONE, satisfy
+    the self-crawl guard, and curate with no exclusions at all. It must re-crawl."""
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=1)
+        await frontier.enqueue(s, SEED_URL, CrawlKind.FAN_COLLECTION, scan_id=2)
+        await s.commit()
+
+    # Scan 1 crawls it as a neighbour (no seed_url match → is_me False).
+    async with sessionmaker_() as s:
+        await runner.process_one(
+            s, fetcher, scan_id=1, collection_client=FakeCollectionClient(), max_depth=0
+        )
+    assert len(fetcher.calls) == 1
+
+    # Scan 2 owns that page. Reuse would be silently wrong, so it must fetch again.
+    async with sessionmaker_() as s:
+        own = await runner.process_one(
+            s, fetcher, scan_id=2, seed_url=SEED_URL,
+            collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+            max_depth=0,
+        )
+    assert own is not None
+    assert own.reused is False  # NOT reused…
+    assert len(fetcher.calls) == 2  # …it really re-crawled
+
+    # A different page in the same scan still reuses normally.
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=1)
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=2)
+        await s.commit()
+    fetcher.routes[ALBUM_URL] = ALBUM_HTML
+    async with sessionmaker_() as s:
+        await runner.process_one(s, fetcher, scan_id=1,
+                                 supporters_client=FakeSupportersClient(), max_depth=0)
+    async with sessionmaker_() as s:
+        other = await runner.process_one(
+            s, fetcher, scan_id=2, seed_url=SEED_URL,
+            supporters_client=FakeSupportersClient(), max_depth=0,
+        )
+    assert other is not None and other.reused is True
+
+
 async def test_reuse_respects_max_depth(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:

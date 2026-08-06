@@ -48,7 +48,11 @@ async def budget_exhausted(session: AsyncSession, max_requests: int | None) -> b
 
 
 async def _reuse_if_already_crawled(
-    session: AsyncSession, entry: CrawlFrontier, *, max_depth: int | None
+    session: AsyncSession,
+    entry: CrawlFrontier,
+    *,
+    max_depth: int | None,
+    seed_url: str | None,
 ) -> CrawlOutcome | None:
     """If another scan already crawled this (url, kind), complete it for free.
 
@@ -56,7 +60,16 @@ async def _reuse_if_already_crawled(
     would, so we replay that from the stored rows. Skipping the fetch without the
     replay would quietly stop this scan's walk at every page another scan had
     already seen. Returns None when there's nothing to reuse.
+
+    **Never reuses the scan owner's own fan page.** That crawl is not equivalent to
+    anyone else's: only an `is_me=True` visit ingests the wishlist and follows, and
+    every curation exclusion comes from them. A collector's page is very likely to
+    have been crawled already as somebody else's neighbour (with `is_me=False`, so
+    no wishlist, no follows) — reusing that would mark the entry DONE, satisfy
+    `scan_service._self_crawl_complete`, and curate with no exclusions at all.
     """
+    if seed_url is not None and entry.url == seed_url:
+        return None  # the owner's own page — must be crawled live, see above
     if not await frontier.completed_elsewhere(
         session, entry.url, entry.kind, scan_id=entry.scan_id
     ):
@@ -87,7 +100,9 @@ async def process_entry(
     max_depth: int | None = None,
 ) -> CrawlOutcome:
     """Run one already-claimed frontier entry by kind. Raises on failure."""
-    reused = await _reuse_if_already_crawled(session, entry, max_depth=max_depth)
+    reused = await _reuse_if_already_crawled(
+        session, entry, max_depth=max_depth, seed_url=seed_url
+    )
     if reused is not None:
         return reused
     if entry.kind == CrawlKind.FAN_COLLECTION:
