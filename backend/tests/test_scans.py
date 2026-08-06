@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from app.auth.security import get_current_user
-from app.crawl import frontier, runner
+from app.crawl import frontier, runner, scan_service
 from app.crawl.scan_service import (
     advance_scan,
     claim_queued_scans,
@@ -24,9 +24,9 @@ from app.crawl.scan_service import (
     run_scan,
 )
 from app.db.base import Base
-from app.db.models import Fan, FanItem, Scan, ScanSeed, User
+from app.db.models import CrawlFrontier, Fan, FanItem, Scan, ScanSeed, User
 from app.db.session import get_session
-from app.enums import CrawlKind, ScanKind, ScanStatus
+from app.enums import CrawlKind, CrawlStatus, ScanKind, ScanStatus
 from app.main import app
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -307,6 +307,101 @@ async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -
         scan = await s.get(Scan, scan_id)
         assert scan.status == str(ScanStatus.RUNNING)  # not finalized mid-chain
         assert await frontier.pending_count(s) > 0
+
+
+async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN001
+    """The ARQ chain re-enqueues purely on "more work?", so without a persisted
+    counter a perpetually-nonempty frontier would spawn jobs forever and leave the
+    scan running indefinitely. The bound lives in start_scan so both the chain and
+    the blocking runner inherit it."""
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        scan_id = scan.id
+
+    fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
+
+    async def slice_once():  # noqa: ANN202
+        return await advance_scan(
+            sessionmaker_, fetcher, scan_id,
+            collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+            supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+            slice_entries=1,
+        )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(scan_service, "MAX_SCAN_SLICES", 2)
+        assert await slice_once() is True  # slice 1
+        assert await slice_once() is True  # slice 2 — at the bound
+        with pytest.raises(ValueError, match="exceeded 2 slices"):
+            await slice_once()  # slice 3 — refuses rather than queueing more
+
+    async with sessionmaker_() as s:
+        assert (await s.get(Scan, scan_id)).stats["slices_run"] == 3
+
+
+async def test_slice_count_resets_on_a_fresh_run(sessionmaker_) -> None:  # noqa: ANN001
+    # Re-running a scan (status back to queued) must not inherit the previous
+    # run's slice count, or a long-lived scan could never be re-run.
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        scan_id = scan.id
+
+    fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
+    kwargs = dict(
+        collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        slice_entries=1,
+    )
+    await advance_scan(sessionmaker_, fetcher, scan_id, **kwargs)
+    await advance_scan(sessionmaker_, fetcher, scan_id, **kwargs)
+    async with sessionmaker_() as s:
+        scan = await s.get(Scan, scan_id)
+        assert scan.stats["slices_run"] == 2
+        scan.status = str(ScanStatus.QUEUED)  # what POST /api/scans/{id}/run does
+        await s.commit()
+
+    await advance_scan(sessionmaker_, fetcher, scan_id, **kwargs)
+    async with sessionmaker_() as s:
+        assert (await s.get(Scan, scan_id)).stats["slices_run"] == 1  # counted afresh
+
+
+async def test_first_slice_of_a_fresh_collection_scan_takes_one_entry(
+    sessionmaker_,  # noqa: ANN001
+) -> None:
+    """The owner's Fan doesn't exist until their page is ingested, and seed_fan_id
+    is fixed for a whole slice — so a multi-entry first slice would crawl the rest
+    of itself with the followed-artist prune off, spending credits on albums
+    curation drops anyway. That first page gets a slice to itself."""
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        scan_id, user_id = scan.id, user.id
+
+    fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
+    # slice_entries=10, but the fresh-scan case must still stop after one entry.
+    await advance_scan(
+        sessionmaker_, fetcher, scan_id,
+        collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        slice_entries=10,
+    )
+
+    async with sessionmaker_() as s:
+        done = (
+            await s.execute(
+                select(CrawlFrontier).where(CrawlFrontier.status == CrawlStatus.DONE)
+            )
+        ).scalars().all()
+        assert [e.url for e in done] == [FAN_URL]  # only the owner's page
+        assert (await s.get(User, user_id)).fan_id is not None  # …and it linked the Fan
 
 
 async def test_finalize_refuses_a_half_crawled_collection(sessionmaker_) -> None:  # noqa: ANN001

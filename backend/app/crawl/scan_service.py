@@ -143,6 +143,12 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
     so it drains first; the runner recognises it as `is_me` by URL, which is what
     records the wishlist and follows that gate curation. A `custom` scan enqueues
     its seeds. Both are `frontier.enqueue`, so re-running adds nothing.
+
+    Also counts the slice. The count lives here rather than in either caller so
+    that BOTH the blocking runner and the ARQ chain are bounded by the same
+    `MAX_SCAN_SLICES` — the chain re-enqueues purely on "more work?", so without a
+    persisted counter a perpetually-nonempty frontier would spawn jobs forever and
+    leave the scan `running` indefinitely.
     """
     async with sessionmaker() as session:
         scan = await session.get(Scan, scan_id)
@@ -152,14 +158,24 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
         if owner is None:
             raise ValueError("scan's owning user not found")
 
+        # A scan that isn't already running is starting fresh — reset the per-run
+        # bookkeeping (credit baseline + slice count) rather than continuing a
+        # previous run's totals. Re-running via the API sets status back to queued.
+        stats = dict(scan.stats or {})
         if scan.status != str(ScanStatus.RUNNING):
             scan.status = str(ScanStatus.RUNNING)
             scan.error = None
-        # Remember the starting meter once, so the credit stat survives the chain.
-        stats = dict(scan.stats or {})
-        if "credits_at_start" not in stats:
-            stats["credits_at_start"] = await runner.requests_used(session)
-            scan.stats = stats
+            stats = {"credits_at_start": await runner.requests_used(session), "slices_run": 0}
+        stats.setdefault("credits_at_start", await runner.requests_used(session))
+        stats["slices_run"] = stats.get("slices_run", 0) + 1
+        scan.stats = stats
+        if stats["slices_run"] > MAX_SCAN_SLICES:
+            await session.commit()  # keep the count; the caller marks the scan failed
+            raise ValueError(
+                f"scan exceeded {MAX_SCAN_SLICES} slices "
+                f"({MAX_SCAN_SLICES * SCAN_SLICE_ENTRIES} frontier entries) without "
+                "finishing — stopping rather than queueing more work"
+            )
 
         self_url: str | None = None
         if scan.kind == str(ScanKind.COLLECTION):
@@ -203,13 +219,20 @@ async def advance_scan(
     """
     plan = await start_scan(sessionmaker, scan_id)  # idempotent
 
+    # `seed_fan_id` is fixed for the whole slice, but the owner's Fan doesn't exist
+    # until their own page is ingested — so on a first-ever collection scan a
+    # multi-entry slice would crawl the rest of itself with the followed-artist
+    # prune switched off, spending credits on albums curation will drop anyway.
+    # Give that one page a slice to itself; every slice after it has the id.
+    entries = 1 if (plan.self_url is not None and plan.seed_fan_id is None) else slice_entries
+
     outcomes = await runner.run_until_empty(
         sessionmaker, fetcher,
         seed_url=plan.self_url, seed_fan_id=plan.seed_fan_id,
         collection_client=collection_client, follows_client=follows_client,
         supporters_client=supporters_client,
         max_depth=max_depth, max_requests=max_requests,
-        max_iterations=slice_entries,
+        max_iterations=entries,
     )
 
     # The owner's own page may have been ingested this slice — link the Fan as soon
