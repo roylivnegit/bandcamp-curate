@@ -19,6 +19,7 @@ branch instead (dispatched by `poll_scans` below, same as any other scan).
 """
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from arq import cron
@@ -49,6 +50,8 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["max_depth"] = settings.crawl_max_depth
     ctx["max_requests"] = settings.crawl_max_requests
     ctx["concurrency"] = settings.crawl_concurrency
+    ctx["slice_seconds"] = settings.crawl_slice_seconds
+    ctx["curate_each_slice"] = settings.crawl_curate_each_slice
 
 
 async def seed_crawl(ctx: dict[str, Any], url: str | None = None) -> str:
@@ -111,6 +114,8 @@ async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
             supporters_client=ctx.get("supporters_client"),
             max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
             concurrency=ctx.get("concurrency", 1),
+            slice_seconds=ctx.get("slice_seconds"),
+            curate_each_slice=ctx.get("curate_each_slice", False),
         )
     except Exception as exc:  # noqa: BLE001 — surface it on the scan, then re-raise
         await scan_service.fail_scan(ctx["sessionmaker"], scan_id, exc)
@@ -130,8 +135,15 @@ async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
 
 async def poll_scans(ctx: dict[str, Any]) -> int:
     """Cron: claim any `queued` scans and dispatch a `run_scan` job for each.
-    This is how the UI (cloud) triggers a crawl that executes here (the PC)."""
+    This is how the UI (cloud) triggers a crawl that executes here (the PC).
+
+    Also revives scans whose chain died. A killed job leaves the scan `running`
+    with nothing scheduled to continue it, and claiming only `queued` would step
+    straight past it — so re-queue any `running` scan whose slice heartbeat has
+    gone cold, then claim as usual."""
+    stalled_after = timedelta(seconds=ctx["settings"].scan_stalled_after_seconds)
     async with ctx["sessionmaker"]() as session:
+        await scan_service.reclaim_stalled_scans(session, stalled_after)
         ids = await scan_service.claim_queued_scans(session)
     for scan_id in ids:
         await ctx["redis"].enqueue_job("run_scan", scan_id)

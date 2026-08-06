@@ -68,6 +68,24 @@ class Settings(BaseSettings):
     # `scraper_max_concurrency`, which stays the hard ceiling. Raise via env.
     crawl_concurrency: int = 8
 
+    # How long one slice may crawl before handing over to the next job. Bound the
+    # slice by TIME, not by entry count: an entry is 1 fetch for an album but up to
+    # 11 for a fan collection (render + pagination), so "50 entries" was anywhere
+    # from 50 to 550 fetches and blew past `job_timeout` at the top of that range.
+    # Seconds are the thing the timeout actually measures.
+    crawl_slice_seconds: int = 120
+
+    # Re-curate after each slice so the feed fills in while the crawl runs, rather
+    # than appearing all at once at the end. Recommendations are recomputed
+    # wholesale in one transaction, so a reader sees the previous set or the new
+    # one, never a partial.
+    crawl_curate_each_slice: bool = True
+
+    # A `running` scan whose chain hasn't produced a slice in this long is treated
+    # as dead (its job was killed) and re-queued. Comfortably over
+    # `crawl_slice_seconds` + ARQ's job_timeout so a live-but-slow slice is safe.
+    scan_stalled_after_seconds: int = 900
+
     # Seed (legacy operator-only bootstrap — see scripts/crawl.py)
     bandcamp_fan_url: str = ""
 

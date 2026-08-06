@@ -105,6 +105,22 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     *is* the signal), so two workers hitting the same fan/band/tag is the common case, and without it
     entries died on IntegrityError and were marked `error` permanently. All use SAVEPOINTs so losing
     a race never discards the caller's committed-pending page.
+- **The feed fills in DURING the crawl** (`crawl_curate_each_slice`). Each slice re-curates, so
+  recommendations accrue instead of appearing only at finalize; the recompute is wholesale inside one
+  transaction so a reader never catches a partial set. Held back until the owner's own collection is
+  fully read — every exclusion comes from that crawl, and an early *wrong* feed (showing records you
+  own) is worse than no feed. The React feed no longer gates on `status === 'done'`: it renders for a
+  `running` scan and re-fetches when `stats.recommendations` moves.
+- **A slice is bounded by TIME, not entry count** (`crawl_slice_seconds = 120`). An entry is 1 fetch
+  for an album but up to 11 for a fan collection, so "50 entries" was 50-550 fetches and a slice hit
+  598s against the 600s `job_timeout`. Seconds are what the timeout measures.
+- **Deadlocks are retried** (`runner._RETRYABLE_SQLSTATES` = 40P01/40001, 3 attempts, jittered).
+  Dozens of crawlers touch the same hot rows — a popular collector is in many collections at once —
+  so lock-order races are expected, not exceptional.
+- **A dead chain self-heals** (`reclaim_stalled_scans`, `scan_stalled_after_seconds = 900`). Every
+  slice writes `stats.last_slice_at`; `poll_scans` re-queues any `running` scan whose heartbeat has
+  gone cold. A killed job used to leave the scan `running` with nothing scheduled — the poller only
+  claims `queued` — which stranded three scans on 2026-08-06, each needing a manual nudge.
 - **A scan is a CHAIN of short jobs, not one long one** (`scan_service.SCAN_SLICE_ENTRIES = 10`).
   `advance_scan` drains at most 10 frontier entries and returns "more?"; the ARQ `run_scan` job
   re-enqueues itself while that's true (same self-perpetuating shape as the legacy `crawl_next`),

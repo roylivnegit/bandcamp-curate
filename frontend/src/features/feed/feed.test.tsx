@@ -182,3 +182,46 @@ describe('scan feed', () => {
     expect(await screen.findByText(/artist:/)).toBeInTheDocument()
   })
 })
+
+describe('feed while the scan is still running', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('shows recommendations before the scan finishes', async () => {
+    // The backend re-curates after every slice, so results accrue during the
+    // crawl. Waiting for `done` meant a long scan showed nothing for hours.
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'running', stats: { recommendations: 7 }, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    // The card is rendered even though the scan is mid-crawl…
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    // …and the banner says so rather than pretending the feed is complete.
+    expect(screen.getByText(/7 found so far/i)).toBeInTheDocument()
+  })
+
+  it('shows nothing for a queued scan, which has curated nothing yet', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'queued', stats: {}, seeds: [] }],
+      ['/api/recommendations/count', { count: 0 }],
+      ['/api/recommendations', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(/queued/i)).toBeInTheDocument()
+  })
+})

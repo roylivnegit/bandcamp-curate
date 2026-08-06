@@ -8,9 +8,12 @@ The ARQ worker reuses `process_one` per job for the production, throttled path.
 
 import asyncio
 import logging
+import random
+import time
 from datetime import timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bandcamp.collection_api import CollectionApiClient
@@ -29,6 +32,21 @@ from app.db.models import CrawlFrontier, ProviderUsage
 from app.enums import CrawlKind
 
 logger = logging.getLogger("crate_digger.crawl")
+
+# Postgres SQLSTATEs that mean "your transaction lost a race; run it again".
+# 40P01 deadlock_detected, 40001 serialization_failure. Both are expected under
+# write concurrency — dozens of crawlers touch the same hot rows (a popular
+# collector appears in many collections at once), so two of them can take locks
+# in opposite orders. Postgres picks a victim; the victim just retries.
+_RETRYABLE_SQLSTATES = {"40P01", "40001"}
+_DB_RETRIES = 3
+
+
+def _is_retryable_db_error(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, DBAPIError)
+        and getattr(exc.orig, "sqlstate", None) in _RETRYABLE_SQLSTATES
+    )
 
 
 async def requests_used(session: AsyncSession) -> int:
@@ -158,19 +176,36 @@ async def process_one(
     # Capture identity now — after a commit/rollback the instance expires, and
     # re-reading an attribute would trigger an illegal async lazy-load.
     entry_id, url, kind = entry.id, entry.url, entry.kind
-    try:
-        outcome = await process_entry(
-            session, fetcher, entry, seed_url=seed_url, seed_fan_id=seed_fan_id,
-            collection_client=collection_client, follows_client=follows_client,
-            supporters_client=supporters_client, max_depth=max_depth,
-        )
-    except Exception as exc:  # noqa: BLE001 — record and move on; crawl is resumable
-        await session.rollback()
-        reloaded = await frontier.get_by_id(session, entry_id)
-        if reloaded is not None:
-            await frontier.mark_error(session, reloaded, f"{type(exc).__name__}: {exc}")
-        logger.warning("crawl failed for %s (%s): %s", url, kind, exc)
-        raise
+    for attempt in range(1, _DB_RETRIES + 1):
+        try:
+            outcome = await process_entry(
+                session, fetcher, entry, seed_url=seed_url, seed_fan_id=seed_fan_id,
+                collection_client=collection_client, follows_client=follows_client,
+                supporters_client=supporters_client, max_depth=max_depth,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 — record and move on; crawl is resumable
+            await session.rollback()
+            if _is_retryable_db_error(exc) and attempt < _DB_RETRIES:
+                # Lost a lock race, not a real failure. Back off a little (jittered,
+                # so the same pair of workers don't collide again in lockstep) and
+                # re-run the entry — the pages it already committed are durable and
+                # every ingest is get-or-create, so replaying is safe.
+                delay = 0.2 * attempt + random.uniform(0, 0.2)  # noqa: S311 — jitter, not crypto
+                logger.info(
+                    "retrying %s (%s) after %s (attempt %d/%d)",
+                    url, kind, type(exc.orig).__name__, attempt, _DB_RETRIES,
+                )
+                await asyncio.sleep(delay)
+                entry = await frontier.get_by_id(session, entry_id)
+                if entry is None:
+                    return None
+                continue
+            reloaded = await frontier.get_by_id(session, entry_id)
+            if reloaded is not None:
+                await frontier.mark_error(session, reloaded, f"{type(exc).__name__}: {exc}")
+            logger.warning("crawl failed for %s (%s): %s", url, kind, exc)
+            raise
     if outcome.cursor is not None:
         # Paged out mid-collection. Everything fetched so far is already committed;
         # park the bookmark and let the rest of the frontier have a pass first.
@@ -201,11 +236,12 @@ async def run_until_empty(
     max_depth: int | None = None,
     max_requests: int | None = None,
     max_iterations: int = 1000,
+    max_seconds: float | None = None,
     concurrency: int = 1,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> list[CrawlOutcome]:
     """Process this scan's frontier entries until it drains, the request budget is
-    hit, or `max_iterations` entries have been processed.
+    hit, `max_iterations` entries are done, or `max_seconds` elapses.
 
     `concurrency` workers claim and crawl in parallel. A Nimble render takes 3-35s,
     so a serial drain spends nearly all of its time waiting: at concurrency 1 this
@@ -219,11 +255,18 @@ async def run_until_empty(
     outcomes: list[CrawlOutcome] = []
     remaining = max_iterations
     stop = False
+    deadline = None if max_seconds is None else time.monotonic() + max_seconds
 
     async def worker() -> None:
         nonlocal remaining, stop
         while True:
             if stop or remaining <= 0:
+                return
+            if deadline is not None and time.monotonic() >= deadline:
+                # Time, not entry count, is what the caller's job timeout measures.
+                # One entry is a single fetch for an album but up to eleven for a
+                # fan collection, so an entry budget can't predict how long a slice
+                # runs — and guessing wrong got a slice killed at 598s.
                 return
             remaining -= 1  # reserve a slot before awaiting anything
             async with sessionmaker() as session:
