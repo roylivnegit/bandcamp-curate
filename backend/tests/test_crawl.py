@@ -1642,3 +1642,101 @@ async def test_runner_respects_max_depth(
         assert await _count(s, AlbumSupporter) == 3
         assert await _count(s, TrackSupporter) == 3
         assert await frontier.pending_count(s, scan_id=SCAN) == 0
+
+
+# ── Slice bounds and deadlock retry ────────────────────────────────────────────
+
+
+async def test_a_slice_stops_on_elapsed_time_not_entry_count(
+    concurrent_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """An entry is one fetch for an album but up to eleven for a fan collection, so
+    an entry budget can't predict how long a slice runs — guessing wrong got a
+    slice killed at 598s against a 600s timeout. Seconds are what the timeout
+    measures, so seconds are what bounds the slice."""
+    import asyncio as _asyncio
+
+    class SlowFetcher(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            await _asyncio.sleep(0.05)
+            return await super().fetch(request)
+
+    urls = [f"https://b{i}.bandcamp.com/album/a{i}" for i in range(10)]
+    async with concurrent_sessionmaker() as s:
+        for u in urls:
+            await frontier.enqueue(s, u, CrawlKind.ALBUM, scan_id=SCAN)
+        await s.commit()
+
+    outcomes = await runner.run_until_empty(
+        concurrent_sessionmaker, SlowFetcher({"/album/": ALBUM_HTML}), scan_id=SCAN,
+        supporters_client=FakeSupportersClient(), max_depth=0,
+        max_iterations=10, max_seconds=0.12, concurrency=1,
+    )
+
+    assert 0 < len(outcomes) < 10  # stopped mid-way, on the clock
+    async with concurrent_sessionmaker() as s:
+        assert await frontier.pending_count(s, scan_id=SCAN) > 0  # rest still queued
+
+
+def _deadlock_error() -> Exception:
+    """A DBAPIError shaped like the one asyncpg raises for SQLSTATE 40P01."""
+    from sqlalchemy.exc import DBAPIError
+
+    class _Orig(Exception):
+        sqlstate = "40P01"
+
+    return DBAPIError("UPDATE …", {}, _Orig("deadlock detected"))
+
+
+async def test_a_deadlocked_entry_is_retried_not_failed(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """Dozens of crawlers touch the same hot rows — a popular collector appears in
+    many collections at once — so two can take locks in opposite orders and
+    Postgres kills one. That's a lost race, not a bad page: retry it."""
+    calls = {"n": 0}
+
+    class DeadlockOnceFetcher(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _deadlock_error()
+            return await super().fetch(request)
+
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=SCAN)
+        await s.commit()
+
+    async with sessionmaker_() as s:
+        outcome = await runner.process_one(
+            s, DeadlockOnceFetcher({ALBUM_URL: ALBUM_HTML}), scan_id=SCAN,
+            supporters_client=FakeSupportersClient(), max_depth=0,
+        )
+
+    assert outcome is not None and outcome.url == ALBUM_URL  # succeeded on retry
+    assert calls["n"] == 2
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.status == CrawlStatus.DONE  # not left in error
+
+
+async def test_a_non_retryable_db_error_still_fails_the_entry(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    # Only lock races retry. A genuine error must still surface, or a broken page
+    # would spin three times and hide the reason.
+    class BrokenFetcher(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            raise ValueError("not a lock problem")
+
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=SCAN)
+        await s.commit()
+
+    async with sessionmaker_() as s:
+        with pytest.raises(ValueError, match="not a lock problem"):
+            await runner.process_one(s, BrokenFetcher({}), scan_id=SCAN, max_depth=0)
+
+    async with sessionmaker_() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.status == CrawlStatus.ERROR

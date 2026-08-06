@@ -21,6 +21,7 @@ from app.crawl.scan_service import (
     create_scan,
     finalize_scan,
     parse_seed_url,
+    reclaim_stalled_scans,
     run_scan,
 )
 from app.db.base import Base
@@ -581,3 +582,138 @@ async def test_collection_scan_without_a_fan_url_errors_cleanly(sessionmaker_) -
     async with sessionmaker_() as s:  # failure recorded on the scan, not swallowed
         scan = await s.get(Scan, scan_id)
         assert scan.status == str(ScanStatus.ERROR) and "bandcamp_fan_url" in scan.error
+
+
+# ── Stalled-chain recovery and incremental curation ────────────────────────────
+
+
+async def test_a_dead_chain_is_revived(sessionmaker_) -> None:  # noqa: ANN001
+    """A scan runs as jobs that re-enqueue themselves. Kill one — job timeout,
+    worker restart, laptop asleep — and nothing schedules the next, leaving the
+    scan `running` forever because the poller only claims `queued`. That stranded
+    three scans on 2026-08-06, each needing a manual nudge."""
+    from datetime import UTC, datetime, timedelta
+
+    async with sessionmaker_() as s:
+        user = User(username="me", password_hash="!")
+        s.add(user)
+        await s.flush()
+        cold = Scan(user_id=user.id, name="cold", kind=str(ScanKind.CUSTOM),
+                    status=str(ScanStatus.RUNNING),
+                    stats={"last_slice_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat()})
+        warm = Scan(user_id=user.id, name="warm", kind=str(ScanKind.CUSTOM),
+                    status=str(ScanStatus.RUNNING),
+                    stats={"last_slice_at": datetime.now(UTC).isoformat()})
+        never = Scan(user_id=user.id, name="never", kind=str(ScanKind.CUSTOM),
+                     status=str(ScanStatus.RUNNING), stats={})
+        finished = Scan(user_id=user.id, name="done", kind=str(ScanKind.CUSTOM),
+                        status=str(ScanStatus.DONE), stats={})
+        s.add_all([cold, warm, never, finished])
+        await s.commit()
+        ids = {"cold": cold.id, "warm": warm.id, "never": never.id, "done": finished.id}
+
+    async with sessionmaker_() as s:
+        reclaimed = await reclaim_stalled_scans(s, timedelta(minutes=15))
+
+    assert set(reclaimed) == {ids["cold"], ids["never"]}  # cold + no-heartbeat
+    async with sessionmaker_() as s:
+        assert (await s.get(Scan, ids["warm"])).status == str(ScanStatus.RUNNING)  # in flight
+        assert (await s.get(Scan, ids["done"])).status == str(ScanStatus.DONE)  # untouched
+        assert (await s.get(Scan, ids["cold"])).status == str(ScanStatus.QUEUED)
+
+
+async def test_a_slice_writes_a_heartbeat(sessionmaker_) -> None:  # noqa: ANN001
+    # The watchdog above is only as good as the heartbeat it ages out.
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        scan_id = scan.id
+
+    await advance_scan(
+        sessionmaker_, FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML}), scan_id,
+        collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+    )
+
+    async with sessionmaker_() as s:
+        assert "last_slice_at" in (await s.get(Scan, scan_id)).stats
+
+
+def _fan_html_with_more_pages() -> str:
+    """A fan page whose collection has further pages behind it, so one bounded
+    visit leaves the entry PENDING with a cursor — a partially-read collection."""
+    import html as _html
+    import json as _json
+
+    blob = {
+        "fan_data": {"fan_id": 9985893, "username": "guron",
+                     "trackpipe_url": FAN_URL},
+        "item_cache": {"collection": {}, "wishlist": {}, "following_bands": {}},
+        "collection_data": {"item_count": 5000, "last_token": "0"},
+        "wishlist_data": {"last_token": None},
+        "following_bands_data": {"last_token": None},
+    }
+    return f'<div id="pagedata" data-blob="{_html.escape(_json.dumps(blob), quote=True)}"></div>'
+
+
+class EndlessCollectionClient:
+    """Always reports another page, so a bounded visit can never finish.
+
+    The token must advance: `_next_token` deliberately stops when a provider
+    echoes the same token back, which would otherwise end this stream after two
+    pages and complete the entry.
+    """
+
+    def __init__(self) -> None:
+        self.page = 0
+
+    async def fetch_page(self, *a, **kw):  # noqa: ANN002,ANN003,ANN202
+        self.page += 1
+        return [], f"tok{self.page}", True
+
+
+async def _curate_calls_for(sessionmaker_, who: str, fan_html: str, client) -> list[int]:  # noqa: ANN001
+    """Run one curating slice for a fresh collection scan; return the curate calls."""
+    import app.curation.engine as engine
+
+    calls: list[int] = []
+
+    async def fake_curate(session, *, scan_id, **kw):  # noqa: ANN001,ANN003,ANN202
+        calls.append(scan_id)
+        return []
+
+    async with sessionmaker_() as s:
+        user = User(username=who, password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        sid = scan.id
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(engine, "curate", fake_curate)
+        await advance_scan(
+            sessionmaker_, FakeFetcher({FAN_URL: fan_html}), sid,
+            collection_client=client, follows_client=FakeFollowsClient(),
+            supporters_client=FakeSupportersClient(), max_depth=0, max_requests=50,
+            slice_entries=1, curate_each_slice=True,
+        )
+    return calls
+
+
+async def test_interim_curation_waits_for_a_partial_own_collection(sessionmaker_) -> None:  # noqa: ANN001
+    """Curating early is the whole point — but not before the owner's own
+    collection is read. Every exclusion (owned / wishlisted / followed) comes from
+    that crawl, so showing someone records they already own is worse than showing
+    them nothing yet."""
+    calls = await _curate_calls_for(
+        sessionmaker_, "partial", _fan_html_with_more_pages(), EndlessCollectionClient()
+    )
+    assert calls == []  # still paginating → exclusions incomplete → held back
+
+
+async def test_interim_curation_runs_once_the_collection_is_read(sessionmaker_) -> None:  # noqa: ANN001
+    # Fully read in one visit → the feed can safely fill in mid-crawl.
+    calls = await _curate_calls_for(sessionmaker_, "complete", FAN_HTML, FakeCollectionClient())
+    assert len(calls) == 1

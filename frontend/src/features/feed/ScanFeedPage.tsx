@@ -52,7 +52,15 @@ export function ScanFeedPage() {
    * on each click. `busyKeys` below is the render-visible half. */
   const inFlight = useRef<Set<string>>(new Set())
 
-  const ready = scan?.status === 'done'
+  /* The feed no longer waits for the scan to finish. The backend re-curates after
+   * every slice, so recommendations accrue while the crawl runs and there is no
+   * reason to sit on them — a long scan used to show nothing for hours. Recomputes
+   * are wholesale inside one transaction, so a fetch lands on a complete set.
+   * `queued`/`draft` still show nothing, because nothing has been curated yet. */
+  const showFeed = scan !== null && scan.status !== 'queued' && scan.status !== 'draft'
+  /* Re-fetch when the count moves, rather than on every 4s poll tick: the scan
+   * poll re-runs regardless, but the feed only changes when a slice curates. */
+  const recCount = scan?.stats?.recommendations ?? 0
 
   // ── scan metadata, polled while the crawl is still in flight ──────────────
   const loadScan = useCallback(async () => {
@@ -91,8 +99,8 @@ export function ScanFeedPage() {
   }, [loadLiked, loadBlocked])
 
   useEffect(() => {
-    if (ready) void loadFacets().catch(() => {})
-  }, [ready, loadFacets])
+    if (showFeed) void loadFacets().catch(() => {})
+  }, [showFeed, loadFacets, recCount])
 
   // ── the feed itself ──────────────────────────────────────────────────────
   const loadFirstPage = useCallback(async () => {
@@ -117,8 +125,11 @@ export function ScanFeedPage() {
   }, [filters.params, filters.sort])
 
   useEffect(() => {
-    if (ready) void loadFirstPage()
-  }, [ready, loadFirstPage])
+    if (showFeed) void loadFirstPage()
+    // `recCount` is the re-arm signal: each slice curates, the poll picks up the
+    // new total, and the feed refreshes. Not a stray dep — removing it freezes the
+    // feed at whatever the first slice produced.
+  }, [showFeed, loadFirstPage, recCount])
 
   async function loadMore() {
     if (loading || done) return
@@ -275,14 +286,17 @@ export function ScanFeedPage() {
           <span>
             {scan.status === 'queued' &&
               'Queued — waiting for the crawl worker to pick this up.'}
-            {scan.status === 'running' && 'Running — crawling seeds now…'}
+            {scan.status === 'running' &&
+              (recCount > 0
+                ? `Running — ${recCount} found so far, more on the way…`
+                : 'Running — crawling seeds now…')}
             {scan.status === 'error' && `Scan failed: ${scan.error ?? 'unknown error'}`}
             {scan.status === 'draft' && 'Draft — not queued yet.'}
           </span>
         </div>
       )}
 
-      {ready && (
+      {showFeed && (
         <>
           <FilterBar
             filters={filters}

@@ -18,7 +18,7 @@ starve, so raising concurrency raises the slice with it.
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -112,6 +112,42 @@ async def claim_queued_scans(session: AsyncSession) -> list[int]:
     return ids
 
 
+async def reclaim_stalled_scans(session: AsyncSession, stalled_after: timedelta) -> list[int]:
+    """Re-queue `running` scans whose chain has died. Returns the reclaimed ids.
+
+    A scan runs as a chain of jobs that re-enqueue themselves. If a job is killed —
+    ARQ's `job_timeout`, a worker restart, the machine sleeping — nothing is left
+    to schedule the next one, and the scan sits `running` forever because the
+    poller only ever claims `queued`. That stranded three scans on 2026-08-06 and
+    each needed a manual nudge.
+
+    `stats.last_slice_at` is written at the start of every slice, so a `running`
+    scan whose heartbeat has gone cold has no chain behind it. Re-queueing is safe
+    and cheap: the frontier is resumable, so the new chain picks up exactly where
+    the dead one stopped.
+    """
+    cutoff = datetime.now(UTC) - stalled_after
+    running = (
+        await session.execute(select(Scan).where(Scan.status == str(ScanStatus.RUNNING)))
+    ).scalars().all()
+
+    reclaimed: list[int] = []
+    for scan in running:
+        beat = (scan.stats or {}).get("last_slice_at")
+        if beat is not None:
+            try:
+                if datetime.fromisoformat(beat) > cutoff:
+                    continue  # still warm — a slice is genuinely in flight
+            except ValueError:
+                pass  # unparseable heartbeat: treat as cold rather than trust it
+        scan.status = str(ScanStatus.QUEUED)
+        reclaimed.append(scan.id)
+    if reclaimed:
+        await session.commit()
+        logger.warning("re-queued %d stalled scan(s): %s", len(reclaimed), reclaimed)
+    return reclaimed
+
+
 async def _resolve_seeds(session: AsyncSession, scan_id: int) -> None:
     """Point each seed at the album/track that was ingested for its URL."""
     seeds = (
@@ -178,6 +214,11 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
             stats = {"credits_at_start": await runner.requests_used(session), "slices_run": 0}
         stats.setdefault("credits_at_start", await runner.requests_used(session))
         stats["slices_run"] = stats.get("slices_run", 0) + 1
+        # Heartbeat: a chain whose job was killed leaves the scan `running` with
+        # nobody working it, and the poller only claims `queued` — so without a
+        # timestamp to age out, the scan sits stranded forever (three times on
+        # 2026-08-06). `reclaim_stalled_scans` re-queues on this.
+        stats["last_slice_at"] = datetime.now(UTC).isoformat()
         scan.stats = stats
         if stats["slices_run"] > MAX_SCAN_SLICES:
             await session.commit()  # keep the count; the caller marks the scan failed
@@ -221,6 +262,8 @@ async def advance_scan(
     max_requests: int | None = None,
     slice_entries: int = SCAN_SLICE_ENTRIES,
     concurrency: int = 1,
+    slice_seconds: float | None = None,
+    curate_each_slice: bool = False,
 ) -> bool:
     """Crawl ONE bounded slice of this scan. True if more work remains.
 
@@ -251,7 +294,8 @@ async def advance_scan(
         collection_client=collection_client, follows_client=follows_client,
         supporters_client=supporters_client,
         max_depth=max_depth, max_requests=max_requests,
-        max_iterations=entries, scan_id=scan_id, concurrency=concurrency,
+        max_iterations=entries, max_seconds=slice_seconds,
+        scan_id=scan_id, concurrency=concurrency,
     )
 
     # The owner's own page may have been ingested this slice — link the Fan as soon
@@ -272,10 +316,45 @@ async def advance_scan(
                 owner.fan_id = fan_id
                 await session.commit()
 
+    if curate_each_slice:
+        await _curate_progress(sessionmaker, scan_id, plan.self_url)
+
     async with sessionmaker() as session:
         if await runner.budget_exhausted(session, max_requests):
             return False  # out of credits — finalize with what we have
         return await frontier.pending_count(session, scan_id=scan_id) > 0
+
+
+async def _curate_progress(
+    sessionmaker: async_sessionmaker[AsyncSession], scan_id: int, self_url: str | None
+) -> None:
+    """Re-curate mid-crawl so the feed fills in as the scan runs, not all at once.
+
+    Recommendations are recomputed wholesale inside one transaction, so a reader
+    always sees the previous complete set or the new one — never a partial feed.
+    Each pass simply scores against more of the graph than the last.
+
+    Skipped while the owner's own collection is still being read: every exclusion
+    (owned / wishlisted / followed) comes from that crawl, and showing someone
+    records they already own is worse than showing them nothing yet. Same guard
+    `finalize_scan` applies — an early feed must not be a wrong one.
+    """
+    from app.curation.engine import curate  # local import avoids an import cycle
+
+    async with sessionmaker() as session:
+        if not await _self_crawl_complete(session, self_url, scan_id=scan_id):
+            return
+    try:
+        async with sessionmaker() as session:
+            scored = await curate(session, scan_id=scan_id)
+        async with sessionmaker() as session:
+            scan = await session.get(Scan, scan_id)
+            if scan is not None:
+                scan.stats = {**(scan.stats or {}), "recommendations": len(scored)}
+                await session.commit()
+        logger.info("scan %s: %d recommendations so far", scan_id, len(scored))
+    except Exception as exc:  # noqa: BLE001 — a progress refresh must never kill the crawl
+        logger.warning("scan %s: interim curate failed (crawl continues): %s", scan_id, exc)
 
 
 async def _self_crawl_complete(
