@@ -30,6 +30,18 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://crate:crate@localhost:5432/crate"
     redis_url: str = "redis://localhost:6379/0"
 
+    # Connection pool. Must comfortably exceed `crawl_concurrency` or the pool
+    # becomes the real concurrency limit — SQLAlchemy's default of 5+10 quietly
+    # capped a 50-worker crawl at 15. Against a *direct* managed-Postgres endpoint
+    # keep this modest (their connection ceilings are low); a transaction pooler
+    # (Neon `-pooler`) takes far more, and `db.url` configures asyncpg for it.
+    db_pool_size: int = 20
+    db_max_overflow: int = 40
+    # Recycle before a managed provider's own idle cutoff closes a pooled
+    # connection under us (the classic "connection was closed in the middle of
+    # operation" on the next checkout).
+    db_pool_recycle_seconds: int = 240
+
     # Scraper rate limiting (stay well under Nimble's ~83 QPS ceiling)
     scraper_max_qps: float = 30.0
     scraper_max_concurrency: int = 40

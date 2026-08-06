@@ -227,6 +227,13 @@ async def advance_scan(
     """
     plan = await start_scan(sessionmaker, scan_id)  # idempotent
 
+    # A slice must offer at least as many entries as there are workers, or the
+    # workers starve: with slice_entries=10 and concurrency=50, ten crawl and forty
+    # return immediately, so the effective parallelism is the slice bound. These
+    # two were set in different PRs for different reasons and never reconciled —
+    # the slice exists to bound job *duration*, which parallelism already shortens.
+    slice_entries = max(slice_entries, concurrency)
+
     # `seed_fan_id` is fixed for the whole slice, but the owner's Fan doesn't exist
     # until their own page is ingested — so on a first-ever collection scan a
     # multi-entry slice would crawl the rest of itself with the followed-artist

@@ -169,6 +169,25 @@ def track_request(url: str) -> FetchRequest:
     return FetchRequest(url=url, parser_name="track_page", render=True)
 
 
+async def release_db(session: AsyncSession) -> None:
+    """Hand the pooled DB connection back before sitting on the network.
+
+    SQLAlchemy pins a connection for the life of a transaction, and a transaction
+    opens at the first statement — so a read as small as `select(Album)` holds a
+    connection through every fetch that follows it. A Nimble render is 3-35s, of
+    which ~50ms is database work, so the connection is ~99% idle while held.
+
+    That is what took the crawl down on 2026-08-06: managed Postgres reaped those
+    idle-but-open connections, 12 entries died with `ConnectionDoesNotExistError`,
+    the slice ran past `job_timeout`, and the scan stranded. Committing first is
+    cheap (a no-op when nothing is pending) and releases the connection, so the
+    pool serves many crawlers instead of being held hostage by a few slow fetches.
+
+    Call this immediately before any network I/O.
+    """
+    await session.commit()
+
+
 def _within_depth(depth: int, max_depth: int | None) -> bool:
     """Whether children of an entry at `depth` should be enqueued."""
     return max_depth is None or depth < max_depth
@@ -333,6 +352,7 @@ async def crawl_fan_collection(
         fan = found
         tokens = {k: cursor.get(k) for k in _CURSOR_STREAMS}
     else:
+        await release_db(session)
         result = await fetcher.fetch(fan_collection_request(url))
         if not result.html:
             raise ValueError(f"no HTML returned for fan page {url}")
@@ -359,7 +379,10 @@ async def crawl_fan_collection(
             await checkpoint()
 
     # Spend the visit's page budget: collection first, then (is_me only) the
-    # wishlist and follows lists that gate curation.
+    # wishlist and follows lists that gate curation. Every `absorb` commits, so the
+    # connection is already back in the pool before each fetch below — except on
+    # the resume path, where the Fan lookup above is still holding one.
+    await release_db(session)
     pages_left = pages_per_visit
     while pages_left > 0 and tokens["collection"]:
         batch, nxt, more = await col_client.fetch_page(bc_fan_id, tokens["collection"])
@@ -416,6 +439,7 @@ async def crawl_album(
     the collectors `thumbs` XHR. Supporter collections are enqueued at `depth + 1`,
     capped by `max_depth`.
     """
+    await release_db(session)
     result = await fetcher.fetch(album_request(url))
     if not result.html:
         raise ValueError(f"no HTML returned for album page {url}")
@@ -429,7 +453,9 @@ async def crawl_album(
 
     sup = parse_album_supporters(result.html)
 
-    # Page through the remaining supporters via the thumbs XHR.
+    # Page through the remaining supporters via the thumbs XHR. The select() above
+    # opened a transaction; drop it or it pins a connection through every page.
+    await release_db(session)
     if sup.more_available and sup.last_token and sup.album_id:
         client = supporters_client or SupportersApiClient()
         seen = {s.username for s in sup.supporters}
@@ -475,6 +501,7 @@ async def crawl_track(
     (people who bought/wishlisted that specific track), not the parent album's; the
     parent album (if any) is only stubbed, not itself crawled.
     """
+    await release_db(session)
     result = await fetcher.fetch(track_request(url))
     if not result.html:
         raise ValueError(f"no HTML returned for track page {url}")
@@ -488,7 +515,8 @@ async def crawl_track(
 
     sup = parse_album_supporters(result.html)  # tralbum-generic; album_id here is the track's id
 
-    # Page through the remaining supporters via the thumbs XHR.
+    # As in crawl_album: release before paging, the select() above holds a conn.
+    await release_db(session)
     if sup.more_available and sup.last_token and sup.album_id:
         client = supporters_client or SupportersApiClient()
         seen = {s.username for s in sup.supporters}
