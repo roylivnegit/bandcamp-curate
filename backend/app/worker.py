@@ -85,14 +85,38 @@ async def crawl_next(ctx: dict[str, Any]) -> bool:
 
 
 async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
-    """Crawl one scan's seeds and curate it (dispatched by the poller)."""
-    await scan_service.run_scan(
-        ctx["sessionmaker"], ctx["gateway"], scan_id,
-        collection_client=ctx.get("collection_client"),
-        follows_client=ctx.get("follows_client"),
-        supporters_client=ctx.get("supporters_client"),
-        max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
-    )
+    """Crawl ONE slice of a scan, then re-enqueue itself while work remains.
+
+    A scan can span tens of thousands of frontier entries — hours of crawling —
+    which is far longer than any sane `job_timeout`. Draining it inside a single
+    job is what killed two scans on 2026-08-06. So a scan is a *chain* of short
+    jobs instead: each slice is bounded and independently durable, the chain
+    survives worker restarts, and the UI sees progress as it goes (the frontend
+    already polls `scan.status` while a scan is in flight).
+
+    Same self-perpetuating shape as the legacy `crawl_next` chain above.
+    """
+    try:
+        more = await scan_service.advance_scan(
+            ctx["sessionmaker"], ctx["gateway"], scan_id,
+            collection_client=ctx.get("collection_client"),
+            follows_client=ctx.get("follows_client"),
+            supporters_client=ctx.get("supporters_client"),
+            max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
+        )
+    except Exception as exc:  # noqa: BLE001 — surface it on the scan, then re-raise
+        await scan_service.fail_scan(ctx["sessionmaker"], scan_id, exc)
+        raise
+
+    if more:
+        await ctx["redis"].enqueue_job("run_scan", scan_id)
+        return f"scan {scan_id}: slice done, more to crawl"
+
+    try:
+        await scan_service.finalize_scan(ctx["sessionmaker"], scan_id)
+    except Exception as exc:  # noqa: BLE001 — e.g. incomplete exclusions
+        await scan_service.fail_scan(ctx["sessionmaker"], scan_id, exc)
+        raise
     return f"scan {scan_id} complete"
 
 

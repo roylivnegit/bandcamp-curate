@@ -13,18 +13,20 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from app.auth.security import get_current_user
-from app.crawl import runner
+from app.crawl import frontier, runner
 from app.crawl.scan_service import (
+    advance_scan,
     claim_queued_scans,
     create_collection_scan,
     create_scan,
+    finalize_scan,
     parse_seed_url,
     run_scan,
 )
 from app.db.base import Base
 from app.db.models import Fan, FanItem, Scan, ScanSeed, User
 from app.db.session import get_session
-from app.enums import ScanKind, ScanStatus
+from app.enums import CrawlKind, ScanKind, ScanStatus
 from app.main import app
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -245,9 +247,10 @@ async def test_run_scan_passes_the_owners_fan_to_the_drain(
     assert seen["seed_fan_id"] == fan_id
 
 
-async def test_collection_scan_picks_up_the_fan_it_just_created(sessionmaker_) -> None:  # noqa: ANN001
-    # A first-ever collection scan has no user.fan_id when it starts — the depth-0
-    # crawl creates it. The drain that follows must use that fresh id, not None.
+async def test_slices_pick_up_the_owner_fan_once_it_exists(sessionmaker_) -> None:  # noqa: ANN001
+    """The owner's Fan is created BY the crawl — their page is an ordinary frontier
+    entry now — so the first slice legitimately has no `seed_fan_id`. Every slice
+    after it must carry the id, since that's what drives the followed-artist prune."""
     async with sessionmaker_() as s:
         user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
         s.add(user)
@@ -256,21 +259,72 @@ async def test_collection_scan_picks_up_the_fan_it_just_created(sessionmaker_) -
         user_id, scan_id = user.id, scan.id
         assert user.fan_id is None
 
-    seen: dict = {}
+    seen: list = []
     real_run = runner.run_until_empty
 
     async def spy(*a, **kw):  # noqa: ANN002,ANN003,ANN202
-        seen.update(kw)
+        seen.append(kw.get("seed_fan_id"))
         return await real_run(*a, **kw)
 
+    fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner, "run_until_empty", spy)
-        await _run_collection_scan(sessionmaker_, user_id, scan_id)
+        for _ in range(2):
+            await advance_scan(
+                sessionmaker_, fetcher, scan_id,
+                collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+                supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+                slice_entries=1,  # one entry per slice, so the fan page is slice 1
+            )
 
     async with sessionmaker_() as s:
         crawled_fan_id = (await s.get(User, user_id)).fan_id
     assert crawled_fan_id is not None
-    assert seen["seed_fan_id"] == crawled_fan_id
+    assert seen[0] is None  # the Fan didn't exist yet
+    assert seen[1] == crawled_fan_id  # …and the next slice picked it up
+
+
+async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -> None:  # noqa: ANN001
+    """`advance_scan` must stop at its slice bound and report more work, rather
+    than draining the frontier inside one job the way the old run_scan did."""
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        scan_id = scan.id
+
+    fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
+    more = await advance_scan(
+        sessionmaker_, fetcher, scan_id,
+        collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        slice_entries=1,
+    )
+    assert more is True  # the owned albums it just found are still queued
+
+    async with sessionmaker_() as s:
+        scan = await s.get(Scan, scan_id)
+        assert scan.status == str(ScanStatus.RUNNING)  # not finalized mid-chain
+        assert await frontier.pending_count(s) > 0
+
+
+async def test_finalize_refuses_a_half_crawled_collection(sessionmaker_) -> None:  # noqa: ANN001
+    """Curating on a partly-read collection would silently surface artists the user
+    already owns or follows, with nothing in the feed explaining why. Finalizing
+    must refuse while the owner's own page is still unfinished."""
+    async with sessionmaker_() as s:
+        user = User(username="guron", password_hash="!", bandcamp_fan_url=FAN_URL)
+        s.add(user)
+        await s.flush()
+        scan = await create_collection_scan(s, user)
+        scan_id = scan.id
+        # Own page enqueued but never crawled — exactly the out-of-credits state.
+        await frontier.enqueue(s, FAN_URL, CrawlKind.FAN_COLLECTION)
+        await s.commit()
+
+    with pytest.raises(ValueError, match="only partly crawled"):
+        await finalize_scan(sessionmaker_, scan_id)
 
 
 async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:  # noqa: ANN001
