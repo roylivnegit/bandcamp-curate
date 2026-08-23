@@ -364,6 +364,214 @@ async def test_get_me_requires_seed(session: AsyncSession) -> None:
         await get_me(session, user)
 
 
+# ── ADR-0002: co-ownership floor + weight ─────────────────────────────────────
+
+
+async def test_parity_default_floor_and_weighting_off_matches_original_formula(
+    session: AsyncSession,
+) -> None:
+    """floor=1 (no-op) + weighting off must reproduce the pre-ADR score exactly:
+    W_CO_OWNER * co_owners + W_TAG_AFFINITY * tag_affinity, no per-neighbour term."""
+    user = await _build_graph(session)
+    scored = await _recs(session, user, min_co_owners=1, weighted_co_owners=False)
+
+    by_key: dict[tuple[str, int], object] = {}
+    for sc in scored:
+        if sc.album_id is not None:
+            a = (await session.execute(select(Album).where(Album.id == sc.album_id))).scalar_one()
+            by_key[("album", a.bandcamp_id)] = sc
+        else:
+            t = (await session.execute(select(Track).where(Track.id == sc.track_id))).scalar_one()
+            by_key[("track", t.bandcamp_id)] = sc
+
+    assert set(by_key) == {("album", 4), ("album", 5), ("track", 102)}
+    assert by_key[("album", 4)].reasons["co_owner_weight"] == 2  # == co_owners, no weighting
+    assert by_key[("album", 4)].score == 1.0 * 2 + 0.25 * 1  # co_owners=2, tag_affinity=1
+    assert by_key[("album", 5)].score == 1.0 * 1  # co_owners=1, no tags
+    assert by_key[("track", 102)].score == 1.0 * 1  # co_owners=1
+
+
+async def test_weighting_reorders_never_shrinks_membership(session: AsyncSession) -> None:
+    user = await _build_graph(session)
+    off = await _recs(session, user, min_co_owners=1, weighted_co_owners=False)
+    on = await _recs(session, user, min_co_owners=1, weighted_co_owners=True)
+    ids_off = {(s.item_type, s.album_id, s.track_id) for s in off}
+    ids_on = {(s.item_type, s.album_id, s.track_id) for s in on}
+    assert ids_off == ids_on  # weighting changes score/order, never who's in the feed
+
+
+async def _build_mega_vs_tight_graph(session: AsyncSession) -> tuple[User, dict[str, int]]:
+    """me owns a seed album (anchors `mega`/`tight` as this scan's neighbours)
+    plus 10 other albums (the basis for overlap weighting). `mega` has a LARGE
+    collection (20 unrelated albums) but shares only 2 of my 10; `tight` has a
+    much smaller collection but shares 8 of my 10. Each also owns one exclusive
+    album and one exclusive track that nobody else owns, so any rank difference
+    between those exclusives comes purely from the per-neighbour weight — not
+    from co-owner count (both are 1) or collection size (mega's is bigger).
+    """
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    mega = Fan(bandcamp_fan_id=2, username="mega", url="https://bandcamp.com/mega")
+    tight = Fan(bandcamp_fan_id=3, username="tight", url="https://bandcamp.com/tight")
+    band_seed = Band(bandcamp_id=1, name="Seed", kind=BandKind.ARTIST)
+    band_noise = Band(bandcamp_id=2, name="Noise", kind=BandKind.ARTIST)
+    band_x = Band(bandcamp_id=3, name="X", kind=BandKind.ARTIST)
+    band_y = Band(bandcamp_id=4, name="Y", kind=BandKind.ARTIST)
+    band_tx = Band(bandcamp_id=5, name="TX", kind=BandKind.ARTIST)
+    band_ty = Band(bandcamp_id=6, name="TY", kind=BandKind.ARTIST)
+    session.add_all([me, mega, tight, band_seed, band_noise, band_x, band_y, band_tx, band_ty])
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=1, title="Seed", band_id=band_seed.id)
+    my_extra = [
+        Album(bandcamp_id=100 + i, title=f"My{i}", band_id=band_seed.id) for i in range(10)
+    ]
+    unrelated = [
+        Album(bandcamp_id=200 + i, title=f"U{i}", band_id=band_noise.id) for i in range(20)
+    ]
+    item_x = Album(bandcamp_id=900, title="ItemX", band_id=band_x.id)
+    item_y = Album(bandcamp_id=901, title="ItemY", band_id=band_y.id)
+    track_x = Track(bandcamp_id=9100, title="TrackX", band_id=band_tx.id)
+    track_y = Track(bandcamp_id=9101, title="TrackY", band_id=band_ty.id)
+    session.add_all([seed_album, *my_extra, *unrelated, item_x, item_y, track_x, track_y])
+    await session.flush()
+
+    session.add_all(
+        [
+            FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id),
+            *(FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a.id) for a in my_extra),
+            AlbumSupporter(album_id=seed_album.id, fan_id=mega.id),
+            AlbumSupporter(album_id=seed_album.id, fan_id=tight.id),
+            *(
+                FanItem(fan_id=mega.id, item_type=ItemType.ALBUM, album_id=a.id)
+                for a in unrelated
+            ),
+            *(
+                FanItem(fan_id=mega.id, item_type=ItemType.ALBUM, album_id=a.id)
+                for a in my_extra[:2]
+            ),
+            FanItem(fan_id=mega.id, item_type=ItemType.ALBUM, album_id=item_x.id),
+            FanItem(fan_id=mega.id, item_type=ItemType.TRACK, track_id=track_x.id),
+            *(
+                FanItem(fan_id=tight.id, item_type=ItemType.ALBUM, album_id=a.id)
+                for a in my_extra[:8]
+            ),
+            FanItem(fan_id=tight.id, item_type=ItemType.ALBUM, album_id=item_y.id),
+            FanItem(fan_id=tight.id, item_type=ItemType.TRACK, track_id=track_y.id),
+        ]
+    )
+    await session.commit()
+    return user, {
+        "item_x": item_x.id, "item_y": item_y.id,
+        "track_x": track_x.id, "track_y": track_y.id,
+    }
+
+
+async def test_mega_collector_loses_to_tight_overlap_album(session: AsyncSession) -> None:
+    user, ids = await _build_mega_vs_tight_graph(session)
+    scored = await _recs(session, user, one_per_band=False)
+
+    by_album = {s.album_id: s for s in scored if s.album_id is not None}
+    x, y = by_album[ids["item_x"]], by_album[ids["item_y"]]
+    assert x.reasons["co_owners"] == y.reasons["co_owners"] == 1  # same raw co-owner count
+    assert y.reasons["co_owner_weight"] > x.reasons["co_owner_weight"]  # tight beats mega
+    assert y.score > x.score
+    assert scored.index(y) < scored.index(x)  # tight's pick ranks above mega's
+
+
+async def test_mega_collector_loses_to_tight_overlap_track(session: AsyncSession) -> None:
+    # The track loop has no tag term (unlike albums), so this repeats the mega-vs-
+    # tight assertion independently for the loop most likely to be left behind.
+    user, ids = await _build_mega_vs_tight_graph(session)
+    scored = await _recs(session, user, one_per_band=False)
+
+    by_track = {s.track_id: s for s in scored if s.track_id is not None}
+    x, y = by_track[ids["track_x"]], by_track[ids["track_y"]]
+    assert x.reasons["co_owners"] == y.reasons["co_owners"] == 1
+    assert y.reasons["co_owner_weight"] > x.reasons["co_owner_weight"]
+    assert y.score > x.score
+    assert scored.index(y) < scored.index(x)
+
+
+async def test_floor_cuts_both_loops(session: AsyncSession) -> None:
+    """A band whose only candidates are a 1-co-owner album and a 1-co-owner
+    track produces zero recs at floor 2 — the floor must apply to both loops,
+    not just the album one."""
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    neighbour = Fan(bandcamp_fan_id=2, username="n", url="https://bandcamp.com/n")
+    band_seed = Band(bandcamp_id=1, name="Seed", kind=BandKind.ARTIST)
+    band_thin = Band(bandcamp_id=2, name="Thin", kind=BandKind.ARTIST)
+    session.add_all([me, neighbour, band_seed, band_thin])
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=1, title="Seed", band_id=band_seed.id)
+    thin_album = Album(bandcamp_id=2, title="ThinAlbum", band_id=band_thin.id)
+    thin_track = Track(bandcamp_id=100, title="ThinTrack", band_id=band_thin.id)
+    session.add_all([seed_album, thin_album, thin_track])
+    await session.flush()
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id),
+        AlbumSupporter(album_id=seed_album.id, fan_id=neighbour.id),
+        FanItem(fan_id=neighbour.id, item_type=ItemType.ALBUM, album_id=thin_album.id),
+        FanItem(fan_id=neighbour.id, item_type=ItemType.TRACK, track_id=thin_track.id),
+    ])
+    await session.commit()
+
+    stats: dict = {}
+    scan = await ensure_collection_scan(session, user)
+    scored = await compute_recommendations(
+        session, scan, user, min_co_owners=2, weighted_co_owners=False, stats_out=stats,
+    )
+    assert scored == []
+    assert stats["filtered_by_floor"] == 2  # the album and the track, one each
+    assert stats["candidates"] == 2
+    assert stats["min_co_owners"] == 2
+
+
+async def test_filtered_by_floor_counter_excludes_already_excluded_items(
+    session: AsyncSession,
+) -> None:
+    user = await _build_graph(session)
+    stats: dict = {}
+    scored = await _recs(session, user, min_co_owners=2, stats_out=stats)
+    a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
+
+    # A4 (co=2) survives; A5 (co=1) and T2 (co=1) are cut by the floor. A1/A2/A3
+    # never reach the floor check at all — build_exclusions removes them first,
+    # so they must not inflate filtered_by_floor.
+    assert {s.album_id for s in scored if s.album_id} == {a4.id}
+    assert stats["filtered_by_floor"] == 2
+    assert stats["candidates"] == 3  # A4, A5, T2 — the only items that reach the floor check
+
+
+async def test_settings_reach_engine_with_no_kwargs(session: AsyncSession, monkeypatch) -> None:
+    """The four real call sites never pass min_co_owners/weighted_co_owners —
+    they all rely on compute_recommendations reading Settings directly. Prove a
+    bare call (no kwargs) picks up a patched setting, or the mid-crawl feed and
+    the finalized feed could silently disagree."""
+    import app.curation.engine as engine
+    from app.config import Settings
+
+    user = await _build_graph(session)
+    monkeypatch.setattr(
+        engine, "get_settings",
+        lambda: Settings(curation_min_co_owners=2, curation_weighted_co_owners=False),
+    )
+
+    scan = await ensure_collection_scan(session, user)
+    scored = await compute_recommendations(session, scan, user)  # no kwargs at all
+    a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
+    # min_co_owners=2 from the patched settings: A5(co=1)/T2(co=1) are cut.
+    assert {s.album_id for s in scored if s.album_id} == {a4.id}
+    assert {s.track_id for s in scored if s.track_id} == set()
+
+
 async def _count(session: AsyncSession, model) -> int:
     from sqlalchemy import func
 

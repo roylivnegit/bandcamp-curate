@@ -19,6 +19,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bandcamp.urls import url_host
+from app.config import get_settings
 from app.db.models import (
     Album,
     AlbumSupporter,
@@ -297,6 +298,63 @@ async def _seed_tag_provenance(
     return album_prov, track_prov
 
 
+async def _my_owned_ids(session: AsyncSession, me: Fan) -> tuple[set[int], set[int]]:
+    """(album_ids, track_ids) you actually OWN (is_wishlist=false) — the basis for
+    weighting a neighbour by how much of your taste they actually share."""
+    album_ids = await _scalar_set(
+        session,
+        select(FanItem.album_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.album_id.isnot(None)
+        ),
+    )
+    track_ids = await _scalar_set(
+        session,
+        select(FanItem.track_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.track_id.isnot(None)
+        ),
+    )
+    return album_ids, track_ids
+
+
+async def _neighbour_overlap(
+    session: AsyncSession, neighbours: set[int], my_album_ids: set[int], my_track_ids: set[int]
+) -> dict[int, int]:
+    """fan_id -> how many of YOUR owned items that neighbour also owns.
+
+    A co-owner's weight is `1 + overlap(fan)` — a stranger who shares more of your
+    taste counts for more than one who merely happens to own the same record.
+    Deliberately a count, not a ratio: the only available denominator (a fan's own
+    fan_items count) is crawl progress, not collection size — a collection visit
+    is bounded and parked mid-page (crawl/service.py PAGES_PER_VISIT), so dividing
+    by it would boost the fans we've crawled least, not the ones who share the
+    most taste.
+    """
+    if not neighbours:
+        return {}
+    overlap: dict[int, int] = {}
+    if my_album_ids:
+        rows = (
+            await session.execute(
+                select(FanItem.fan_id, func.count())
+                .where(FanItem.fan_id.in_(neighbours), FanItem.album_id.in_(my_album_ids))
+                .group_by(FanItem.fan_id)
+            )
+        ).all()
+        for fan_id, n in rows:
+            overlap[fan_id] = overlap.get(fan_id, 0) + n
+    if my_track_ids:
+        rows = (
+            await session.execute(
+                select(FanItem.fan_id, func.count())
+                .where(FanItem.fan_id.in_(neighbours), FanItem.track_id.in_(my_track_ids))
+                .group_by(FanItem.fan_id)
+            )
+        ).all()
+        for fan_id, n in rows:
+            overlap[fan_id] = overlap.get(fan_id, 0) + n
+    return overlap
+
+
 async def compute_recommendations(
     session: AsyncSession,
     scan: Scan,
@@ -305,6 +363,9 @@ async def compute_recommendations(
     limit: int | None = None,
     one_per_band: bool = True,
     exclude_seed_tags: set[str] | None = None,
+    min_co_owners: int | None = None,
+    weighted_co_owners: bool | None = None,
+    stats_out: dict | None = None,
 ) -> list[ScoredItem]:
     """Score unowned albums + tracks for one scan by co-ownership among its
     taste-neighbours (+ tag affinity).
@@ -315,7 +376,23 @@ async def compute_recommendations(
     neighbours, so each scan reflects *its* seeds. Exclusions (collection/
     wishlist/follows/blocked/liked) and the tag profile are per-`user` (via their
     own `me` Fan). With `one_per_band` (default) only each band's top item is kept.
+
+    `min_co_owners` and `weighted_co_owners` default to `Settings.curation_*` —
+    every caller (the mid-crawl re-curate, finalize, the API, the CLI) sees the
+    same values with no argument passed, so the running feed and the finished
+    feed never rank the same data differently. The kwargs exist only so tests can
+    override without monkeypatching settings. If `stats_out` is given, it is
+    filled with `min_co_owners`, `weighted`, `candidates` (items considered post-
+    exclusion) and `filtered_by_floor` (of those, how many the floor cut) —
+    otherwise a misconfigured floor silently shrinks the feed with nothing to
+    show for it.
     """
+    settings = get_settings()
+    if min_co_owners is None:
+        min_co_owners = settings.curation_min_co_owners
+    if weighted_co_owners is None:
+        weighted_co_owners = settings.curation_weighted_co_owners
+
     me = await get_me(session, user)
     seed_album_ids, seed_track_ids = await _seed_ids(session, scan, me)
     excl = await build_exclusions(session, me, user)
@@ -342,7 +419,28 @@ async def compute_recommendations(
             ),
         )
 
+    neighbour_overlap: dict[int, int] = {}
+    if weighted_co_owners:
+        my_album_ids, my_track_ids = await _my_owned_ids(session, me)
+        neighbour_overlap = await _neighbour_overlap(
+            session, neighbours, my_album_ids, my_track_ids
+        )
+
+    def _co_owner_weight(owners: set[int]) -> float:
+        if not weighted_co_owners:
+            return float(len(owners))
+        return float(sum(1 + neighbour_overlap.get(f, 0) for f in owners))
+
     scored: list[ScoredItem] = []
+    candidates = 0
+    filtered_by_floor = 0
+
+    def _passes_floor(co_owners: int) -> bool:
+        nonlocal filtered_by_floor
+        if co_owners < min_co_owners:
+            filtered_by_floor += 1
+            return False
+        return True
 
     def _excluded_album(aid: int, band_id: int | None, url: str | None) -> bool:
         return (
@@ -351,39 +449,46 @@ async def compute_recommendations(
             or url_host(url) in excl.band_hosts
         )
 
-    # ── Album candidates: co-owners among this scan's neighbours ──────────────
-    album_rows = (
+    # ── Album candidates: pair-level rows, so the raw distinct-owner count (the
+    # floor) and the per-owner weight (the score) can both be derived from the
+    # same set of owning fans. ─────────────────────────────────────────────────
+    album_pairs = (
         await session.execute(
-            select(
-                FanItem.album_id,
-                Album.band_id,
-                Album.url,
-                func.count(func.distinct(FanItem.fan_id)).label("co_owners"),
-            )
+            select(FanItem.album_id, Album.band_id, Album.url, FanItem.fan_id)
             .select_from(FanItem)
             .join(Album, Album.id == FanItem.album_id)
             .where(FanItem.album_id.isnot(None), FanItem.fan_id.in_(neighbours))
-            .group_by(FanItem.album_id, Album.band_id, Album.url)
         )
     ).all()
+    album_owners: dict[int, set[int]] = {}
+    album_meta: dict[int, tuple[int | None, str | None]] = {}
+    for album_id, band_id, url, fan_id in album_pairs:
+        album_owners.setdefault(album_id, set()).add(fan_id)
+        album_meta[album_id] = (band_id, url)
 
     candidate_album_ids = {
-        aid for aid, band_id, url, _ in album_rows if not _excluded_album(aid, band_id, url)
+        aid for aid, owners in album_owners.items() if not _excluded_album(aid, *album_meta[aid])
     }
     album_tags = await _album_tags(session, candidate_album_ids)
     all_tag_ids = {t for tags in album_tags.values() for t in tags}
     tag_names = await _tag_names(session, all_tag_ids)
 
-    for album_id, band_id, url, co_owners in album_rows:
+    for album_id, owners in album_owners.items():
+        band_id, url = album_meta[album_id]
         if _excluded_album(album_id, band_id, url):
             continue
         seed_tags = album_prov.get(album_id, set())
         if exclude_seed_tags & seed_tags:
             continue
+        candidates += 1
+        co_owners = len(owners)
+        if not _passes_floor(co_owners):
+            continue
+        co_owner_weight = _co_owner_weight(owners)
         tags = album_tags.get(album_id, [])
         matched = [tag_names[t] for t in tags if t in tag_profile]
         tag_affinity = sum(tag_profile.get(t, 0) for t in tags)
-        score = W_CO_OWNER * co_owners + W_TAG_AFFINITY * tag_affinity
+        score = W_CO_OWNER * co_owner_weight + W_TAG_AFFINITY * tag_affinity
         scored.append(
             ScoredItem(
                 item_type=str(ItemType.ALBUM),
@@ -393,6 +498,7 @@ async def compute_recommendations(
                 band_id=band_id,
                 reasons={
                     "co_owners": co_owners,
+                    "co_owner_weight": co_owner_weight,
                     "tag_affinity": tag_affinity,
                     "matched_tags": sorted(set(matched)),
                     "seed_tags": sorted(seed_tags),
@@ -400,23 +506,23 @@ async def compute_recommendations(
             )
         )
 
-    # ── Track candidates: co-owners among this scan's neighbours ─────────────
-    track_rows = (
+    # ── Track candidates: same pair-level shape as albums ─────────────────────
+    track_pairs = (
         await session.execute(
-            select(
-                FanItem.track_id,
-                Track.band_id,
-                Track.url,
-                func.count(func.distinct(FanItem.fan_id)).label("co_owners"),
-            )
+            select(FanItem.track_id, Track.band_id, Track.url, FanItem.fan_id)
             .select_from(FanItem)
             .join(Track, Track.id == FanItem.track_id)
             .where(FanItem.track_id.isnot(None), FanItem.fan_id.in_(neighbours))
-            .group_by(FanItem.track_id, Track.band_id, Track.url)
         )
     ).all()
+    track_owners: dict[int, set[int]] = {}
+    track_meta: dict[int, tuple[int | None, str | None]] = {}
+    for track_id, band_id, url, fan_id in track_pairs:
+        track_owners.setdefault(track_id, set()).add(fan_id)
+        track_meta[track_id] = (band_id, url)
 
-    for track_id, band_id, url, co_owners in track_rows:
+    for track_id, owners in track_owners.items():
+        band_id, url = track_meta[track_id]
         if (
             track_id in excl.track_ids
             or band_id in excl.band_ids
@@ -426,14 +532,23 @@ async def compute_recommendations(
         seed_tags = track_prov.get(track_id, set())
         if exclude_seed_tags & seed_tags:
             continue
+        candidates += 1
+        co_owners = len(owners)
+        if not _passes_floor(co_owners):
+            continue
+        co_owner_weight = _co_owner_weight(owners)
         scored.append(
             ScoredItem(
                 item_type=str(ItemType.TRACK),
                 album_id=None,
                 track_id=track_id,
-                score=W_CO_OWNER * co_owners,
+                score=W_CO_OWNER * co_owner_weight,
                 band_id=band_id,
-                reasons={"co_owners": co_owners, "seed_tags": sorted(seed_tags)},
+                reasons={
+                    "co_owners": co_owners,
+                    "co_owner_weight": co_owner_weight,
+                    "seed_tags": sorted(seed_tags),
+                },
             )
         )
 
@@ -448,6 +563,13 @@ async def compute_recommendations(
                 seen_bands.add(s.band_id)
             deduped.append(s)
         scored = deduped
+
+    if stats_out is not None:
+        stats_out["min_co_owners"] = min_co_owners
+        stats_out["weighted"] = weighted_co_owners
+        stats_out["candidates"] = candidates
+        stats_out["filtered_by_floor"] = filtered_by_floor
+
     return scored[:limit] if limit else scored
 
 
@@ -476,11 +598,17 @@ async def store_recommendations(
 async def curate(
     session: AsyncSession, *, scan_id: int | None = None, user: User | None = None,
     limit: int | None = None, exclude_seed_tags: set[str] | None = None,
+    min_co_owners: int | None = None, weighted_co_owners: bool | None = None,
+    stats_out: dict | None = None,
 ) -> list[ScoredItem]:
     """Compute + persist recommendations for one scan. Given `scan_id`, the owning
     user is resolved from the scan itself (so this stays self-sufficient from just
     an id); with `scan_id` omitted, `user` is required and their collection scan
-    is used (get-or-created). Returns the stored, ranked list."""
+    is used (get-or-created). Returns the stored, ranked list.
+
+    `min_co_owners`/`weighted_co_owners` are test overrides only — see
+    `compute_recommendations`. Real callers leave them unset so every call site
+    reads the same `Settings.curation_*` values."""
     if scan_id is None:
         if user is None:
             raise ValueError("user is required when scan_id is not given")
@@ -495,7 +623,9 @@ async def curate(
         if user is None:
             raise ValueError("scan's owning user not found")
     scored = await compute_recommendations(
-        session, scan, user, limit=limit, exclude_seed_tags=exclude_seed_tags
+        session, scan, user, limit=limit, exclude_seed_tags=exclude_seed_tags,
+        min_co_owners=min_co_owners, weighted_co_owners=weighted_co_owners,
+        stats_out=stats_out,
     )
     await store_recommendations(session, scored, scan.id)
     return scored
