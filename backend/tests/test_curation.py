@@ -572,6 +572,149 @@ async def test_settings_reach_engine_with_no_kwargs(session: AsyncSession, monke
     assert {s.track_id for s in scored if s.track_id} == set()
 
 
+# ── ADR-0003: bound the co-owner weight (amends ADR-0002) ─────────────────────
+
+
+async def _build_scale_gap_graph(session: AsyncSession) -> tuple[User, dict[str, int]]:
+    """me owns a seed album (anchors neighbours) plus a 200-album overlap pool.
+    50 'tight' fans each share only 2 of those 200 but jointly own TightItem (50
+    co-owners); one 'whale' fan shares all 200 but is the sole owner of WhaleItem
+    (1 co-owner). Unbounded-linear weighting (1 + overlap) scores WhaleItem at
+    201 against TightItem's 50 * 3 = 150 — the whale wins, which is exactly the
+    inversion ADR-0003 exists to fix. Damped, TightItem must win."""
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(me)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+
+    band_seed = Band(bandcamp_id=1, name="Seed", kind=BandKind.ARTIST)
+    band_pool = Band(bandcamp_id=2, name="Pool", kind=BandKind.ARTIST)
+    band_tight = Band(bandcamp_id=3, name="TightBand", kind=BandKind.ARTIST)
+    band_whale = Band(bandcamp_id=4, name="WhaleBand", kind=BandKind.ARTIST)
+    session.add_all([band_seed, band_pool, band_tight, band_whale])
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=1, title="Seed", band_id=band_seed.id)
+    pool = [Album(bandcamp_id=100 + i, title=f"Pool{i}", band_id=band_pool.id) for i in range(200)]
+    tight_item = Album(bandcamp_id=900, title="TightItem", band_id=band_tight.id)
+    whale_item = Album(bandcamp_id=901, title="WhaleItem", band_id=band_whale.id)
+    session.add_all([seed_album, *pool, tight_item, whale_item])
+    await session.flush()
+
+    tight_fans = [
+        Fan(bandcamp_fan_id=10 + i, username=f"tight{i}", url=f"https://bandcamp.com/tight{i}")
+        for i in range(50)
+    ]
+    whale = Fan(bandcamp_fan_id=500, username="whale", url="https://bandcamp.com/whale")
+    session.add_all([*tight_fans, whale])
+    await session.flush()
+
+    rows = [FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id)]
+    rows += [FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a.id) for a in pool]
+    for f in tight_fans:
+        rows.append(AlbumSupporter(album_id=seed_album.id, fan_id=f.id))
+        rows.append(FanItem(fan_id=f.id, item_type=ItemType.ALBUM, album_id=pool[0].id))
+        rows.append(FanItem(fan_id=f.id, item_type=ItemType.ALBUM, album_id=pool[1].id))
+        rows.append(FanItem(fan_id=f.id, item_type=ItemType.ALBUM, album_id=tight_item.id))
+    rows.append(AlbumSupporter(album_id=seed_album.id, fan_id=whale.id))
+    rows += [FanItem(fan_id=whale.id, item_type=ItemType.ALBUM, album_id=a.id) for a in pool]
+    rows.append(FanItem(fan_id=whale.id, item_type=ItemType.ALBUM, album_id=whale_item.id))
+
+    session.add_all(rows)
+    await session.commit()
+    return user, {"tight_item": tight_item.id, "whale_item": whale_item.id}
+
+
+async def test_scale_gap_many_tight_beats_one_whale(session: AsyncSession) -> None:
+    user, ids = await _build_scale_gap_graph(session)
+    scored = await _recs(session, user, one_per_band=False, weighted_co_owners=True)
+    by_album = {s.album_id: s for s in scored if s.album_id is not None}
+    tight, whale = by_album[ids["tight_item"]], by_album[ids["whale_item"]]
+    assert tight.reasons["co_owners"] == 50
+    assert whale.reasons["co_owners"] == 1
+    assert tight.score > whale.score
+    assert scored.index(tight) < scored.index(whale)
+
+
+async def _build_tag_ceiling_graph(session: AsyncSession) -> tuple[User, dict[str, int]]:
+    """me owns a seed album plus 500 albums carrying one genre tag — an extreme
+    tag_profile. TaggedItem has 1 co-owner and carries that tag; PlainItem has 3
+    co-owners and no matching tag. The tag term must not let TaggedItem outrank
+    PlainItem — it is a tie-breaker between items with the SAME co-owner count,
+    not a second axis that can outweigh a real second or third co-owner."""
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(me)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+
+    band_seed = Band(bandcamp_id=1, name="Seed", kind=BandKind.ARTIST)
+    band_pool = Band(bandcamp_id=2, name="Pool", kind=BandKind.ARTIST)
+    band_tagged = Band(bandcamp_id=3, name="Tagged", kind=BandKind.ARTIST)
+    band_plain = Band(bandcamp_id=4, name="Plain", kind=BandKind.ARTIST)
+    session.add_all([band_seed, band_pool, band_tagged, band_plain])
+    await session.flush()
+
+    tag = Tag(name="megagenre")
+    session.add(tag)
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=1, title="Seed", band_id=band_seed.id)
+    pool = [Album(bandcamp_id=100 + i, title=f"Pool{i}", band_id=band_pool.id) for i in range(500)]
+    tagged_item = Album(bandcamp_id=900, title="TaggedItem", band_id=band_tagged.id)
+    plain_item = Album(bandcamp_id=901, title="PlainItem", band_id=band_plain.id)
+    session.add_all([seed_album, *pool, tagged_item, plain_item])
+    await session.flush()
+
+    session.add_all(
+        [AlbumTag(album_id=a.id, tag_id=tag.id) for a in pool]
+        + [AlbumTag(album_id=tagged_item.id, tag_id=tag.id)]
+    )
+
+    lone_fan = Fan(bandcamp_fan_id=10, username="one", url="https://bandcamp.com/one")
+    trio = [
+        Fan(bandcamp_fan_id=20 + i, username=f"three{i}", url=f"https://bandcamp.com/three{i}")
+        for i in range(3)
+    ]
+    session.add_all([lone_fan, *trio])
+    await session.flush()
+
+    rows = [FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id)]
+    rows += [FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a.id) for a in pool]
+    rows.append(AlbumSupporter(album_id=seed_album.id, fan_id=lone_fan.id))
+    rows.append(FanItem(fan_id=lone_fan.id, item_type=ItemType.ALBUM, album_id=tagged_item.id))
+    for f in trio:
+        rows.append(AlbumSupporter(album_id=seed_album.id, fan_id=f.id))
+        rows.append(FanItem(fan_id=f.id, item_type=ItemType.ALBUM, album_id=plain_item.id))
+
+    session.add_all(rows)
+    await session.commit()
+    return user, {"tagged_item": tagged_item.id, "plain_item": plain_item.id}
+
+
+async def test_tag_ceiling_cannot_outrank_a_second_co_owner(session: AsyncSession) -> None:
+    user, ids = await _build_tag_ceiling_graph(session)
+    scored = await _recs(session, user, one_per_band=False, weighted_co_owners=True)
+    by_album = {s.album_id: s for s in scored if s.album_id is not None}
+    tagged, plain = by_album[ids["tagged_item"]], by_album[ids["plain_item"]]
+    assert tagged.reasons["co_owners"] == 1
+    assert plain.reasons["co_owners"] == 3
+    assert tagged.reasons["tag_affinity"] == 500  # the raw sum stays unbounded, only score damps
+    assert plain.score > tagged.score
+    assert scored.index(plain) < scored.index(tagged)
+
+
+def test_damped_overlap_weight_is_sublinear_in_overlap() -> None:
+    """10x more overlap must not move a co-owner's own weight anywhere near 10x
+    — sublinearity is what keeps a deeply-crawled or huge-collection neighbour
+    from drowning out many tight-overlap ones (ADR-0003)."""
+    from app.curation.engine import _damped_overlap_weight
+
+    for overlap in (5, 20, 50, 100, 500, 1700):
+        assert _damped_overlap_weight(overlap * 10) < 2 * _damped_overlap_weight(overlap)
+
+
 async def _count(session: AsyncSession, model) -> int:
     from sqlalchemy import func
 

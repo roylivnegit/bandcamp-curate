@@ -13,6 +13,7 @@ genres you already collect. Everything already in your world is excluded first:
 Recommendations are recomputed wholesale (clear + insert) so re-running is idempotent.
 """
 
+import math
 from dataclasses import dataclass, field
 
 from sqlalchemy import delete, func, select
@@ -44,7 +45,14 @@ from app.enums import ItemType, ScanKind, ScanStatus
 # Weights — co-ownership dominates; tag affinity breaks ties. Tune later
 # (eventually from an active `curation_rules` row).
 W_CO_OWNER = 1.0
+# Unweighted path only (weighted_co_owners=False) — the pre-ADR-0002 formula, raw
+# tag_affinity. Parity tests pin this exact value; do not touch it for the weighted path.
 W_TAG_AFFINITY = 0.25
+# ADR-0003: weighted path only. co_owner_weight there sums `1 + log1p(overlap)` per fan,
+# so a second real co-owner's minimum marginal contribution is 1.0. log1p(tag_affinity)
+# tops out around 8-9 even for a genre that spans your whole ~1,700-item collection, so
+# 0.1 * log1p(...) stays under 1.0 — the tag term alone can never outrank one more co-owner.
+W_TAG_AFFINITY_WEIGHTED = 0.1
 
 
 @dataclass(slots=True)
@@ -321,13 +329,15 @@ async def _neighbour_overlap(
 ) -> dict[int, int]:
     """fan_id -> how many of YOUR owned items that neighbour also owns.
 
-    A co-owner's weight is `1 + overlap(fan)` — a stranger who shares more of your
-    taste counts for more than one who merely happens to own the same record.
+    A co-owner's weight is `1 + log1p(overlap(fan))` — a stranger who shares more of
+    your taste counts for more than one who merely happens to own the same record.
     Deliberately a count, not a ratio: the only available denominator (a fan's own
     fan_items count) is crawl progress, not collection size — a collection visit
     is bounded and parked mid-page (crawl/service.py PAGES_PER_VISIT), so dividing
     by it would boost the fans we've crawled least, not the ones who share the
-    most taste.
+    most taste. The numerator has the same disease (a fan paged deeper has more
+    measurable overlap) — `log1p` doesn't remove that bias, it bounds it: 10x the
+    overlap moves a fan's own weight by roughly 1.6x, not 10x (ADR-0003).
     """
     if not neighbours:
         return {}
@@ -353,6 +363,15 @@ async def _neighbour_overlap(
         for fan_id, n in rows:
             overlap[fan_id] = overlap.get(fan_id, 0) + n
     return overlap
+
+
+def _damped_overlap_weight(overlap: int) -> float:
+    """Per-fan multiplier: `1 + log1p(overlap)` — how much one co-owner's overlap
+    with your own collection inflates their vote. Monotone, >= 1.0 at overlap 0,
+    and sublinear so a deeply-crawled or huge-overlap neighbour can't drown out
+    many tight-overlap ones (ADR-0003; see the scale-gap and sublinearity tests
+    in test_curation.py)."""
+    return 1.0 + math.log1p(overlap)
 
 
 async def compute_recommendations(
@@ -429,7 +448,11 @@ async def compute_recommendations(
     def _co_owner_weight(owners: set[int]) -> float:
         if not weighted_co_owners:
             return float(len(owners))
-        return float(sum(1 + neighbour_overlap.get(f, 0) for f in owners))
+        # log1p, not the raw overlap count: unbounded-linear let one neighbour with
+        # overlap 200 (score 201) beat fifty distinct tight co-owners at overlap 2
+        # each (score 150) — the exact inversion of "many people who share my taste
+        # own this" (ADR-0003). Damped: overlap 2 -> 2.10, 200 -> 6.30, 1700 -> 8.44.
+        return float(sum(_damped_overlap_weight(neighbour_overlap.get(f, 0)) for f in owners))
 
     scored: list[ScoredItem] = []
     candidates = 0
@@ -488,7 +511,14 @@ async def compute_recommendations(
         tags = album_tags.get(album_id, [])
         matched = [tag_names[t] for t in tags if t in tag_profile]
         tag_affinity = sum(tag_profile.get(t, 0) for t in tags)
-        score = W_CO_OWNER * co_owner_weight + W_TAG_AFFINITY * tag_affinity
+        # reasons["tag_affinity"] below stays the raw sum regardless — only the
+        # score's contribution is damped, and only on the weighted path (parity
+        # with weighting off requires the untouched pre-ADR-0002 formula).
+        if weighted_co_owners:
+            tag_term = W_TAG_AFFINITY_WEIGHTED * math.log1p(tag_affinity)
+        else:
+            tag_term = W_TAG_AFFINITY * tag_affinity
+        score = W_CO_OWNER * co_owner_weight + tag_term
         scored.append(
             ScoredItem(
                 item_type=str(ItemType.ALBUM),
