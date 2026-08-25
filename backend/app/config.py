@@ -110,6 +110,16 @@ class Settings(BaseSettings):
     # The deployed React app's origin, for CORS (the frontend is a separate service).
     frontend_origin: str = "http://localhost:5173"
 
+    # Curation: an item owned by fewer than this many taste-neighbours isn't a
+    # recommendation at all. 1 = today's behaviour (no floor) — the right value
+    # depends on the co_owners distribution, which only Roy can read locally.
+    curation_min_co_owners: int = 1
+    # Weight each co-owner by how many of YOUR owned items they also own (a count,
+    # never a ratio — see engine._neighbour_overlap for why dividing by collection
+    # size would boost under-crawled fans). On by default: at floor 1 this can only
+    # reorder the feed, never shrink it.
+    curation_weighted_co_owners: bool = True
+
     @property
     def nimble_configured(self) -> bool:
         return bool(self.nimble_api_key)

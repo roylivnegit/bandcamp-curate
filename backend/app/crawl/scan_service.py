@@ -358,12 +358,13 @@ async def _curate_progress(
         # returned zero. Cheap and idempotent: it only fills fields still NULL.
         await _resolve_seeds(session, scan_id)
     try:
+        stats_out: dict = {}
         async with sessionmaker() as session:
-            scored = await curate(session, scan_id=scan_id)
+            scored = await curate(session, scan_id=scan_id, stats_out=stats_out)
         async with sessionmaker() as session:
             scan = await session.get(Scan, scan_id)
             if scan is not None:
-                scan.stats = {**(scan.stats or {}), "recommendations": len(scored)}
+                scan.stats = {**(scan.stats or {}), "recommendations": len(scored), **stats_out}
                 await session.commit()
         logger.info("scan %s: %d recommendations so far", scan_id, len(scored))
     except Exception as exc:  # noqa: BLE001 — a progress refresh must never kill the crawl
@@ -426,8 +427,9 @@ async def finalize_scan(
 
     async with sessionmaker() as session:
         await _resolve_seeds(session, scan_id)
+    stats_out: dict = {}
     async with sessionmaker() as session:
-        scored = await curate(session, scan_id=scan_id)
+        scored = await curate(session, scan_id=scan_id, stats_out=stats_out)
         used_after = await runner.requests_used(session)
 
     async with sessionmaker() as session:
@@ -437,6 +439,7 @@ async def finalize_scan(
         scan.stats = {
             "recommendations": len(scored),
             "credits": used_after - credits_at_start,
+            **stats_out,
         }
         await session.commit()
         await session.refresh(scan)
