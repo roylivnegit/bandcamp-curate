@@ -32,7 +32,9 @@ async def main() -> int:
     print(f"parsing_status={result.parsing_status}  quota_remaining={result.quota_remaining}")
     print(f"html_bytes={len(result.html or '')}")
     if result.entities is not None:
-        print(f"entities keys: {list(result.entities)[:10] if hasattr(result.entities, '__iter__') else result.entities}")
+        iterable = hasattr(result.entities, "__iter__")
+        keys = list(result.entities)[:10] if iterable else result.entities
+        print(f"entities keys: {keys}")
     return 0
 
 

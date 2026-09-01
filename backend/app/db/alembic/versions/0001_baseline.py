@@ -12,10 +12,9 @@ from collections.abc import Sequence
 
 from alembic import op
 
-from app.db.base import Base
-
 # Import models so every table registers on Base.metadata before create_all.
 from app.db import models  # noqa: F401
+from app.db.base import Base
 
 revision: str = "0001_baseline"
 down_revision: str | None = None

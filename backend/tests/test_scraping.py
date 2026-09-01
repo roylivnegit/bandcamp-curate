@@ -43,7 +43,9 @@ async def test_nimble_success_parses_entities_and_sends_bearer() -> None:
         seen["auth"] = request.headers.get("authorization")
         return httpx.Response(
             200,
-            json={"data": {"html": "<html/>", "parsing": {"status": "success", "entities": {"a": 1}}}},
+            json={
+                "data": {"html": "<html/>", "parsing": {"status": "success", "entities": {"a": 1}}}
+            },
             headers={"X-RateLimit-Remaining": "42"},
         )
 
