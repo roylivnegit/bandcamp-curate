@@ -31,13 +31,13 @@ That is the point — the gaps are the first work.
   Build it from `backend/tests/fixtures/`, never from Neon. No real user data leaves that
   database.
 
-- [ ] **E0-3 · CI.** `.github/workflows/ci.yml` running on every PR: `pytest -q`,
+- [x] **E0-3 · CI.** `.github/workflows/ci.yml` running on every PR: `pytest -q`,
   `ruff check`, `npm test`, `npm run lint`, `tsc -b`. Cache pip and npm.
   *Why:* there is no CI at all today. "Auto-merge when green" has nothing producing green.
-  **Blocked on Roy** — the `roylivnegit` GitHub token has no `workflow` scope, so it cannot
-  push a file under `.github/workflows/`. Confirmed for real (2026-09-01): the file is
-  drafted and committed locally; pushing it needs `gh auth refresh -h github.com -s workflow`
-  run interactively by Roy first.
+  Landed 2026-09-01 (#19), after Roy granted the `workflow` scope
+  (`gh auth refresh -h github.com -s workflow`). First real run caught a genuine bug on its
+  own first pass — `scripts.co_owner_stats` only imported under `python -m pytest`, not bare
+  `pytest` — fixed in #20 before #19 could go green.
 
 - [x] **E0-4 · E2E harness.** `frontend/e2e/` on Playwright, headless Chromium. Boots the API
   and the Vite dev server against the E0-1 sandbox on the ports in `team/.env.team`, then
@@ -87,8 +87,13 @@ ones.
 
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
-  release's buyers or likers, or a genre chart? The Researcher answers this in a browser and
-  writes it to `memory/research/`. Do not start building a provider before that note exists.
+  release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
+  start building a provider before that note exists.
+  **Real Nimble usage now authorized for this item specifically** (2026-09-01), POC only,
+  capped at 100 requests total — see `team/memory/research/nimble-usage.md` for the running
+  count, kept up to date every time this key is spent. Stop and ask Roy (email or in-session)
+  before going over 100; do not keep going past the cap on your own judgment. This is the
+  ONLY backlog item this key may be used for.
 
 - [ ] **Per-user crawl budgets.** `crawl_max_requests` and `provider_usage` are global, so one
   user's deep scan starves everyone else's. From `CLAUDE.md` "Immediate next steps".
