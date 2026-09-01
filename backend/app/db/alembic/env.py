@@ -6,11 +6,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
-from app.db.base import Base
-from app.db.url import normalized_async_url
 
 # Import models so their tables register on Base.metadata.
 from app.db import models  # noqa: F401
+from app.db.base import Base
+from app.db.url import normalized_async_url
 
 config = context.config
 if config.config_file_name is not None:
