@@ -1,0 +1,37 @@
+{
+  "$comment": "Restrictions for unattended agent turns; cycle.py passes this with --settings. This file only ever takes capability away. It is the last line of defence for the things in charter.md that must never happen, so they are enforced here rather than left to a role prompt to remember.",
+  "permissions": {
+    "deny": [
+      "Read(//Users/roylivne/crate-digger/.env)",
+      "Read(//Users/roylivne/crate-digger/.env.*)",
+      "Read(//Users/roylivne/.aws/**)",
+      "Read(//Users/roylivne/.ssh/**)",
+      "Read(//Users/roylivne/.config/gh/**)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push origin main:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh api -X DELETE:*)",
+      "Bash(gh auth:*)",
+      "Bash(sudo:*)",
+      "Bash(brew:*)",
+      "Bash(launchctl:*)",
+      "Bash(crontab:*)",
+      "Bash(python -m scripts.crawl:*)",
+      "Bash(python3 -m scripts.crawl:*)",
+      "Bash(python -m scripts.dump_extract:*)",
+      "Bash(python3 -m scripts.dump_extract:*)",
+      "Bash(python -m scripts.verify_nimble:*)",
+      "Bash(python3 -m scripts.verify_nimble:*)",
+      "Bash(security:*)",
+      "Bash(smtplib:*)",
+      "Read(//Users/roylivne/Library/Keychains/**)"
+    ]
+  },
+  "env": {
+    "NIMBLE_API_KEY": "",
+    "TEAM_AGENT": "1"
+  },
+  "includeCoAuthoredBy": false,
+  "cleanupPeriodDays": 30
+}

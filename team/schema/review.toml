@@ -1,0 +1,27 @@
+# The Reviewer's verdict.
+[meta]
+name = "review"
+description = "An adversarial read of the diff against the ADR."
+
+[[field]]
+name = "verdict"
+type = "enum"
+values = ["pass", "block"]
+required = true
+
+[[field]]
+name = "summary"
+type = "text"
+required = true
+help = "One paragraph: what the diff does and whether it matches the ADR."
+
+[[field]]
+name = "findings"
+type = "object[]"
+schema = "finding"
+
+[[field]]
+name = "invariants_checked"
+type = "string[]"
+required = true
+help = "Each invariant from the ADR, and whether it holds. Check them one by one."

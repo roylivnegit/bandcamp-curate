@@ -1,0 +1,6 @@
+*.log
+.cycle.pid
+.cycle.lock
+*-pr-body.md
+*-summary.md
+dashboard.html

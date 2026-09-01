@@ -1,0 +1,51 @@
+[meta]
+name = "retro"
+description = "What this cycle learned."
+
+[[field]]
+name = "shipped"
+type = "text"
+required = true
+help = "What actually landed, or what did not and why. Technical detail is fine here."
+
+[[field]]
+name = "plain_shipped"
+type = "text"
+required = true
+help = """One short sentence for the cycle email, written for someone who has never seen \
+this codebase — no file names, no code identifiers, no engineering terms. What actually \
+changed for the music feed (or, if nothing did, say so plainly and why)."""
+
+[[field]]
+name = "closer_to_goal"
+type = "enum"
+values = ["yes", "marginal", "no", "too-early-to-tell"]
+required = true
+help = "Did this get Roy closer to better music, faster? Answer honestly. 'No, but we learned X' is a good cycle."
+
+[[field]]
+name = "learned"
+type = "string[]"
+required = true
+help = "Goes to memory/. This is the only thing that survives the cycle."
+
+[[field]]
+name = "failed"
+type = "string[]"
+help = "Approaches that did not work, for memory/tried-and-failed.md. Write these down even when they are boring."
+
+[[field]]
+name = "backlog_add"
+type = "string[]"
+help = "New items discovered during the cycle."
+
+[[field]]
+name = "next_cycle"
+type = "string"
+required = true
+help = "What the next standup should look at first."
+
+[[field]]
+name = "nearly_slipped"
+type = "string"
+help = "QA: what almost got through, and what gate would have caught it."

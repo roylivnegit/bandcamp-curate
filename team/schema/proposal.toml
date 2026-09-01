@@ -1,0 +1,55 @@
+[meta]
+name = "proposal"
+description = "A candidate item for the cycle."
+
+[[field]]
+name = "title"
+type = "string"
+required = true
+
+[[field]]
+name = "problem"
+type = "text"
+required = true
+help = "The user-visible problem, in one or two sentences, with no table or function names in it. If you cannot write it that way, you do not understand it yet."
+
+[[field]]
+name = "proposal"
+type = "text"
+required = true
+help = "What to build."
+
+[[field]]
+name = "why_now"
+type = "text"
+required = true
+help = "Why this cycle and not later."
+
+[[field]]
+name = "surface"
+type = "enum"
+values = ["curation", "crawl", "api", "frontend", "new-source", "infra", "research", "team"]
+required = true
+
+[[field]]
+name = "effort"
+type = "enum"
+values = ["S", "M", "L"]
+required = true
+help = "S fits comfortably in one cycle. M fills one. L does not fit and must be split."
+
+[[field]]
+name = "measure"
+type = "string"
+required = true
+help = "How we would know it worked."
+
+[[field]]
+name = "kill_criteria"
+type = "string"
+help = "What would make you drop this idea."
+
+[[field]]
+name = "evidence"
+type = "string[]"
+help = "file:line, a metric, or a research note. Required to be taken seriously."
