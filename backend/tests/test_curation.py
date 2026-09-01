@@ -356,6 +356,43 @@ async def test_seed_tag_provenance_and_exclusion(session: AsyncSession) -> None:
     assert a4.id not in {s.album_id for s in filtered}  # generated-from-rock → gone
 
 
+async def test_seed_tag_provenance_falls_back_to_band_tags(session: AsyncSession) -> None:
+    """A seed album with no page-level tags of its own must still produce "via …"
+    provenance from its band's aggregated tags — same fallback
+    `_effective_album_tags` already applies when scoring, now applied to the
+    *seed* side of provenance too, not just the candidate side."""
+    me = Fan(bandcamp_fan_id=30, username="me4", url="https://bandcamp.com/me4", is_me=True)
+    f2 = Fan(bandcamp_fan_id=31, username="f4", url="https://bandcamp.com/f4")
+    seed_band = Band(bandcamp_id=401, name="SeedBand", kind=BandKind.ARTIST)
+    cand_band = Band(bandcamp_id=402, name="CandBand", kind=BandKind.ARTIST)
+    session.add_all([me, f2, seed_band, cand_band])
+    await session.flush()
+    user = User(username="me4", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=401, title="Seed", band_id=seed_band.id)  # no page tags
+    cand_album = Album(bandcamp_id=402, title="Cand", band_id=cand_band.id)
+    session.add_all([seed_album, cand_album])
+    await session.flush()
+
+    electronic = Tag(name="electronic")
+    session.add(electronic)
+    await session.flush()
+    session.add(BandTag(band_id=seed_band.id, tag_id=electronic.id))  # band-level only
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=cand_album.id),
+        AlbumSupporter(album_id=seed_album.id, fan_id=f2.id),
+    ])
+    await session.commit()
+
+    scored = await _recs(session, user, min_co_owners=1)
+    cand_rec = next(s for s in scored if s.album_id == cand_album.id)
+    assert set(cand_rec.reasons["seed_tags"]) == {"electronic"}
+
+
 async def test_seed_tags_lists_my_album_genres(session: AsyncSession) -> None:
     from app.curation.engine import seed_tags
 
