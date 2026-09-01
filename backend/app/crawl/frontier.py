@@ -15,10 +15,11 @@ Both use SAVEPOINTs, so losing a race never discards the caller's pending work.
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db.models import CrawlFrontier
 from app.enums import CrawlKind, CrawlStatus
 
@@ -38,6 +39,19 @@ STALE_CLAIM_AFTER = timedelta(minutes=30)
 _CLAIM_ATTEMPTS = 8
 
 
+async def size(session: AsyncSession, scan_id: int) -> int:
+    """Total frontier rows (any status) queued so far for one scan — the basis
+    for the secondary fan-out cap (`Settings.crawl_max_frontier_size`), which
+    bounds crawl width independently of depth."""
+    return (
+        await session.execute(
+            select(func.count())
+            .select_from(CrawlFrontier)
+            .where(CrawlFrontier.scan_id == scan_id)
+        )
+    ).scalar_one()
+
+
 async def enqueue(
     session: AsyncSession,
     url: str,
@@ -46,6 +60,7 @@ async def enqueue(
     scan_id: int,
     priority: int = 0,
     depth: int = 0,
+    max_frontier_size: int | None = None,
 ) -> bool:
     """Add a (scan_id, url, kind) to the frontier if absent. True if newly added.
 
@@ -53,7 +68,18 @@ async def enqueue(
     moment, so a lost check-then-insert race is normal, not exotic. The unique
     constraint is the real arbiter and an IntegrityError just means "someone else
     added it" — the same answer as finding it in the select.
+
+    `max_frontier_size` caps the scan's TOTAL rows (any status) — a secondary
+    fan-out bound independent of `depth`, since depth 3 on one popular album can
+    still fan out very wide. Defaults to `Settings.crawl_max_frontier_size` (None
+    = unbounded) so every call site — the live crawl, the cross-scan replay path,
+    a scan's own seeding — sees the same bound with no argument passed; tests
+    override explicitly. The check is a plain COUNT before insert, so under
+    concurrency a handful of entries can land past the cap — a soft bound, not a
+    hard guarantee, same tradeoff as the rest of the frontier's dedup.
     """
+    if max_frontier_size is None:
+        max_frontier_size = get_settings().crawl_max_frontier_size
     kind = str(kind)
     existing = (
         await session.execute(
@@ -66,6 +92,14 @@ async def enqueue(
     ).scalar_one_or_none()
     if existing is not None:
         return False
+    if max_frontier_size is not None:
+        current = await size(session, scan_id)
+        if current >= max_frontier_size:
+            logger.debug(
+                "not enqueuing %s (%s): scan %d already has %d/%d frontier rows",
+                url, kind, scan_id, current, max_frontier_size,
+            )
+            return False
     try:
         # SAVEPOINT, not the outer transaction: the caller has a page's worth of
         # ingested rows pending in this same session, and losing those to a

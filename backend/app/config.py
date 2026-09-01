@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
     crawl_max_requests: int = 5000
 
+    # Secondary fan-out bound, independent of `crawl_max_depth`: total frontier
+    # rows (any status) ONE scan may ever queue. Depth 3 on a single popular album
+    # can still fan out to thousands of collectors' collections regardless of how
+    # shallow the depth bound is — this caps that width directly. None = unbounded
+    # (today's behavior). See CLAUDE.md "Immediate next steps".
+    crawl_max_frontier_size: int | None = None
+
     # Frontier entries crawled in parallel within one slice. A Nimble render takes
     # 3-35s, so a serial drain is almost entirely idle waiting — at 1 this managed
     # ~3 fetches/min against a limiter allowing far more. Each worker holds its own

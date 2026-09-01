@@ -358,6 +358,45 @@ async def test_frontier_is_scoped_per_scan(session: AsyncSession) -> None:
     assert await frontier.pending_count(session, scan_id=2) == 0  # the one we claimed
 
 
+async def test_enqueue_respects_max_frontier_size(session: AsyncSession) -> None:
+    """A secondary fan-out bound, independent of depth: once a scan's frontier
+    already holds `max_frontier_size` rows, further enqueues are refused — even
+    for a URL that would otherwise be genuinely new work."""
+    assert await frontier.enqueue(
+        session, "https://a", CrawlKind.ALBUM, scan_id=SCAN, max_frontier_size=2
+    ) is True
+    assert await frontier.enqueue(
+        session, "https://b", CrawlKind.ALBUM, scan_id=SCAN, max_frontier_size=2
+    ) is True
+    assert await frontier.enqueue(
+        session, "https://c", CrawlKind.ALBUM, scan_id=SCAN, max_frontier_size=2
+    ) is False
+    await session.commit()
+    assert await _count(session, CrawlFrontier) == 2
+
+    # The cap is per-scan — a different scan starts from zero.
+    assert await frontier.enqueue(
+        session, "https://c", CrawlKind.ALBUM, scan_id=SCAN + 1, max_frontier_size=2
+    ) is True
+
+
+async def test_frontier_size_counts_every_status(session: AsyncSession) -> None:
+    """The cap must bound total width, not just work still pending — a scan that
+    finished crawling 5,000 albums should not be free to fan out to 5,000 more."""
+    await frontier.enqueue(session, "https://a", CrawlKind.ALBUM, scan_id=SCAN)
+    await frontier.enqueue(session, "https://b", CrawlKind.ALBUM, scan_id=SCAN)
+    await session.commit()
+    entry = await frontier.claim_next(session, scan_id=SCAN)
+    assert entry is not None
+    await frontier.mark_done(session, entry)
+    await session.commit()
+
+    assert await frontier.size(session, SCAN) == 2  # the done row still counts
+    assert await frontier.enqueue(
+        session, "https://c", CrawlKind.ALBUM, scan_id=SCAN, max_frontier_size=2
+    ) is False
+
+
 async def test_a_scan_never_claims_legacy_entries(session: AsyncSession) -> None:
     """The July 2026 operator crawl left 11.5k rows behind and every later scan
     inherited them. Legacy rows (scan_id NULL) must be invisible to scans."""
