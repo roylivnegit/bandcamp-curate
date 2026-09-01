@@ -206,19 +206,29 @@ async def build_exclusions(session: AsyncSession, me: Fan, user: User) -> Exclus
 
 
 async def _my_tag_profile(session: AsyncSession, me: Fan) -> dict[int, int]:
-    """Tag id → how many of your owned albums carry it (your genre fingerprint).
-    Falls back to the band's tags for albums whose own page hasn't been
-    tag-crawled (see `_effective_album_tags`) — otherwise an owned album with
-    no page fetch yet contributes nothing to your fingerprint at all."""
+    """Tag id → how many of your owned albums/tracks carry it (your genre
+    fingerprint). Falls back to the band's tags where the item's own page
+    hasn't been tag-crawled (see `_effective_album_tags`/`_effective_track_tags`)
+    — otherwise an owned item with no page fetch yet contributes nothing to
+    your fingerprint at all. Albums and tracks count the same way; owning a
+    standalone track tells you just as much about your taste as owning an
+    album does."""
     album_ids = await _scalar_set(
         session,
         select(FanItem.album_id).where(
             FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.album_id.isnot(None)
         ),
     )
+    track_ids = await _scalar_set(
+        session,
+        select(FanItem.track_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.track_id.isnot(None)
+        ),
+    )
     tags_by_album = await _effective_album_tags(session, album_ids)
+    tags_by_track = await _effective_track_tags(session, track_ids)
     profile: dict[int, int] = {}
-    for tag_ids in tags_by_album.values():
+    for tag_ids in (*tags_by_album.values(), *tags_by_track.values()):
         for tag_id in set(tag_ids):
             profile[tag_id] = profile.get(tag_id, 0) + 1
     return profile
@@ -266,6 +276,51 @@ async def _effective_album_tags(session: AsyncSession, album_ids: set[int]) -> d
     for album_id, band_id in band_rows:
         if band_id in band_tags:
             out[album_id] = band_tags[band_id]
+    return out
+
+
+async def _effective_track_tags(session: AsyncSession, track_ids: set[int]) -> dict[int, list[int]]:
+    """track_id → tag_ids: the same idea as `_effective_album_tags`, mirrored for tracks.
+
+    There's no technical difference between an album and a track here — both belong
+    to a band and can carry page-level tags or fall back to `band_tags` — so this is
+    deliberately the same logic, not a track-specific variant of it."""
+    if not track_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(TrackTag.track_id, TrackTag.tag_id).where(
+                TrackTag.track_id.in_(track_ids)
+            )
+        )
+    ).all()
+    out: dict[int, list[int]] = {}
+    for track_id, tag_id in rows:
+        out.setdefault(track_id, []).append(tag_id)
+
+    missing = track_ids - out.keys()
+    if not missing:
+        return out
+    band_rows = (
+        await session.execute(
+            select(Track.id, Track.band_id).where(
+                Track.id.in_(missing), Track.band_id.isnot(None)
+            )
+        )
+    ).all()
+    band_ids = {band_id for _, band_id in band_rows}
+    band_tags: dict[int, list[int]] = {}
+    if band_ids:
+        bt_rows = (
+            await session.execute(
+                select(BandTag.band_id, BandTag.tag_id).where(BandTag.band_id.in_(band_ids))
+            )
+        ).all()
+        for band_id, tag_id in bt_rows:
+            band_tags.setdefault(band_id, []).append(tag_id)
+    for track_id, band_id in band_rows:
+        if band_id in band_tags:
+            out[track_id] = band_tags[band_id]
     return out
 
 
@@ -571,7 +626,15 @@ async def compute_recommendations(
             )
         )
 
-    # ── Track candidates: same pair-level shape as albums ─────────────────────
+    # ── Track candidates: same pair-level shape as albums, same tag treatment too —
+    # there's no technical difference between an album and a track here. ──────────
+    def _excluded_track(tid: int, band_id: int | None, url: str | None) -> bool:
+        return (
+            tid in excl.track_ids
+            or band_id in excl.band_ids
+            or url_host(url) in excl.band_hosts
+        )
+
     track_pairs = (
         await session.execute(
             select(FanItem.track_id, Track.band_id, Track.url, FanItem.fan_id)
@@ -586,13 +649,17 @@ async def compute_recommendations(
         track_owners.setdefault(track_id, set()).add(fan_id)
         track_meta[track_id] = (band_id, url)
 
+    candidate_track_ids = {
+        tid for tid, owners in track_owners.items() if not _excluded_track(tid, *track_meta[tid])
+    }
+    track_tags = await _effective_track_tags(session, candidate_track_ids)
+    track_tag_names = await _tag_names(
+        session, {t for tags in track_tags.values() for t in tags}
+    )
+
     for track_id, owners in track_owners.items():
         band_id, url = track_meta[track_id]
-        if (
-            track_id in excl.track_ids
-            or band_id in excl.band_ids
-            or url_host(url) in excl.band_hosts
-        ):
+        if _excluded_track(track_id, band_id, url):
             continue
         seed_tags = track_prov.get(track_id, set())
         if exclude_seed_tags & seed_tags:
@@ -602,16 +669,26 @@ async def compute_recommendations(
         if not _passes_floor(co_owners):
             continue
         co_owner_weight = _co_owner_weight(owners)
+        tags = track_tags.get(track_id, [])
+        matched = [track_tag_names[t] for t in tags if t in tag_profile]
+        tag_affinity = sum(tag_profile.get(t, 0) for t in tags)
+        if weighted_co_owners:
+            tag_term = W_TAG_AFFINITY_WEIGHTED * math.log1p(tag_affinity)
+        else:
+            tag_term = W_TAG_AFFINITY * tag_affinity
+        score = W_CO_OWNER * co_owner_weight + tag_term
         scored.append(
             ScoredItem(
                 item_type=str(ItemType.TRACK),
                 album_id=None,
                 track_id=track_id,
-                score=W_CO_OWNER * co_owner_weight,
+                score=score,
                 band_id=band_id,
                 reasons={
                     "co_owners": co_owners,
                     "co_owner_weight": co_owner_weight,
+                    "tag_affinity": tag_affinity,
+                    "matched_tags": sorted(set(matched)),
                     "seed_tags": sorted(seed_tags),
                 },
             )
