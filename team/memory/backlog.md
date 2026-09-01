@@ -111,8 +111,17 @@ ones.
   `weighted_share` tracks it fine, the raw `co_owners`/`min_co_owners` floor is the one place
   still exposed to this, not the score. Left open rather than building a fix blind.
 
-- [ ] **Explanations Roy can trust.** A rec with a reason he believes gets clicked; a bare
+- [x] **Explanations Roy can trust.** A rec with a reason he believes gets clicked; a bare
   score does not. `reasons.seed_tags` already exists — build on it.
+  Done (first slice): `curation.engine._seed_tag_provenance()` used to read a seed album/track's
+  genres via a direct `AlbumTag`/`TrackTag` join, so a seed that hadn't been tag-crawled yet
+  produced zero "via …" reasons for everything it surfaced — the exact sparsity
+  `_effective_album_tags`/`_effective_track_tags` already fixed for scoring, but this query
+  bypassed by joining the tag tables directly instead of going through those helpers. Now it
+  computes each seed's *effective* tags first (page tags, falling back to `band_tags`) and
+  attributes provenance from that — so a seed album/track with no page tags of its own still
+  explains what it recommended. Covered by
+  `test_seed_tag_provenance_falls_back_to_band_tags`. PR: see git history.
 
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a

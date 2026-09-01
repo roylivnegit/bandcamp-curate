@@ -342,55 +342,80 @@ async def _seed_tag_provenance(
     candidate's "seed genres" are the tags of the seed item (the album's own tags,
     or a seed track's own tags) whose supporters own the candidate. Explains *why*
     something was recommended.
+
+    Uses `_effective_album_tags`/`_effective_track_tags` for the *seed* item's own
+    genres, same as scoring does — a seed with no page-level tags falls back to its
+    band's `band_tags` instead of contributing no provenance at all. Before this,
+    a seed album/track that hadn't been tag-crawled silently produced zero "via …"
+    reasons for everything it surfaced, the same sparsity `_effective_album_tags`
+    already fixed for scoring but this query bypassed by joining `AlbumTag`/
+    `TrackTag` directly.
     """
     if not seed_album_ids and not seed_track_ids:
         return {}, {}
 
+    seed_album_tags = await _effective_album_tags(session, seed_album_ids)
+    seed_track_tags = await _effective_track_tags(session, seed_track_ids)
+    tag_names = await _tag_names(
+        session,
+        {tid for ids in (*seed_album_tags.values(), *seed_track_tags.values()) for tid in ids},
+    )
+    seed_album_tag_names = {
+        aid: {tag_names[tid] for tid in tids if tid in tag_names}
+        for aid, tids in seed_album_tags.items()
+    }
+    seed_track_tag_names = {
+        tid: {tag_names[gid] for gid in gids if gid in tag_names}
+        for tid, gids in seed_track_tags.items()
+    }
+
     album_prov: dict[int, set[str]] = {}
     track_prov: dict[int, set[str]] = {}
 
-    def _collect(rows: list) -> None:
-        for album_id, track_id, tag_name in rows:
-            if album_id is not None:
-                album_prov.setdefault(album_id, set()).add(tag_name)
-            elif track_id is not None:
-                track_prov.setdefault(track_id, set()).add(tag_name)
+    def _collect(rows: list, seed_names: dict[int, set[str]]) -> None:
+        for seed_id, cand_album_id, cand_track_id in rows:
+            names = seed_names.get(seed_id)
+            if not names:
+                continue
+            if cand_album_id is not None:
+                album_prov.setdefault(cand_album_id, set()).update(names)
+            elif cand_track_id is not None:
+                track_prov.setdefault(cand_track_id, set()).update(names)
 
     # For each seed album: its supporters, and everything those supporters own →
-    # (candidate, seed tag) pairs.
+    # (seed album, candidate) pairs, resolved to the seed's effective tags above.
     if seed_album_ids:
         _collect(
             (
                 await session.execute(
-                    select(FanItem.album_id, FanItem.track_id, Tag.name)
+                    select(AlbumSupporter.album_id, FanItem.album_id, FanItem.track_id)
                     .select_from(AlbumSupporter)
                     .join(FanItem, FanItem.fan_id == AlbumSupporter.fan_id)
-                    .join(AlbumTag, AlbumTag.album_id == AlbumSupporter.album_id)
-                    .join(Tag, Tag.id == AlbumTag.tag_id)
                     .where(
                         AlbumSupporter.album_id.in_(seed_album_ids),
                         FanItem.fan_id != me.id,
                     )
                 )
-            ).all()
+            ).all(),
+            seed_album_tag_names,
         )
 
-    # Same, for each seed track: its supporters, tagged with the seed track's own genres.
+    # Same, for each seed track: its supporters → candidates, resolved to the
+    # seed track's effective genres.
     if seed_track_ids:
         _collect(
             (
                 await session.execute(
-                    select(FanItem.album_id, FanItem.track_id, Tag.name)
+                    select(TrackSupporter.track_id, FanItem.album_id, FanItem.track_id)
                     .select_from(TrackSupporter)
                     .join(FanItem, FanItem.fan_id == TrackSupporter.fan_id)
-                    .join(TrackTag, TrackTag.track_id == TrackSupporter.track_id)
-                    .join(Tag, Tag.id == TrackTag.tag_id)
                     .where(
                         TrackSupporter.track_id.in_(seed_track_ids),
                         FanItem.fan_id != me.id,
                     )
                 )
-            ).all()
+            ).all(),
+            seed_track_tag_names,
         )
 
     return album_prov, track_prov
