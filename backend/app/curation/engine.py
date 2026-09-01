@@ -414,6 +414,30 @@ async def _my_owned_ids(session: AsyncSession, me: Fan) -> tuple[set[int], set[i
     return album_ids, track_ids
 
 
+async def _scan_neighbours(
+    session: AsyncSession, seed_album_ids: set[int], seed_track_ids: set[int], me: Fan
+) -> set[int]:
+    """Fans (other than you) who support any of this scan's seed albums/tracks —
+    its taste-neighbours. Shared by `compute_recommendations` and
+    `neighbour_size_report` so both agree on who counts as a neighbour."""
+    neighbours: set[int] = set()
+    if seed_album_ids:
+        neighbours |= await _scalar_set(
+            session,
+            select(AlbumSupporter.fan_id).where(
+                AlbumSupporter.album_id.in_(seed_album_ids), AlbumSupporter.fan_id != me.id
+            ),
+        )
+    if seed_track_ids:
+        neighbours |= await _scalar_set(
+            session,
+            select(TrackSupporter.fan_id).where(
+                TrackSupporter.track_id.in_(seed_track_ids), TrackSupporter.fan_id != me.id
+            ),
+        )
+    return neighbours
+
+
 async def _neighbour_overlap(
     session: AsyncSession, neighbours: set[int], my_album_ids: set[int], my_track_ids: set[int]
 ) -> dict[int, int]:
@@ -512,21 +536,7 @@ async def compute_recommendations(
     exclude_seed_tags = exclude_seed_tags or set()
 
     # This scan's neighbours: fans who support any of its seed albums or tracks (not me).
-    neighbours = set()
-    if seed_album_ids:
-        neighbours |= await _scalar_set(
-            session,
-            select(AlbumSupporter.fan_id).where(
-                AlbumSupporter.album_id.in_(seed_album_ids), AlbumSupporter.fan_id != me.id
-            ),
-        )
-    if seed_track_ids:
-        neighbours |= await _scalar_set(
-            session,
-            select(TrackSupporter.fan_id).where(
-                TrackSupporter.track_id.in_(seed_track_ids), TrackSupporter.fan_id != me.id
-            ),
-        )
+    neighbours = await _scan_neighbours(session, seed_album_ids, seed_track_ids, me)
 
     neighbour_overlap: dict[int, int] = {}
     if weighted_co_owners:
@@ -791,3 +801,155 @@ async def seed_tags(session: AsyncSession, user: User) -> list[tuple[str, int]]:
         )
     ).all()
     return [(name, n) for name, n in rows]
+
+
+# Upper bounds of the recorded-collection-size buckets `neighbour_size_report` groups
+# neighbours into (the last bucket is "5000+"). Backlog: "Mega-supporters flatten the
+# signal" — measure the actual distribution before building anything to correct for it.
+NEIGHBOUR_SIZE_BUCKETS = (50, 200, 1000, 5000)
+
+
+async def _collection_sizes(session: AsyncSession, fan_ids: set[int]) -> dict[int, int]:
+    """fan_id -> recorded owned-item count (albums + tracks, is_wishlist=false) — a
+    proxy for how big a collector's collection is. A LOWER BOUND: a fan's collection
+    visit pages a bounded slice per visit and can be parked mid-crawl (see
+    `_neighbour_overlap`'s note on the same issue), so an under-crawled mega-collector
+    can read smaller here than their true collection."""
+    if not fan_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(FanItem.fan_id, func.count())
+            .where(FanItem.fan_id.in_(fan_ids), FanItem.is_wishlist.is_(False))
+            .group_by(FanItem.fan_id)
+        )
+    ).all()
+    return {fan_id: n for fan_id, n in rows}
+
+
+async def _candidate_vote_counts(
+    session: AsyncSession, neighbours: set[int], excl: Exclusions
+) -> dict[int, int]:
+    """fan_id -> how many non-excluded candidate albums/tracks they own — the raw,
+    unweighted "votes" that back each item's `co_owners` count and the `min_co_owners`
+    floor. Mirrors the same exclusion checks `compute_recommendations` applies to
+    candidates, so this counts only votes that actually reach the feed."""
+    counts: dict[int, int] = {}
+    if not neighbours:
+        return counts
+
+    def _tally(rows: list, excluded_ids: set[int]) -> None:
+        for fan_id, item_id, band_id, url in rows:
+            excluded = (
+                item_id in excluded_ids
+                or band_id in excl.band_ids
+                or url_host(url) in excl.band_hosts
+            )
+            if excluded:
+                continue
+            counts[fan_id] = counts.get(fan_id, 0) + 1
+
+    album_rows = (
+        await session.execute(
+            select(FanItem.fan_id, FanItem.album_id, Album.band_id, Album.url)
+            .select_from(FanItem)
+            .join(Album, Album.id == FanItem.album_id)
+            .where(FanItem.album_id.isnot(None), FanItem.fan_id.in_(neighbours))
+        )
+    ).all()
+    _tally(album_rows, excl.album_ids)
+
+    track_rows = (
+        await session.execute(
+            select(FanItem.fan_id, FanItem.track_id, Track.band_id, Track.url)
+            .select_from(FanItem)
+            .join(Track, Track.id == FanItem.track_id)
+            .where(FanItem.track_id.isnot(None), FanItem.fan_id.in_(neighbours))
+        )
+    ).all()
+    _tally(track_rows, excl.track_ids)
+    return counts
+
+
+def _size_bucket_label(size: int, bounds: tuple[int, ...]) -> str:
+    lo = 0
+    for b in bounds:
+        if size < b:
+            return f"{lo}-{b}"
+        lo = b
+    return f"{bounds[-1]}+"
+
+
+def _size_bucket_order(bounds: tuple[int, ...]) -> list[str]:
+    labels = []
+    lo = 0
+    for b in bounds:
+        labels.append(f"{lo}-{b}")
+        lo = b
+    labels.append(f"{bounds[-1]}+")
+    return labels
+
+
+async def neighbour_size_report(
+    session: AsyncSession,
+    scan: Scan,
+    user: User,
+    *,
+    buckets: tuple[int, ...] = NEIGHBOUR_SIZE_BUCKETS,
+) -> list[dict]:
+    """Bucket a scan's taste-neighbours by recorded collection size and show how much
+    of the co-ownership signal each bucket contributes: their share of neighbours,
+    their share of raw (unweighted) candidate votes, and their share of the
+    ADR-0003-weighted score. Read-only — computes nothing that gets stored.
+
+    Answers the backlog question ("mega-supporters flatten the signal") with data: a
+    bucket whose `vote_share` badly outruns its `neighbour_share` is dominating the
+    unweighted `co_owners`/`min_co_owners` floor; if its `weighted_share` stays close
+    to `neighbour_share` instead, the existing overlap-with-me weighting (ADR-0003) is
+    already correcting for it and the raw floor is the only piece left exposed.
+    """
+    me = await get_me(session, user)
+    seed_album_ids, seed_track_ids = await _seed_ids(session, scan, me)
+    neighbours = await _scan_neighbours(session, seed_album_ids, seed_track_ids, me)
+    if not neighbours:
+        return []
+
+    my_album_ids, my_track_ids = await _my_owned_ids(session, me)
+    overlap = await _neighbour_overlap(session, neighbours, my_album_ids, my_track_ids)
+    sizes = await _collection_sizes(session, neighbours)
+    excl = await build_exclusions(session, me, user)
+    votes = await _candidate_vote_counts(session, neighbours, excl)
+
+    bounds = tuple(sorted(buckets))
+    agg: dict[str, dict] = {}
+    for fan_id in neighbours:
+        label = _size_bucket_label(sizes.get(fan_id, 0), bounds)
+        row = agg.setdefault(
+            label, {"neighbours": 0, "votes": 0, "raw_overlap": 0, "weighted": 0.0}
+        )
+        row["neighbours"] += 1
+        row["votes"] += votes.get(fan_id, 0)
+        row["raw_overlap"] += overlap.get(fan_id, 0)
+        row["weighted"] += _damped_overlap_weight(overlap.get(fan_id, 0))
+
+    total_neighbours = len(neighbours)
+    total_votes = sum(r["votes"] for r in agg.values()) or 1
+    total_weighted = sum(r["weighted"] for r in agg.values()) or 1.0
+
+    out = []
+    for label in _size_bucket_order(bounds):
+        row = agg.get(label)
+        if row is None:
+            continue
+        out.append(
+            {
+                "bucket": label,
+                "neighbours": row["neighbours"],
+                "neighbour_share": row["neighbours"] / total_neighbours,
+                "votes": row["votes"],
+                "vote_share": row["votes"] / total_votes,
+                "raw_overlap": row["raw_overlap"],
+                "weighted_share": row["weighted"] / total_weighted,
+            }
+        )
+    return out
