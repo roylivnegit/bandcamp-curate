@@ -66,10 +66,12 @@ That is the point — the gaps are the first work.
 Ordered by the Head of Product. These are starting points, not instructions; propose better
 ones.
 
-- [ ] **Why is the feed 1,600 items?** ~1,600 recommendations means nobody scrolls it. Work
-  out whether the ranking is too flat, the exclusions too narrow, or the co-ownership signal
-  too weak — then cut the feed to something a person can actually read. Precision over volume.
-  Measure: how far down the list Roy still finds things worth clicking.
+- [ ] **Make the order mean something, not the length.** Roy wants a long list kept — do not
+  cut the feed down. The actual problem is ranking, not volume: work out whether the ranking
+  is too flat, the co-ownership signal too weak, or ties too common, then sort by relevancy
+  so the *best* matches are reliably at the top even with ~1,600 items sitting underneath.
+  Measure: does the top of the list hold up — does Roy find something worth clicking near
+  the top, not just somewhere in a long scroll.
 
 - [ ] **Tag coverage caps tag-affinity.** Tags live on album *pages*, which the crawl mostly
   does not fetch, so the genre signal is sparse and the "via …" explanations are thin.
