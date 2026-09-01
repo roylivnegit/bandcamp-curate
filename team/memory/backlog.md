@@ -97,9 +97,19 @@ ones.
   item's own tags, not a per-item fallback) and applies equally to albums and tracks there
   too. PR: see git history.
 
-- [ ] **Mega-supporters flatten the signal.** A collector who owns 8,000 records co-owns
+- [~] **Mega-supporters flatten the signal.** A collector who owns 8,000 records co-owns
   everything with everyone. Score their overlap lower than a collector with 200 records and a
   40% overlap with Roy. Worth measuring before building.
+  Measurement landed, the fix hasn't: `curation.engine.neighbour_size_report()` +
+  `scripts/mega_supporter_stats.py` bucket a scan's neighbours by recorded collection size and
+  report each bucket's share of neighbours vs. its share of raw candidate votes vs. its share of
+  the ADR-0003 weighted score. Needs a real crawl to run against (no sandbox DB in this
+  environment), but the fixture test spells out the shape of the problem it's built to catch:
+  a 4-item collector can cast 3x a 2-item collector's raw votes while both get an even split of
+  the weighted score, because ADR-0003 weights by overlap-with-me, not by the neighbour's own
+  collection size — so if real data shows `vote_share` badly outrunning `neighbour_share` while
+  `weighted_share` tracks it fine, the raw `co_owners`/`min_co_owners` floor is the one place
+  still exposed to this, not the score. Left open rather than building a fix blind.
 
 - [ ] **Explanations Roy can trust.** A rec with a reason he believes gets clicked; a bare
   score does not. `reasons.seed_tags` already exists — build on it.

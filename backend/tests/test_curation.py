@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -9,6 +10,7 @@ from app.curation.engine import (
     curate,
     ensure_collection_scan,
     get_me,
+    neighbour_size_report,
 )
 from app.db.base import Base
 from app.db.models import (
@@ -851,3 +853,89 @@ async def _count(session: AsyncSession, model) -> int:
     from sqlalchemy import func
 
     return (await session.execute(select(func.count()).select_from(model))).scalar_one()
+
+
+async def _build_neighbour_size_graph(session: AsyncSession) -> User:
+    """A small world for `neighbour_size_report`:
+      me owns A1(B1) only.
+      f_small supports A1 (neighbour) and owns A1 + A2(B2) — collection size 2.
+      f_mega supports A1 (neighbour) and owns A1 + A3(B3) + A4(B4) + A5(B5) —
+      collection size 4, and 3x f_small's raw candidate votes (A3, A4, A5 vs A2).
+    Both share the exact same overlap-with-me (1, from owning A1), so the ADR-0003
+    weighted split should come out even between them despite f_mega owning 2x as
+    much and casting 3x the raw votes — that gap is exactly what the raw
+    `co_owners`/`min_co_owners` floor doesn't correct for.
+    """
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    f_small = Fan(bandcamp_fan_id=2, username="small", url="https://bandcamp.com/small")
+    f_mega = Fan(bandcamp_fan_id=3, username="mega", url="https://bandcamp.com/mega")
+    bands = {n: Band(bandcamp_id=100 + n, name=f"B{n}", kind=BandKind.ARTIST) for n in range(1, 5)}
+    session.add_all([me, f_small, f_mega, *bands.values()])
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    def album(aid, bandnum):
+        a = Album(bandcamp_id=200 + aid, title=f"A{aid}", band_id=bands[bandnum].id)
+        session.add(a)
+        return a
+
+    a1, a2, a3, a4, a5 = album(1, 1), album(2, 2), album(3, 3), album(4, 4), album(5, 4)
+    await session.flush()
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a1.id),
+        FanItem(fan_id=f_small.id, item_type=ItemType.ALBUM, album_id=a1.id),
+        FanItem(fan_id=f_small.id, item_type=ItemType.ALBUM, album_id=a2.id),
+        FanItem(fan_id=f_mega.id, item_type=ItemType.ALBUM, album_id=a1.id),
+        FanItem(fan_id=f_mega.id, item_type=ItemType.ALBUM, album_id=a3.id),
+        FanItem(fan_id=f_mega.id, item_type=ItemType.ALBUM, album_id=a4.id),
+        FanItem(fan_id=f_mega.id, item_type=ItemType.ALBUM, album_id=a5.id),
+        AlbumSupporter(album_id=a1.id, fan_id=f_small.id),
+        AlbumSupporter(album_id=a1.id, fan_id=f_mega.id),
+    ])
+    await session.commit()
+    return user
+
+
+async def test_neighbour_size_report_buckets_by_recorded_collection_size(
+    session: AsyncSession,
+) -> None:
+    user = await _build_neighbour_size_graph(session)
+    scan = await ensure_collection_scan(session, user)
+    rows = await neighbour_size_report(session, scan, user, buckets=(3,))
+    by_bucket = {r["bucket"]: r for r in rows}
+
+    assert set(by_bucket) == {"0-3", "3+"}
+    small, mega = by_bucket["0-3"], by_bucket["3+"]
+
+    # f_small (size 2) lands below the boundary, f_mega (size 4) at/above it.
+    assert small["neighbours"] == 1
+    assert mega["neighbours"] == 1
+    assert small["neighbour_share"] == mega["neighbour_share"] == 0.5
+
+    # f_mega casts 3 raw votes (A3, A4, A5) vs f_small's 1 (A2) — its vote share
+    # badly outruns its neighbour share, which is the concern the backlog raises.
+    assert small["votes"] == 1
+    assert mega["votes"] == 3
+    assert small["vote_share"] == 0.25
+    assert mega["vote_share"] == 0.75
+
+    # Both own exactly one of MY albums (A1), so their overlap-with-me — and
+    # therefore the ADR-0003 weighted share — comes out even despite the gap above.
+    assert small["raw_overlap"] == mega["raw_overlap"] == 1
+    assert small["weighted_share"] == pytest.approx(0.5)
+    assert mega["weighted_share"] == pytest.approx(0.5)
+
+
+async def test_neighbour_size_report_empty_without_neighbours(session: AsyncSession) -> None:
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(me)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.commit()
+    scan = await ensure_collection_scan(session, user)
+
+    assert await neighbour_size_report(session, scan, user) == []
