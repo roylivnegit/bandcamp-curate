@@ -77,10 +77,18 @@ ones.
   Measure: does the top of the list hold up — does Roy find something worth clicking near
   the top, not just somewhere in a long scroll.
 
-- [ ] **Tag coverage caps tag-affinity.** Tags live on album *pages*, which the crawl mostly
+- [x] **Tag coverage caps tag-affinity.** Tags live on album *pages*, which the crawl mostly
   does not fetch, so the genre signal is sparse and the "via …" explanations are thin.
   Options: enrich top recs only, derive from `band_tags`, or find a cheaper source of genre.
   See `CLAUDE.md` (M4 Curation).
+  Done (option 2, `derive from band_tags`): `curation.engine._effective_album_tags()` falls
+  back to a band's aggregated `band_tags` for any album with zero page-level `album_tags` —
+  used both for scoring a candidate's `tag_affinity`/`matched_tags` and for building the
+  viewer's own genre profile (`_my_tag_profile`, which previously went silent on an owned
+  album with no page tags). An album that DOES carry its own page tags is untouched — no
+  blending. `_seed_tag_provenance` (the "via …" reason text) was NOT touched — same sparsity
+  problem, left for a follow-up since it needs a different query shape (joins on the seed
+  album's own tags, not a per-album fallback). PR: see git history.
 
 - [ ] **Mega-supporters flatten the signal.** A collector who owns 8,000 records co-owns
   everything with everyone. Score their overlap lower than a collector with 200 records and a

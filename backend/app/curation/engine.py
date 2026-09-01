@@ -26,6 +26,7 @@ from app.db.models import (
     AlbumSupporter,
     AlbumTag,
     Band,
+    BandTag,
     Blacklist,
     Fan,
     FanItem,
@@ -205,20 +206,30 @@ async def build_exclusions(session: AsyncSession, me: Fan, user: User) -> Exclus
 
 
 async def _my_tag_profile(session: AsyncSession, me: Fan) -> dict[int, int]:
-    """Tag id → how many of your owned albums carry it (your genre fingerprint)."""
-    rows = (
-        await session.execute(
-            select(AlbumTag.tag_id, func.count())
-            .select_from(FanItem)
-            .join(AlbumTag, AlbumTag.album_id == FanItem.album_id)
-            .where(FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False))
-            .group_by(AlbumTag.tag_id)
-        )
-    ).all()
-    return {tag_id: n for tag_id, n in rows}
+    """Tag id → how many of your owned albums carry it (your genre fingerprint).
+    Falls back to the band's tags for albums whose own page hasn't been
+    tag-crawled (see `_effective_album_tags`) — otherwise an owned album with
+    no page fetch yet contributes nothing to your fingerprint at all."""
+    album_ids = await _scalar_set(
+        session,
+        select(FanItem.album_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.album_id.isnot(None)
+        ),
+    )
+    tags_by_album = await _effective_album_tags(session, album_ids)
+    profile: dict[int, int] = {}
+    for tag_ids in tags_by_album.values():
+        for tag_id in set(tag_ids):
+            profile[tag_id] = profile.get(tag_id, 0) + 1
+    return profile
 
 
-async def _album_tags(session: AsyncSession, album_ids: set[int]) -> dict[int, list[int]]:
+async def _effective_album_tags(session: AsyncSession, album_ids: set[int]) -> dict[int, list[int]]:
+    """album_id → tag_ids: the album page's own tags where crawled, else the
+    band's aggregated tags (`band_tags`). Tag coverage lives on album *pages*,
+    which the crawl mostly doesn't fetch, so an album with zero page tags would
+    otherwise never contribute to tag-affinity even though its band's genre is
+    already known from other releases."""
     if not album_ids:
         return {}
     rows = (
@@ -231,6 +242,30 @@ async def _album_tags(session: AsyncSession, album_ids: set[int]) -> dict[int, l
     out: dict[int, list[int]] = {}
     for album_id, tag_id in rows:
         out.setdefault(album_id, []).append(tag_id)
+
+    missing = album_ids - out.keys()
+    if not missing:
+        return out
+    band_rows = (
+        await session.execute(
+            select(Album.id, Album.band_id).where(
+                Album.id.in_(missing), Album.band_id.isnot(None)
+            )
+        )
+    ).all()
+    band_ids = {band_id for _, band_id in band_rows}
+    band_tags: dict[int, list[int]] = {}
+    if band_ids:
+        bt_rows = (
+            await session.execute(
+                select(BandTag.band_id, BandTag.tag_id).where(BandTag.band_id.in_(band_ids))
+            )
+        ).all()
+        for band_id, tag_id in bt_rows:
+            band_tags.setdefault(band_id, []).append(tag_id)
+    for album_id, band_id in band_rows:
+        if band_id in band_tags:
+            out[album_id] = band_tags[band_id]
     return out
 
 
@@ -492,7 +527,7 @@ async def compute_recommendations(
     candidate_album_ids = {
         aid for aid, owners in album_owners.items() if not _excluded_album(aid, *album_meta[aid])
     }
-    album_tags = await _album_tags(session, candidate_album_ids)
+    album_tags = await _effective_album_tags(session, candidate_album_ids)
     all_tag_ids = {t for tags in album_tags.values() for t in tags}
     tag_names = await _tag_names(session, all_tag_ids)
 
