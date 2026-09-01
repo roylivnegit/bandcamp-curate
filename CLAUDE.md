@@ -182,6 +182,14 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     supporters own it (stored in `reasons.seed_tags`, shown as "via …" in the UI). `exclude_seed_tags`
     drops recs generated from your albums carrying those genres — the "don't show me things from my
     <genre> collection" filter (curation-time; `POST /api/recommendations/recompute?exclude_seed_tag=`).
+  - **Albums and tracks have no technical difference in curation** (Roy, 2026-09-02) — both belong
+    to a band, both can carry their own page-level tags or fall back to `band_tags`, and both should
+    get identical treatment everywhere tags/scoring touch them. Confirmed asymmetry that came from
+    this NOT being followed: track candidates got zero tag-affinity scoring while album candidates
+    got a real one, and `_my_tag_profile` only ever counted owned albums, never owned tracks — fixed
+    by mirroring `_effective_album_tags`/the album scoring block into `_effective_track_tags` and the
+    track scoring block. When adding anything new to curation, build it for both from the start
+    rather than "album now, track later" — "later" tends not to happen.
   - **Tags tracked at 3 levels**: `album_tags` (existing) + `band_tags` + `track_tags` (migration
     `0003`, guarded + backfilled). `ingest_album` links album-page tags to the album, its band, and
     each of its tracks. `curation.seed_tags()` lists your own albums' genres (the seed-exclusion

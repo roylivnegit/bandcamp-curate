@@ -28,6 +28,7 @@ from app.db.models import (
     Tag,
     Track,
     TrackSupporter,
+    TrackTag,
     User,
 )
 from app.enums import BandKind, ItemType, ScanKind, ScanStatus, TargetType
@@ -190,6 +191,79 @@ async def test_tag_affinity_falls_back_to_band_tags(session: AsyncSession) -> No
     # tag is never consulted, so no affinity and no match.
     assert by_bcid[203].reasons["tag_affinity"] == 0
     assert by_bcid[203].reasons["matched_tags"] == []
+
+
+async def test_track_tag_affinity_falls_back_to_band_tags(session: AsyncSession) -> None:
+    """Same as test_tag_affinity_falls_back_to_band_tags, but for tracks. There's
+    no technical difference between an album and a track here — both belong to a
+    band and can carry page tags or fall back to band_tags — so a track candidate
+    (and a track I own, feeding my own profile) must behave identically to an
+    album in the same position, not get silently skipped.
+
+    My owned track's band (B4) is kept separate from my seed album's band (B1),
+    with a different tag, so the assertions below can only be explained by the
+    OWNED TRACK's contribution — not incidentally by the album's."""
+    me = Fan(bandcamp_fan_id=20, username="me3", url="https://bandcamp.com/me3", is_me=True)
+    f2 = Fan(bandcamp_fan_id=21, username="f3b", url="https://bandcamp.com/f3b")
+    b1 = Band(bandcamp_id=301, name="TB1", kind=BandKind.ARTIST)  # my seed album's band
+    b2 = Band(bandcamp_id=302, name="TB2", kind=BandKind.ARTIST)  # untagged candidate track's band
+    b3 = Band(bandcamp_id=303, name="TB3", kind=BandKind.ARTIST)  # own-tagged candidate's band
+    b4 = Band(bandcamp_id=304, name="TB4", kind=BandKind.ARTIST)  # my owned track's band
+    session.add_all([me, f2, b1, b2, b3, b4])
+    await session.flush()
+    user = User(username="me3", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    a1 = Album(bandcamp_id=301, title="Seed album", band_id=b1.id)  # owned, makes f2 a neighbour
+    session.add(a1)
+    await session.flush()
+
+    t1 = Track(bandcamp_id=301, title="My track", band_id=b4.id)  # owned, no page tags
+    t2 = Track(bandcamp_id=302, title="Candidate no tags", band_id=b2.id)
+    t3 = Track(bandcamp_id=303, title="Candidate own tag", band_id=b3.id)
+    session.add_all([t1, t2, t3])
+    await session.flush()
+
+    downtempo = Tag(name="downtempo")  # A1's band's tag — deliberately not matched below
+    electronic = Tag(name="electronic")
+    jazz = Tag(name="jazz")
+    session.add_all([downtempo, electronic, jazz])
+    await session.flush()
+    session.add_all([
+        BandTag(band_id=b1.id, tag_id=downtempo.id),
+        BandTag(band_id=b2.id, tag_id=electronic.id),
+        BandTag(band_id=b3.id, tag_id=electronic.id),  # must be ignored — t3 has its own tag
+        BandTag(band_id=b4.id, tag_id=electronic.id),  # my owned track's fallback tag
+        TrackTag(track_id=t3.id, tag_id=jazz.id),
+    ])
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a1.id),
+        FanItem(fan_id=me.id, item_type=ItemType.TRACK, track_id=t1.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t2.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.TRACK, track_id=t3.id),
+        AlbumSupporter(album_id=a1.id, fan_id=f2.id),
+    ])
+    await session.commit()
+
+    scored = await _recs(session, user, min_co_owners=1, weighted_co_owners=False)
+    by_bcid = {}
+    for sc in scored:
+        if sc.track_id is None:
+            continue
+        t = (await session.execute(select(Track).where(Track.id == sc.track_id))).scalar_one()
+        by_bcid[t.bandcamp_id] = sc
+
+    # t2: no page tags of its own → falls back to B2's band tag (electronic),
+    # which matches my profile — and the ONLY owned item tagged "electronic"
+    # (via fallback) is my track t1 (B1/A1's fallback tag is "downtempo").
+    # This can only pass if an owned TRACK feeds the profile.
+    assert by_bcid[302].reasons["tag_affinity"] == 1
+    assert by_bcid[302].reasons["matched_tags"] == ["electronic"]
+    # t3: has its own page tag (jazz, not in my profile) → band's "electronic"
+    # tag is never consulted, so no affinity and no match.
+    assert by_bcid[303].reasons["tag_affinity"] == 0
+    assert by_bcid[303].reasons["matched_tags"] == []
 
 
 async def test_one_recommendation_per_band(session: AsyncSession) -> None:

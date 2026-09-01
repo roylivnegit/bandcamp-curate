@@ -86,9 +86,16 @@ ones.
   used both for scoring a candidate's `tag_affinity`/`matched_tags` and for building the
   viewer's own genre profile (`_my_tag_profile`, which previously went silent on an owned
   album with no page tags). An album that DOES carry its own page tags is untouched — no
-  blending. `_seed_tag_provenance` (the "via …" reason text) was NOT touched — same sparsity
+  blending.
+  **Extended to tracks (2026-09-02, Roy: "no technical diff between album and track, treat
+  them the same"):** track candidates previously got zero tag-affinity scoring at all — only
+  albums did — and `_my_tag_profile` only ever counted owned albums, never owned tracks.
+  Added `_effective_track_tags()` (identical logic to the album version) and mirrored the
+  album scoring block for tracks. See `CLAUDE.md` M4 Curation for the standing rule this adds.
+  `_seed_tag_provenance` (the "via …" reason text) is still NOT touched — same sparsity
   problem, left for a follow-up since it needs a different query shape (joins on the seed
-  album's own tags, not a per-album fallback). PR: see git history.
+  item's own tags, not a per-item fallback) and applies equally to albums and tracks there
+  too. PR: see git history.
 
 - [ ] **Mega-supporters flatten the signal.** A collector who owns 8,000 records co-owns
   everything with everyone. Score their overlap lower than a collector with 200 records and a
