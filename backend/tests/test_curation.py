@@ -16,6 +16,7 @@ from app.db.models import (
     AlbumSupporter,
     AlbumTag,
     Band,
+    BandTag,
     Blacklist,
     Fan,
     FanItem,
@@ -132,6 +133,63 @@ async def test_recommendations_exclude_and_rank(session: AsyncSession) -> None:
     # Track T2 (owned by F2) is a candidate; my own T1 is excluded.
     tracks = [s for s in scored if s.track_id is not None]
     assert len(tracks) == 1 and tracks[0].reasons["co_owners"] == 1
+
+
+async def test_tag_affinity_falls_back_to_band_tags(session: AsyncSession) -> None:
+    """Tags mostly live on album *pages*, which the crawl doesn't fetch for most
+    albums — an album with zero page-level tags should still pick up its band's
+    aggregated tags (`band_tags`), both for MY genre profile and for a
+    candidate's matched tags. An album that DOES carry its own page tags must
+    keep using only those (no band-tag blending)."""
+    me = Fan(bandcamp_fan_id=10, username="me2", url="https://bandcamp.com/me2", is_me=True)
+    f2 = Fan(bandcamp_fan_id=11, username="f2b", url="https://bandcamp.com/f2b")
+    b1 = Band(bandcamp_id=201, name="B1", kind=BandKind.ARTIST)  # my album's band
+    b2 = Band(bandcamp_id=202, name="B2", kind=BandKind.ARTIST)  # untagged candidate's band
+    b3 = Band(bandcamp_id=203, name="B3", kind=BandKind.ARTIST)  # own-tagged candidate's band
+    session.add_all([me, f2, b1, b2, b3])
+    await session.flush()
+    user = User(username="me2", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    a1 = Album(bandcamp_id=201, title="A1", band_id=b1.id)  # my own album, no page tags
+    a2 = Album(bandcamp_id=202, title="A2", band_id=b2.id)  # candidate, no page tags
+    a3 = Album(bandcamp_id=203, title="A3", band_id=b3.id)  # candidate, has its own page tag
+    session.add_all([a1, a2, a3])
+    await session.flush()
+
+    electronic = Tag(name="electronic")
+    jazz = Tag(name="jazz")
+    session.add_all([electronic, jazz])
+    await session.flush()
+    session.add_all([
+        BandTag(band_id=b1.id, tag_id=electronic.id),
+        BandTag(band_id=b2.id, tag_id=electronic.id),
+        BandTag(band_id=b3.id, tag_id=electronic.id),  # must be ignored — A3 has its own tag
+        AlbumTag(album_id=a3.id, tag_id=jazz.id),
+    ])
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=a1.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a2.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a3.id),
+        AlbumSupporter(album_id=a1.id, fan_id=f2.id),
+    ])
+    await session.commit()
+
+    scored = await _recs(session, user, min_co_owners=1, weighted_co_owners=False)
+    by_bcid = {}
+    for sc in scored:
+        a = (await session.execute(select(Album).where(Album.id == sc.album_id))).scalar_one()
+        by_bcid[a.bandcamp_id] = sc
+
+    # A2: no page tags of its own → falls back to B2's band tag (electronic),
+    # which matches my profile (built from A1's band-tag fallback too).
+    assert by_bcid[202].reasons["tag_affinity"] == 1
+    assert by_bcid[202].reasons["matched_tags"] == ["electronic"]
+    # A3: has its own page tag (jazz, not in my profile) → band's "electronic"
+    # tag is never consulted, so no affinity and no match.
+    assert by_bcid[203].reasons["tag_affinity"] == 0
+    assert by_bcid[203].reasons["matched_tags"] == []
 
 
 async def test_one_recommendation_per_band(session: AsyncSession) -> None:
