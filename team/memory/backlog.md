@@ -45,10 +45,14 @@ That is the point — the gaps are the first work.
   reload and confirm it stuck. Screenshot and trace on failure.
   Must run with nobody watching. It never depends on Roy's Chrome being open.
 
-- [ ] **E0-5 · Branch protection.** Require the E0-3 checks on `main`, allow auto-merge,
-  block force-push.
+- [x] **E0-5 · Branch protection.** Requires `backend` + `frontend` (the E0-3 checks) on
+  `main`, auto-merge enabled, force-push and branch deletion blocked.
   *Why:* this is what makes the gate real rather than self-reported.
-  **Blocked on Roy** — needs admin on the repo.
+  Landed 2026-09-01. The real blocker was never admin — `roylivnegit` already had it, verified
+  directly (`GET .../collaborators/roylivnegit/permission` → `"permission":"admin"`).
+  Branch protection is a GitHub Pro/Team/public-repo feature; this repo was private on the
+  free plan. Roy made it public rather than upgrade — confirmed the Nimble key was never
+  committed anywhere in history before doing so.
 
 - [x] **E0-6 · Cycle dashboard.** `team/tools/report.py` — reads `team/memory/metrics.md`,
   the transcripts and the ADRs, and produces one page: what shipped, what it cost, the
