@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     # Seed (legacy operator-only bootstrap — see scripts/crawl.py)
     bandcamp_fan_url: str = ""
 
+    # Guard rail for the legacy operator crawl chain (`seed_crawl`/`crawl_next` in
+    # app.worker, `scripts/crawl.py seed`/`run`). Documented as operator-only since
+    # per-user collection scans (scan_service.run_scan) replaced it, but nothing
+    # enforced that — default off; an operator flips this on deliberately via env.
+    enable_operator_crawl: bool = False
+
     # Auth: JWT signing secret. Read here and nowhere else, same discipline as
     # nimble_api_key — never logged or serialized.
     auth_secret_key: str = ""

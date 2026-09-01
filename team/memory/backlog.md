@@ -143,6 +143,13 @@ ones.
   fan-out path (live crawl, cross-scan replay) already goes through — no threading needed
   elsewhere. PR: see git history.
 
-- [ ] **Retire the legacy operator crawl chain.** `seed_crawl` / `crawl_next` /
+- [x] **Retire the legacy operator crawl chain.** `seed_crawl` / `crawl_next` /
   `scripts/crawl.py` still key off the single global `BANDCAMP_FAN_URL`. Documented as
   operator-only, which is a comment, not a guard rail. Same source.
+  Done (relabel, not delete — the chain is still the manual/dev-smoke-test path,
+  just no longer usable by accident): new `Settings.enable_operator_crawl` (default
+  `False`). `app.worker.seed_crawl` raises `RuntimeError` and `scripts/crawl.py`'s
+  `seed`/`run` commands print a refusal and exit 2 unless it's set. `crawl_next` and
+  `run_scan` (the per-user path) are untouched — only the two entry points that seed
+  from the global `BANDCAMP_FAN_URL` are gated. Documented in `.env.example`. PR: see
+  git history.

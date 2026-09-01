@@ -56,7 +56,16 @@ async def on_startup(ctx: dict[str, Any]) -> None:
 
 
 async def seed_crawl(ctx: dict[str, Any], url: str | None = None) -> str:
-    """Enqueue the seed fan collection and start the crawl chain."""
+    """Enqueue the seed fan collection and start the crawl chain.
+
+    Refuses unless `enable_operator_crawl` is set — this chain is the legacy
+    single-tenant path (see module docstring); an operator must opt in.
+    """
+    if not ctx["settings"].enable_operator_crawl:
+        raise RuntimeError(
+            "seed_crawl is disabled (ENABLE_OPERATOR_CRAWL=false); the legacy "
+            "operator crawl chain is off by default — set it to opt in"
+        )
     async with ctx["sessionmaker"]() as session:
         scan_id = await operator_scan_id(session)
         seed_url = await seed_fan_collection(

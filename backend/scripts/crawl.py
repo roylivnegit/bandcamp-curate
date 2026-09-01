@@ -12,6 +12,7 @@ production path; this is the manual equivalent.
 Legacy, operator-only: keys off the global BANDCAMP_FAN_URL, from before
 per-user collection scans existed (see `scan_service.run_scan`'s `kind=collection`
 branch, which is how every signed-up user's own collection gets crawled now).
+`seed`/`run` refuse unless `ENABLE_OPERATOR_CRAWL=true` is set.
 """
 
 import asyncio
@@ -28,7 +29,20 @@ from app.db.session import get_sessionmaker
 from app.scraping.factory import build_gateway
 
 
+def _operator_crawl_disabled(settings) -> bool:
+    if not settings.enable_operator_crawl:
+        print(
+            "ENABLE_OPERATOR_CRAWL is not set. This legacy operator-only crawl "
+            "chain is off by default — set it to opt in."
+        )
+        return True
+    return False
+
+
 async def cmd_seed() -> int:
+    settings = get_settings()
+    if _operator_crawl_disabled(settings):
+        return 2
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         scan_id = await operator_scan_id(session)
@@ -39,6 +53,8 @@ async def cmd_seed() -> int:
 
 async def cmd_run(max_iters: int) -> int:
     settings = get_settings()
+    if _operator_crawl_disabled(settings):
+        return 2
     if not settings.nimble_api_key:
         print("NIMBLE_API_KEY not set. Aborting (live crawl needs it).")
         return 2
