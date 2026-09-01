@@ -1,0 +1,30 @@
+# The Lead's checkpoint after one grooming round: continue or close, and what survives.
+[meta]
+name = "round_check"
+description = "The Lead's decision after a grooming round: keep going or close it."
+
+[[field]]
+name = "continue_grooming"
+type = "bool"
+required = true
+help = "true = run another round. false = the debate is settled enough to rule now."
+
+[[field]]
+name = "next_participants"
+type = "enum[]"
+values = ["architect", "qa", "researcher"]
+help = "Who speaks in the next round. Drop anyone who already said they have nothing to add. Required when continue_grooming is true; ignored otherwise."
+
+[[field]]
+name = "digest"
+type = "text"
+required = true
+help = """A compact running summary — merge this round into whatever digest came before, don't \
+just describe this round alone. This REPLACES the raw turns for every later turn in this \
+cycle: keep the proposals, the strongest evidence on each side, and anything still contested. \
+Drop restated points and anything conceded. Be ruthless — what you leave out is gone."""
+
+[[field]]
+name = "reason"
+type = "string"
+help = "One line: why continue, or why stop now. Goes in the transcript for a human skimming later."

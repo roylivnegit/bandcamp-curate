@@ -1,0 +1,34 @@
+[meta]
+name = "finding"
+description = "One problem found in the diff."
+
+[[field]]
+name = "severity"
+type = "enum"
+values = ["block", "note"]
+required = true
+help = "block stops the merge and needs a failure scenario. note does not."
+
+[[field]]
+name = "location"
+type = "string"
+required = true
+help = "file:line"
+
+[[field]]
+name = "problem"
+type = "string"
+required = true
+help = "One sentence."
+
+[[field]]
+name = "failure_scenario"
+type = "text"
+required = true
+help = "This input, this state, this wrong result. A block you cannot turn into a failure scenario is not a block and will be overruled."
+
+[[field]]
+name = "category"
+type = "enum"
+values = ["correctness", "invariant", "out-of-scope", "silent-failure", "reversibility", "reuse", "security", "test-gap"]
+required = true

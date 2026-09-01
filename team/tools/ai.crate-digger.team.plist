@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The 5-hour heartbeat. NOT installed by the bootstrap on purpose — autonomous building stays
+  off until backlog item E0-7 (the full dry-run self-check) passes.
+
+  To turn the team on:
+      cp team/tools/ai.crate-digger.team.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/ai.crate-digger.team.plist
+
+  To turn it off:
+      launchctl unload ~/Library/LaunchAgents/ai.crate-digger.team.plist
+
+  StartInterval fires every 20 minutes, but almost every firing costs nothing: run-cycle.sh
+  compares `resets_at` in team/memory/state.json against the clock and exits immediately
+  unless the five-hour usage window has actually turned over.
+
+  A fixed five-hour timer would drift. The usage window is rolling, so its reset time moves
+  with use — a timer set to 18000s slowly falls out of phase and ends up starting cycles
+  halfway through a window, with half a slot to spend. Ticking often and acting on the
+  recorded reset time is self-correcting and never misses the start of a window.
+
+  run-cycle.sh holds a pid lock, so an overrunning cycle is never doubled up on. Windows
+  that elapse while the Mac is asleep are simply skipped; the next tick after wake starts a
+  cycle straight away.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.crate-digger.team</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/roylivne/crate-digger/team/tools/run-cycle.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/roylivne/crate-digger</string>
+
+    <key>StartInterval</key>
+    <integer>1200</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/roylivne/crate-digger/team/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/roylivne/crate-digger/team/logs/launchd.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd gives a job a minimal PATH; claude, git, gh, docker and node all need
+             to be findable. Adjust if any of these move. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/roylivne/.local/bin</string>
+        <key>HOME</key>
+        <string>/Users/roylivne</string>
+    </dict>
+
+    <!-- Do not fight the user for the machine. A cycle is background work. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>

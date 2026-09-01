@@ -1,0 +1,17 @@
+# The Head of Product's opening move in grooming.
+[meta]
+name = "proposals"
+description = "One to three candidate items for this cycle, problem first."
+
+[[field]]
+name = "proposals"
+type = "object[]"
+schema = "proposal"
+required = true
+min = 1
+max = 3
+
+[[field]]
+name = "not_proposing"
+type = "string[]"
+help = "Things you considered and dropped this cycle, with the reason in the same string. Keeps the backlog honest."

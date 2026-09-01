@@ -1,0 +1,54 @@
+# The Architect's ADR.
+[meta]
+name = "design"
+description = "An architecture decision record for the chosen item."
+
+[[field]]
+name = "title"
+type = "string"
+required = true
+
+[[field]]
+name = "problem"
+type = "text"
+required = true
+
+[[field]]
+name = "approach"
+type = "text"
+required = true
+help = "The chosen approach and the seam it lives behind."
+
+[[field]]
+name = "invariants"
+type = "string[]"
+required = true
+help = "Things this change must not break, written so a reviewer can check each one. 'curation must still exclude followed labels by host', not 'be careful with exclusions'. This is the most important field in the file."
+
+[[field]]
+name = "changes"
+type = "string[]"
+required = true
+help = "Files, tables and endpoints that change. One per entry."
+
+[[field]]
+name = "tests"
+type = "string[]"
+required = true
+help = "What must be tested, and where."
+
+[[field]]
+name = "rollback"
+type = "text"
+required = true
+help = "How to undo this. If it is not a single git revert, say so plainly."
+
+[[field]]
+name = "rejected"
+type = "string[]"
+help = "Alternatives considered and why they lost. In three months this is the most valuable part of the file."
+
+[[field]]
+name = "risks"
+type = "string[]"
+help = "Especially: can this fail silently?"

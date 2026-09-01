@@ -1,0 +1,20 @@
+[meta]
+name = "check"
+description = "One gate command and its real result."
+
+[[field]]
+name = "command"
+type = "string"
+required = true
+
+[[field]]
+name = "result"
+type = "enum"
+values = ["pass", "fail", "skipped"]
+required = true
+
+[[field]]
+name = "output"
+type = "text"
+required = true
+help = "The real tail of the output. Never invent this. If you did not run it, mark it skipped and say why here."

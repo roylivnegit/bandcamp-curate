@@ -1,0 +1,76 @@
+# The Tech Lead closing grooming. Exactly one item, or none.
+[meta]
+name = "ruling"
+description = "The Lead's decision at the end of the debate."
+
+[[field]]
+name = "decision"
+type = "enum"
+values = ["build", "research-only", "no-work"]
+required = true
+help = "build = one item this cycle. research-only = spend the cycle learning. no-work = nothing worth doing; go back to sleep."
+
+[[field]]
+name = "chosen"
+type = "string"
+help = "Title of the item picked. Required when decision is build or research-only."
+
+[[field]]
+name = "slug"
+type = "string"
+help = "kebab-case, used for the branch name. Required when decision is build (unless resume_branch is set)."
+
+[[field]]
+name = "resume_branch"
+type = "string"
+help = """If this item is picking up work a previous cycle parked (check the standup's "parked \
+work" section for the exact branch name), name that branch here so the dev builds on top of \
+what already exists instead of redoing it from scratch. Leave empty for genuinely new work.
+
+When this is set, scope_limit must rule out any capability beyond what makes the existing diff
+mergeable — a good new idea found along the way is a separate backlog item, not something
+folded into this ruling. Resuming means shipping it, not growing it."""
+
+[[field]]
+name = "assignee"
+type = "enum"
+values = ["backend-dev", "frontend-dev", "both", "researcher", "none"]
+required = true
+
+[[field]]
+name = "why"
+type = "text"
+required = true
+help = """One paragraph, plain language. This is the technical brief the architect and dev \
+build from — file names, code paths, and specifics belong here."""
+
+[[field]]
+name = "plain_summary"
+type = "text"
+required = true
+help = """One or two short sentences for the cycle email, written for someone who has never \
+seen this codebase and never will — no file names, no code identifiers, no engineering terms \
+(don't say "query", "schema", "endpoint", "co-ownership floor"). Say what this does for the \
+music recommendation feed and why it matters, the way you'd explain it to a friend who just \
+asked "what does this thing you built do?" """
+
+[[field]]
+name = "runner_up"
+type = "string"
+help = "What came second and why it lost. Name it out loud; a team whose ideas vanish silently stops proposing."
+
+[[field]]
+name = "deferred"
+type = "string[]"
+help = "Everything not picked, each with its reason. These go back to the backlog."
+
+[[field]]
+name = "overruled"
+type = "string[]"
+help = "Any objection you overruled and the one-sentence reason (usually: no evidence)."
+
+[[field]]
+name = "scope_limit"
+type = "text"
+required = true
+help = "What is explicitly NOT in scope for this item. The dev is held to this."

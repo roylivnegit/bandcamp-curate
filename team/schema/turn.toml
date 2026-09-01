@@ -1,0 +1,33 @@
+# One speaker's contribution to a round-table debate.
+[meta]
+name = "turn"
+description = "A single spoken turn in a team debate. Short, argued, evidenced."
+
+[[field]]
+name = "speaker"
+type = "string"
+required = true
+help = "Your role slug, e.g. product, architect, qa, researcher, lead."
+
+[[field]]
+name = "stance"
+type = "enum"
+values = ["support", "object", "amend", "defer", "neutral"]
+required = true
+help = "support = build it. object = do not, and I can say why. amend = build it, changed. defer = not this cycle. neutral = no strong view."
+
+[[field]]
+name = "argument"
+type = "text"
+required = true
+help = "Your actual point, in plain language. 2-6 sentences. Respond to what others said; do not restate it."
+
+[[field]]
+name = "evidence"
+type = "string[]"
+help = "file:line, a command's output, a metric from memory/metrics.md, a research note path. An argument with no evidence carries little weight; an OBJECTION with no evidence is overruled."
+
+[[field]]
+name = "asks"
+type = "string[]"
+help = "Concrete things you need from someone else before you would change your stance."

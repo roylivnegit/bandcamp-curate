@@ -1,0 +1,37 @@
+# QA's verdict. Every claim is backed by real command output.
+[meta]
+name = "qa"
+description = "The gate result. Commands actually run, output attached."
+
+[[field]]
+name = "verdict"
+type = "enum"
+values = ["pass", "block"]
+required = true
+
+[[field]]
+name = "checks"
+type = "object[]"
+schema = "check"
+required = true
+
+[[field]]
+name = "does_what_adr_said"
+type = "bool"
+required = true
+help = "Green tests on the wrong feature is still a block."
+
+[[field]]
+name = "coverage_gaps"
+type = "string[]"
+help = "New behaviour with no test covering it."
+
+[[field]]
+name = "silent_failure_risks"
+type = "string[]"
+help = "Ways this could break in production with no error, log or counter."
+
+[[field]]
+name = "artifacts"
+type = "string[]"
+help = "Paths to screenshots and Playwright traces. A failing E2E with no artifact is nearly useless to the dev who has to fix it."
