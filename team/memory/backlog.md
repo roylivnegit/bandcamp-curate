@@ -98,8 +98,12 @@ ones.
 - [ ] **Per-user crawl budgets.** `crawl_max_requests` and `provider_usage` are global, so one
   user's deep scan starves everyone else's. From `CLAUDE.md` "Immediate next steps".
 
-- [ ] **A secondary budget cap** — max total frontier size, or max fetches per run, on top of
+- [x] **A secondary budget cap** — max total frontier size, or max fetches per run, on top of
   the depth bound. Depth 3 on a popular album still fans out very wide. Same source.
+  Done: `Settings.crawl_max_frontier_size` (default `None` = unbounded, unchanged behavior) caps
+  each scan's TOTAL frontier rows (any status) in `frontier.enqueue`, the single choke point every
+  fan-out path (live crawl, cross-scan replay) already goes through — no threading needed
+  elsewhere. PR: see git history.
 
 - [ ] **Retire the legacy operator crawl chain.** `seed_crawl` / `crawl_next` /
   `scripts/crawl.py` still key off the single global `BANDCAMP_FAN_URL`. Documented as

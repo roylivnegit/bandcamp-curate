@@ -314,8 +314,9 @@ stop postgresql@16 redis` — still installed but off, so it won't fight compose
   that yields a bare host and both need the scheme.
 
 ## Immediate next steps
-1. Consider a secondary budget cap (max total frontier size / max fetches per run) on top of the
-   depth bound before a very wide run — depth 3 on a popular album still fans out wide.
+1. ~~Consider a secondary budget cap...~~ **Done.** `Settings.crawl_max_frontier_size` (default
+   `None` = unbounded) caps each scan's total frontier rows in `frontier.enqueue` — the one choke
+   point every fan-out path already goes through, so no other call site needed to change.
 2. **Per-user crawl budgets.** `crawl_max_requests`/`provider_usage` are still global, so one
    user's deep scan can starve everyone else's. Fine at one or two users; revisit beyond that.
 3. Retire or relabel the legacy `seed_crawl`/`crawl_next` ARQ chain and `scripts/crawl.py`, which
