@@ -6,7 +6,7 @@ current recommendations for that band so the feed updates immediately.
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,24 @@ class BlockIn(BaseModel):
     reason: str | None = None
     expires_at: datetime | None = None
     """Optional "not now" — omit to block indefinitely, as before."""
+
+    @model_validator(mode="after")
+    def _expires_at_must_be_future(self) -> "BlockIn":
+        # A past (or "now") expires_at creates a row that both `list_blocked`
+        # and the curation exclusion query immediately filter out as expired
+        # (both compare `expires_at > now()`) — the caller gets a 200 that
+        # looks like a normal block, but the band was never actually excluded
+        # and never shows up as blocked either. Reject it instead of silently
+        # no-op'ing.
+        if self.expires_at is None:
+            return self
+        deadline = (
+            self.expires_at if self.expires_at.tzinfo is not None
+            else self.expires_at.replace(tzinfo=UTC)
+        )
+        if deadline <= datetime.now(UTC):
+            raise ValueError("expires_at must be in the future")
+        return self
 
 
 class BlacklistOut(BaseModel):
