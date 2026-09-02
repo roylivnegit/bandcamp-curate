@@ -380,3 +380,33 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   automatic, server-side, after each crawl slice) and an "explicit empty state for zero-match
   filters" idea (already implemented verbatim in `ScanFeedPage.tsx`'s `<p className="empty">`
   block). PR: see git history.
+
+- [x] **Keyboard-navigable dropdown menus.** *(proposed by the hourly routine, 2026-09-02)*
+  `Dropdown.tsx` (used for Sort/Genre/Contains in `FilterBar.tsx`) opens on click but once open,
+  arrow keys did nothing — Tab-through-every-row or the mouse were the only ways to move, which
+  reads as dated next to any modern `<select>`/combobox.
+  Done: `Dropdown.tsx` gets one `onKeyDown` on the `.ddpanel` div (the WAI-ARIA menu-button
+  pattern's core behavior) — ArrowDown/ArrowUp move focus to the next/previous `.ddrow` button and
+  wrap at the ends, Home/End jump to the first/last row. Scoped to fire only when the event
+  target already has the `.ddrow` class (checked before anything else): the Genre/Contains panels
+  also hold a text input, and hijacking Home/End there would have broken normal cursor movement
+  inside it. No changes needed in `FilterBar.tsx` — generic behavior at the `Dropdown` level,
+  since every panel already renders its selectable rows with that class. Covered by four new
+  tests in the new `Dropdown.test.tsx` (a standalone RTL render, `Dropdown` has no router/api
+  dependency): ArrowDown steps through three rows and wraps past the last; ArrowUp steps backward
+  and wraps past the first; Home/End jump to the first/last row; a focused search input inside
+  the panel is left alone by ArrowDown/Home (the input keeps focus, no row hijack). 47/47 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). One Architect+QA-approved companion
+  proposal from the same Product round was NOT built this task (routine hit its per-run task cap)
+  and is queued below: validating seed URLs before they're added to a new scan.
+
+- [ ] **Validate seed URLs before they're added.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved, not yet built)* `NewScanForm.addSeed()` accepts any non-empty string —
+  typos or non-Bandcamp links sit silently in the seed list until the backend rejects the whole
+  scan on submit. Reject anything that doesn't match a Bandcamp album/track URL shape at
+  `addSeed()` time, showing the existing `role="alert"` error styling instead of adding it to the
+  list. QA caveat: check the backend's actual URL validation (`app/bandcamp/urls.py` or wherever
+  `NewScanForm`'s submit-time validation lives today, if any) before writing the regex — don't
+  invent a stricter pattern than the API itself accepts. Verify: an RTL test types a non-Bandcamp
+  string, clicks Add, asserts the seed list stays empty and the alert text appears; a second test
+  with a valid `.../album/...` or `.../track/...` URL asserts it's added with no alert.
