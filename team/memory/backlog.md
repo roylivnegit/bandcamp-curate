@@ -523,6 +523,19 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   rejected too. 52/52 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
 
+- [x] **"Clear filters" button inside the zero-result empty state.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved)* When active filters return zero rows, the empty
+  state (`ScanFeedPage.tsx`, around the "Nothing matches these filters" message) is just text —
+  no button. The existing "Clear all filters" control in `ActivePills` (`FilterBar.tsx`) only
+  renders once 2+ filter facets are active, so a single active filter has no clear-action
+  anywhere on screen.
+  Done: added a `btn ghost` "Clear filters" button next to the empty-state message, shown only
+  when `filters.anyActive` (mirroring the existing cold-start-panel branch's condition) and
+  wired to the existing `filters.reset()` — no new state or styling. Covered by a new test in
+  `feed.test.tsx`: opening `/scans/1?tag=psybient` against a mock returning zero recommendations
+  shows the empty-filtered message and the button; clicking it clears `tag=` from the URL. 71/71
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
 - [x] **`useDocumentTitle` hook.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved)* `document.title` is hardcoded to "crate digger" in `index.html` and
   never updated, so every route/scan looks identical in the tab bar and browser history.
@@ -539,3 +552,39 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   digger", clicking into a scan shows "My collection · crate digger", navigating back updates it
   again. 74/74 frontend tests pass, tsc/lint/build clean (chunk split intact — the hook lands in
   its own small shared chunk between the two lazy routes). PR: see git history.
+
+- [x] **Toast/notification primitive.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA: sound but flagged as two sittings' worth)* There was no shared toast/notification
+  primitive anywhere in the frontend — every screen invented its own inline `role="alert"`, and
+  `CopyLinkButton.tsx`'s clipboard-rejection catch block swallowed failure with no user feedback
+  at all (a denied-permission click looked like nothing happened).
+  Done, built as one item rather than QA's suggested (a)/(b) split: a primitive with no caller
+  wired in would have been a half-finished component sitting unused in the tree, and the wiring
+  turned out to be a two-line addition once the primitive existed, so splitting it would only
+  have deferred that trivial half to a second task for no real risk reduction.
+  `lib/toast.ts` — a module-scope `{id, message, variant}` queue behind `useSyncExternalStore`
+  (not `useState` mirroring, per QA's leakage caveat: a toast can be raised from any event
+  handler, not just one with a toast-owning component in its own render tree). `showToast(message,
+  variant?, durationMs?)` is the imperative entry point (no hook, callable from anywhere);
+  `dismissToast(id)` removes one and no-ops if it's already gone (an auto-dismiss timer and a
+  manual dismiss can race). New `components/ToastStack.tsx`, mounted once in `App.tsx` next to
+  `AppHeader` (signed-in shell only — the only current caller, `CopyLinkButton`, only renders
+  there), subscribes via `useToasts()` and renders each queued toast with `role={variant}`
+  (`'alert'` vs `'status'`, so a failure interrupts a screen reader the way `.err` elements
+  already do elsewhere, per `frontend/CLAUDE.md`'s "errors get `role=alert`" rule) plus a dismiss
+  button. New `TOAST_DURATION_MS` (4000) in `config.ts`. `CopyLinkButton.tsx`'s clipboard-rejection
+  catch now calls `showToast(..., 'alert')` instead of a bare silent return.
+  Testing hit one real cross-test leak worth recording: the queue's module scope means a toast
+  raised by a test that never even rendered `<ToastStack>` still sits in it afterward, and a
+  test that triggers one under real timers (no `vi.useFakeTimers()`) leaves a *real* pending
+  dismiss timeout that a later fake-timer test's `advanceTimersByTimeAsync` cannot touch — exactly
+  the kind of leakage QA flagged, just across tests rather than across mounts. Fixed with an
+  exported test-only `resetToastsForTests()`, called from `beforeEach` in every test file that
+  exercises `showToast`. Covered by `ToastStack.test.tsx` (renders nothing on an empty queue;
+  shows a status toast and auto-dismisses it after `TOAST_DURATION_MS`; an alert-variant toast
+  gets `role="alert"` instead of `"status"`; two toasts stack and dismiss independently) and a
+  new `CopyLinkButton.test.tsx` case (a rejected clipboard write now raises an `alert`-role toast
+  with the failure message, which itself auto-dismisses). 76/76 frontend tests pass (stable
+  across repeated runs), tsc/lint/build clean (the new files land in the eagerly-loaded shared
+  chunk via `App.tsx`, not a lazy route chunk — expected, since `ToastStack` must be mounted
+  before either route is). PR: see git history.

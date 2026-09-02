@@ -2,13 +2,16 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { COPY_LINK_FEEDBACK_MS } from '../config'
+import { COPY_LINK_FEEDBACK_MS, TOAST_DURATION_MS } from '../config'
+import { resetToastsForTests } from '../lib/toast'
 import { CopyLinkButton } from './CopyLinkButton'
+import { ToastStack } from './ToastStack'
 
-function renderAt(path: string) {
+function renderAt(path: string, { withToasts = false } = {}) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <CopyLinkButton />
+      {withToasts && <ToastStack />}
     </MemoryRouter>,
   )
 }
@@ -22,6 +25,7 @@ describe('CopyLinkButton', () => {
       value: { writeText },
       configurable: true,
     })
+    resetToastsForTests()
   })
 
   afterEach(() => {
@@ -59,5 +63,22 @@ describe('CopyLinkButton', () => {
 
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
     expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+  })
+
+  it('raises a toast when the clipboard write is rejected, instead of failing silently', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    writeText.mockRejectedValueOnce(new Error('denied'))
+    renderAt('/scans/7', { withToasts: true })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not copy the link/i)
+
+    // Drain the toast's own auto-dismiss timer so it doesn't leak into the
+    // next test — the module-scope toast queue outlives this render.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

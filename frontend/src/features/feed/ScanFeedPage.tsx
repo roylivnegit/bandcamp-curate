@@ -581,6 +581,11 @@ export function ScanFeedPage() {
                     ? 'Nothing matches these filters — try clearing one.'
                     : 'No recommendations in this scan yet.'}
                 </p>
+                {filters.anyActive && (
+                  <button type="button" className="btn ghost" onClick={filters.reset}>
+                    Clear filters
+                  </button>
+                )}
                 {!filters.anyActive && <ColdStartPanel coldStart={stats?.cold_start} />}
               </>
             )}

@@ -324,6 +324,22 @@ describe('scan feed', () => {
     expect(screen.queryByRole('button', { name: 'Clear all filters' })).not.toBeInTheDocument()
   })
 
+  it('offers a "Clear filters" button in the zero-result empty state, even for a single facet', async () => {
+    // The "Clear all filters" pill only shows once 2+ facets stack, so a
+    // single active filter that zeroes out the feed otherwise has no
+    // clear-action anywhere on screen.
+    mockFetch(feedRoutes([]))
+    renderApp('/scans/1?tag=psybient')
+    const user = userEvent.setup()
+
+    expect(await screen.findByText('Nothing matches these filters — try clearing one.')).toBeInTheDocument()
+    expect(currentLocation().search).toContain('tag=psybient')
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+
+    expect(currentLocation().search).not.toContain('tag=psybient')
+  })
+
   const threeRecs = [
     fakeRec({ album_id: 1, title: 'First album' }),
     fakeRec({ album_id: 2, title: 'Second album' }),
