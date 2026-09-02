@@ -25,6 +25,11 @@ const keyOf = (r: Recommendation) => `${r.item_type}:${r.album_id ?? r.track_id}
 /** A DOM id derived from `keyOf`, so the roving-tabindex handler can find and
  *  focus one exact card by id after an Arrow/Home/End key. */
 const cardIdOf = (r: Recommendation) => `card-${keyOf(r)}`
+/** Keys for the Liked/Blocked side-panel rows' own in-flight tracking — a
+ *  distinct namespace from `keyOf` above (prefixed, not item-type-shaped) so
+ *  they can share `inFlight`/`panelBusy` with nothing to collide against. */
+const likedKeyOf = (item: Liked) => `liked-${item.id}`
+const blockedKeyOf = (bandId: number) => `blocked-${bandId}`
 
 /** True only for a genuine mid-session reflow — `prev` was a real generation
  *  (not the initial `null`) and it differs from `next`. A scan's very first
