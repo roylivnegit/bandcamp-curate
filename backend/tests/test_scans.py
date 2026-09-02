@@ -114,6 +114,18 @@ async def test_create_validation(client: AsyncClient) -> None:
     assert (await post("n", ["https://google.com"])).status_code == 400  # not a release URL
 
 
+async def test_create_scan_seed_cap(client: AsyncClient) -> None:
+    too_many = [f"https://x.bandcamp.com/album/a{i}" for i in range(501)]
+    r = await client.post("/api/scans", json={"name": "n", "seeds": too_many})
+    assert r.status_code == 400
+    assert "too many seed" in r.json()["detail"]
+
+    at_cap = too_many[:500]
+    r = await client.post("/api/scans", json={"name": "n", "seeds": at_cap})
+    assert r.status_code == 201
+    assert r.json()["seed_count"] == 500
+
+
 async def test_create_scan_with_track_seed(client: AsyncClient) -> None:
     r = await client.post(
         "/api/scans",

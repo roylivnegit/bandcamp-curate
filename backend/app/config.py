@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # (today's behavior). See CLAUDE.md "Immediate next steps".
     crawl_max_frontier_size: int | None = None
 
+    # Hard cap on the number of seed URLs a single `POST /api/scans` may create —
+    # `crawl_max_frontier_size` above bounds fan-out *during* a crawl, but the
+    # initial seed batch lands straight in `ScanSeed` before crawling even starts,
+    # so it needed its own cap. See CLAUDE.md "Immediate next steps".
+    max_scan_seeds: int = 500
+
     # Frontier entries crawled in parallel within one slice. A Nimble render takes
     # 3-35s, so a serial drain is almost entirely idle waiting — at 1 this managed
     # ~3 fetches/min against a limiter allowing far more. Each worker holds its own

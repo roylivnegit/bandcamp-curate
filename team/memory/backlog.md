@@ -683,7 +683,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `test_block_with_expiry_round_trips` (a real future date) is untouched and still passes.
   242/242 backend tests pass (241 + 1 new), ruff clean. PR: see git history.
 
-- [ ] **`POST /api/scans` seed list has no size cap.** *(proposed by the hourly routine,
+- [x] **`POST /api/scans` seed list has no size cap.** *(proposed by the hourly routine,
   2026-09-02, Architect+QA-approved)* `scan_service.create_scan` takes `urls: list[str]` and
   inserts one `ScanSeed` row per de-duped URL with no upper bound — the same class of problem
   `Settings.crawl_max_frontier_size` was added to solve for frontier growth *during* a crawl (see
@@ -692,6 +692,15 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   e.g. 500), checked in `create_scan`, raising `ValueError` → the existing 400 handler in
   `scans.py`. Verify: `pytest` — posting 501 seed URLs to `POST /api/scans` returns `400`; posting
   500 still succeeds.
+  Done: `Settings.max_scan_seeds` (default 500). `create_scan` gained a keyword-only `max_seeds`
+  param, defaulting to `get_settings().max_scan_seeds` when omitted — same "default param falls
+  back to settings, tests override explicitly" shape as `frontier.enqueue`'s
+  `max_frontier_size`. The check runs after de-duplication (a scan with 501 URLs where one repeats
+  should still pass at 500 distinct seeds), raising `ValueError` which the existing `scans.py`
+  handler already turns into `400`. Covered by `test_create_scan_seed_cap`: 501 distinct seed URLs
+  → `400` with "too many seed" in the detail message; the same list trimmed to exactly 500 → `201`
+  with `seed_count == 500`. 243/243 backend tests pass (242 + 1 new), ruff clean. PR: see git
+  history.
 
 - [x] **Per-user rate limit on `POST /api/recommendations/recompute`.** *(proposed by the hourly
   routine, 2026-09-02, Architect+QA-approved)* `app/api/feed.py`'s recompute endpoint does a full

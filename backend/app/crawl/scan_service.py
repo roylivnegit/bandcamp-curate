@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config import get_settings
 from app.crawl import frontier, runner
 from app.crawl.service import Fetcher
 from app.db.models import Album, CrawlFrontier, Scan, ScanSeed, Track, User
@@ -62,11 +63,24 @@ def parse_seed_url(url: str) -> tuple[str, str]:
     return m.group(1), m.group(2).lower()
 
 
-async def create_scan(session: AsyncSession, user_id: int, name: str, urls: list[str]) -> Scan:
+async def create_scan(
+    session: AsyncSession,
+    user_id: int,
+    name: str,
+    urls: list[str],
+    *,
+    max_seeds: int | None = None,
+) -> Scan:
     """Create a queued custom scan owned by `user_id`, from a list of seed URLs
     (album and/or track, any mix). Deduplicates URLs.
 
-    Raises ValueError on an empty name or no valid seeds."""
+    `max_seeds` caps the deduplicated seed count. Defaults to
+    `Settings.max_scan_seeds` (500) so the API sees that bound with no argument
+    passed; tests override explicitly.
+
+    Raises ValueError on an empty name, no valid seeds, or too many seeds."""
+    if max_seeds is None:
+        max_seeds = get_settings().max_scan_seeds
     name = (name or "").strip()
     if not name:
         raise ValueError("scan name is required")
@@ -79,6 +93,10 @@ async def create_scan(session: AsyncSession, user_id: int, name: str, urls: list
             seeds.append((clean, kind))
     if not seeds:
         raise ValueError("at least one album or track URL is required")
+    if len(seeds) > max_seeds:
+        raise ValueError(
+            f"too many seed URLs ({len(seeds)} after de-duplication) — max is {max_seeds}"
+        )
 
     scan = Scan(
         user_id=user_id, name=name, kind=str(ScanKind.CUSTOM), status=str(ScanStatus.QUEUED)
