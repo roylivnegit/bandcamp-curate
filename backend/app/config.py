@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
     crawl_max_requests: int = 5000
 
+    # Per-user safety budget, on top of `crawl_max_requests`: stop a scan once
+    # its OWNER has spent this many provider fetches across all their scans
+    # (attributed via `provider_usage.scan_id` → `Scan.user_id`). None =
+    # unbounded (today's behavior). Without this, `crawl_max_requests` is the
+    # only cap, and it's global and cumulative — one user's deep scan can spend
+    # it all and leave every other user's scan permanently unable to run. See
+    # CLAUDE.md "Immediate next steps". Only fetches issued through
+    # `crawl.service`'s page-render FetchRequest helpers carry a scan_id today
+    # (pagination-via-Nimble attribution is a follow-up), so this under-counts
+    # collection-heavy scans until that's threaded too.
+    crawl_max_requests_per_user: int | None = None
+
     # Secondary fan-out bound, independent of `crawl_max_depth`: total frontier
     # rows (any status) ONE scan may ever queue. Depth 3 on a single popular album
     # can still fan out to thousands of collectors' collections regardless of how

@@ -49,6 +49,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["seed_url"] = settings.bandcamp_fan_url
     ctx["max_depth"] = settings.crawl_max_depth
     ctx["max_requests"] = settings.crawl_max_requests
+    ctx["max_requests_per_user"] = settings.crawl_max_requests_per_user
     ctx["concurrency"] = settings.crawl_concurrency
     ctx["slice_seconds"] = settings.crawl_slice_seconds
     ctx["entry_seconds"] = settings.crawl_entry_seconds
@@ -123,6 +124,7 @@ async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
             follows_client=ctx.get("follows_client"),
             supporters_client=ctx.get("supporters_client"),
             max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
+            max_requests_per_user=ctx.get("max_requests_per_user"),
             concurrency=ctx.get("concurrency", 1),
             slice_seconds=ctx.get("slice_seconds"),
             entry_seconds=ctx.get("entry_seconds"),

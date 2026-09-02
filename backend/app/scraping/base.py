@@ -32,6 +32,10 @@ class FetchRequest:
     browser_actions: list[dict[str, Any]] | None = None
     # Escape hatch for provider-specific fields not modeled above.
     extra: dict[str, Any] = field(default_factory=dict)
+    # Attribution only — which scan this fetch belongs to, for per-user budget
+    # accounting (`provider_usage.scan_id`). Never part of the cache key: the
+    # same URL/body should still hit the cache regardless of which scan asks.
+    scan_id: int | None = None
 
     def cache_key(self) -> str:
         key = f"{self.parser_name or 'raw'}::{self.url}"

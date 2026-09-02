@@ -152,6 +152,7 @@ class ScraperGateway:
                     latency_ms=latency_ms,
                     url=request.url,
                     parser=request.parser_name,
+                    scan_id=request.scan_id,
                 )
             )
         except Exception:  # usage logging must never break a scrape

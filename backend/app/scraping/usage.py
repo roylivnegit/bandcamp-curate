@@ -16,6 +16,7 @@ class UsageEvent:
     latency_ms: int | None = None
     url: str | None = None
     parser: str | None = None
+    scan_id: int | None = None
 
 
 class UsageSink(Protocol):
@@ -50,6 +51,7 @@ class DbUsageSink:
                     latency_ms=event.latency_ms,
                     url=event.url,
                     parser=event.parser,
+                    scan_id=event.scan_id,
                 )
             )
             await session.commit()
