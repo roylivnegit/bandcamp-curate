@@ -33,3 +33,6 @@ export const TOAST_DURATION_MS = 4000
 /** How often `<RelativeTime>` re-renders itself to keep "Xm ago" text current
  *  on a page that isn't otherwise polling. */
 export const RELATIVE_TIME_REFRESH_MS = 30000
+
+/** Scroll distance, in px, past which `<ScrollTopButton>` appears. */
+export const SCROLL_TOP_THRESHOLD_PX = 600

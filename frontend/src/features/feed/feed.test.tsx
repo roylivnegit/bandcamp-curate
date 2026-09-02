@@ -789,3 +789,36 @@ describe('resume scroll position', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 })
+
+describe('scroll-to-top button', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('scrolls to the top and refocuses the heading when clicked', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 700, configurable: true })
+    fireEvent.scroll(window)
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to top' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
+    expect(screen.getByRole('heading', { name: /My collection/ })).toHaveFocus()
+  })
+})

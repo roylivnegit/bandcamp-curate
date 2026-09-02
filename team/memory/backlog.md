@@ -617,14 +617,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   with RTL role/name assertions (`busy=true` → button reads "Liking…"/"Blocking…" and "♥ like" is
   gone; `busy=false` → the reverse). Not yet built.
 
-- [ ] **"Back to top" affordance for long feeds.** *(proposed by the hourly routine, 2026-09-02,
+- [x] **"Back to top" affordance for long feeds.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved)* The feed grows to hundreds of rows via "load more," but there's no fast
-  way back to the filter bar/top once scrolled deep. Add a `<ScrollTopButton>` that renders only
-  past a scroll threshold (~600px), and on click calls `window.scrollTo({top:0,
-  behavior:'smooth'})` plus refocuses the page heading (the existing `headingRef.current?.focus()`
-  pattern already used in both `ScanListPage`/`ScanFeedPage`). QA confirmed `useResumeScroll.ts`
-  already proves `window.scrollY`/`window.scrollTo`/a scroll listener are jsdom-testable in this
-  repo, so this needs no new testing approach. Verify: RTL — dispatch a `scroll` event below
-  threshold, assert the button is absent; above threshold, assert it's present; click it, assert
-  a mocked `window.scrollTo` was called with `{top:0,...}` and that `document.activeElement` is
-  the heading. Not yet built.
+  way back to the filter bar/top once scrolled deep.
+  Done: new `components/ScrollTopButton.tsx` — a `useState` initialized from `window.scrollY`
+  (so a mount deep in an already-scrolled page shows correctly, not just after the next scroll
+  event) plus a passive `scroll` listener toggling visibility past `SCROLL_TOP_THRESHOLD_PX`
+  (600, new in `config.ts`). Renders `null` below the threshold rather than hiding via CSS, so
+  it's never a focusable-but-invisible control. Icon-only (`↑`, `aria-hidden`) with an
+  `aria-label="Back to top"` per the icon-only-controls rule in `frontend/CLAUDE.md`'s UI/UX
+  section. Wired into `ScanFeedPage.tsx` next to `ShortcutsHelp`; its `onClick` is a new
+  `scrollToTop` callback that calls `window.scrollTo({top:0, behavior:'smooth'})` then
+  `headingRef.current?.focus()` — the same heading ref the existing focus-on-route-change effect
+  already uses, so clicking it reads as the same kind of navigation. Covered by four standalone
+  tests in `ScrollTopButton.test.tsx` (absent below threshold, appears above it, disappears again
+  on scrolling back up, calls `onClick`) and one integration test in `feed.test.tsx`
+  ("scroll-to-top button" describe block): scrolling a real rendered feed past the threshold,
+  clicking the button, and asserting both the `scrollTo` call and that the page heading receives
+  focus. 85/85 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
+  lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
