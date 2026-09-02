@@ -15,3 +15,7 @@ export const SCAN_POLL_MS = 4000
  *  state when this elapses, and a mismatch either truncates the animation or
  *  leaves a blank gap behind it. */
 export const CARD_EXIT_MS = 800
+
+/** How long the "Undo" affordance stays up after a like/block, in ms. Long
+ *  enough to catch a mis-click without becoming visual clutter. */
+export const UNDO_WINDOW_MS = 6000

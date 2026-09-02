@@ -2,7 +2,7 @@ import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SCAN_POLL_MS } from '../../config'
+import { CARD_EXIT_MS, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
 import { currentLocation, fakeMe, fakeRec, fakeScan, mockFetch, renderApp } from '../../test/renderApp'
 
 const signedIn = () => localStorage.setItem('crate-digger.token', 'tok')
@@ -357,6 +357,96 @@ describe('focus on route change', () => {
 
     await user.click(screen.getByRole('link', { name: /Scans/ }))
     expect(await screen.findByRole('heading', { name: 'Your scans' })).toHaveFocus()
+  })
+})
+
+describe('undo after like/block', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const feedRoutes = (recs = [fakeRec()]) =>
+    [
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: recs.length }],
+      ['/api/recommendations', recs],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ] as Array<[string, unknown, number?]>
+
+  const recFetchCount = (fetchMock: ReturnType<typeof mockFetch>) =>
+    fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes('/api/recommendations') && !String(c[0]).includes('count'),
+    ).length
+
+  it('offers Undo after liking a card, and undo restores it without a network refetch', async () => {
+    const fetchMock = mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+    // The card animates out before it's actually dropped from state.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    expect(screen.queryByText('Eyes of Infinity')).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Undo' })).toBeInTheDocument()
+    const fetchesBeforeUndo = recFetchCount(fetchMock)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+    // Restored from local state, not a fresh /api/recommendations fetch — that
+    // would have reset pagination/scroll for every other row on screen too.
+    expect(recFetchCount(fetchMock)).toBe(fetchesBeforeUndo)
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/likes/unlike'))).toBe(true)
+  })
+
+  it('offers Undo after blocking a card', async () => {
+    mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '⊘ block' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    expect(await screen.findByText(/Blocked Minds of Infinity/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+  })
+
+  it('auto-dismisses the Undo affordance after its window elapses', async () => {
+    mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+    expect(await screen.findByRole('button', { name: 'Undo' })).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS)
+    })
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
   })
 })
 
