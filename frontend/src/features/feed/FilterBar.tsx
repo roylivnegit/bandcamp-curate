@@ -4,6 +4,7 @@ import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { CopyLinkButton } from '../../components/CopyLinkButton'
 import { CopyMarkdownButton } from '../../components/CopyMarkdownButton'
 import { Dropdown } from '../../components/Dropdown'
+import { RemoveButton } from '../../components/RemoveButton'
 import type { Density } from '../../lib/density'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
@@ -282,14 +283,7 @@ function ActivePills({ filters }: { filters: FeedFilters }) {
           <span className="tog static">
             artist: <b>{filters.label.name}</b>
           </span>
-          <button
-            type="button"
-            className="rm"
-            aria-label="Clear artist filter"
-            onClick={() => filters.setLabel(null)}
-          >
-            ×
-          </button>
+          <RemoveButton label="Clear artist filter" onClick={() => filters.setLabel(null)} />
         </span>
       )}
       {facetCount >= 2 && (
@@ -323,9 +317,7 @@ function Pill({
       >
         {out ? '⊘ exclude' : '✓ include'}: <b>{body}</b>
       </button>
-      <button type="button" className="rm" aria-label={`Remove ${body}`} onClick={onRemove}>
-        ×
-      </button>
+      <RemoveButton label={`Remove ${body}`} onClick={onRemove} />
     </span>
   )
 }

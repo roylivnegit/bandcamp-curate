@@ -1,6 +1,7 @@
 import { useState, type ClipboardEvent as ReactClipboardEvent } from 'react'
 
 import { api } from '../../api/client'
+import { RemoveButton } from '../../components/RemoveButton'
 import { seedKind } from '../../lib/format'
 
 // Mirrors the backend's own acceptance shape (`app.crawl.scan_service._SEED_RE`):
@@ -132,14 +133,10 @@ export function NewScanForm({
             <li className="seed" key={u}>
               <span className="stag">{seedKind(u)}</span>
               <span className="u">{u}</span>
-              <button
-                type="button"
-                className="rm"
-                aria-label={`Remove ${u}`}
+              <RemoveButton
+                label={`Remove ${u}`}
                 onClick={() => setSeeds((prev) => prev.filter((_, j) => j !== i))}
-              >
-                ×
-              </button>
+              />
             </li>
           ))}
         </ul>
