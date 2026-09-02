@@ -17,7 +17,7 @@ export const FeedCard = memo(function FeedCard({
   cardId,
   active,
   exiting,
-  busy,
+  busyAction,
   onLike,
   onBlock,
   onTagClick,
@@ -32,12 +32,16 @@ export const FeedCard = memo(function FeedCard({
    *  the rest are `-1` but stay focusable by script for arrow-key navigation. */
   active: boolean
   exiting: 'like' | 'block' | null
-  busy: boolean
+  /** Which in-flight action, if any, disables both buttons and swaps the
+   *  acting one's label to "Liking…"/"Blocking…" — not just a bare disabled,
+   *  which read as unresponsive for the gap before the card animates out. */
+  busyAction: 'like' | 'block' | null
   onLike: (rec: Recommendation) => void
   onBlock: (rec: Recommendation) => void
   onTagClick: (tag: string) => void
   onBandClick: (rec: Recommendation) => void
 }) {
+  const busy = busyAction !== null
   const co = rec.reasons.co_owners ?? 0
   const handle = bandcampHandle(rec.url)
   const tags = rec.reasons.matched_tags ?? []
@@ -116,7 +120,7 @@ export const FeedCard = memo(function FeedCard({
             aria-keyshortcuts="l"
             onClick={() => onLike(rec)}
           >
-            ♥ like
+            {busyAction === 'like' ? 'Liking…' : '♥ like'}
           </button>
           {rec.band_id !== null && (
             <button
@@ -126,7 +130,7 @@ export const FeedCard = memo(function FeedCard({
               aria-keyshortcuts="b"
               onClick={() => onBlock(rec)}
             >
-              ⊘ block
+              {busyAction === 'block' ? 'Blocking…' : '⊘ block'}
             </button>
           )}
           {rec.url && (

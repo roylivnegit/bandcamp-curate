@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { fakeRec } from '../../test/renderApp'
 import { FeedCard } from './FeedCard'
 
-function renderCard(over: { busy?: boolean; bandId?: number | null } = {}) {
+function renderCard(
+  over: { busyAction?: 'like' | 'block' | null; bandId?: number | null } = {},
+) {
   const rec = fakeRec(over.bandId === undefined ? {} : { band_id: over.bandId })
   const onLike = vi.fn()
   const onBlock = vi.fn()
@@ -16,7 +18,7 @@ function renderCard(over: { busy?: boolean; bandId?: number | null } = {}) {
       cardId="card-test"
       active
       exiting={null}
-      busy={over.busy ?? false}
+      busyAction={over.busyAction ?? null}
       onLike={onLike}
       onBlock={onBlock}
       onTagClick={onTagClick}
@@ -50,7 +52,7 @@ describe('FeedCard keyboard shortcuts', () => {
   })
 
   it('ignores the shortcut while the card is busy', () => {
-    const { onLike } = renderCard({ busy: true })
+    const { onLike } = renderCard({ busyAction: 'like' })
     screen.getByRole('button', { name: /Minds of Infinity/ }).focus()
 
     fireEvent.keyDown(document.activeElement!, { key: 'l' })
@@ -74,5 +76,39 @@ describe('FeedCard keyboard shortcuts', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: '♥ like' }), { key: 'b' })
 
     expect(onBlock).not.toHaveBeenCalled()
+  })
+})
+
+describe('FeedCard pending-state microcopy', () => {
+  it('shows plain labels when nothing is in flight', () => {
+    renderCard()
+
+    expect(screen.getByRole('button', { name: '♥ like' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '⊘ block' })).toBeInTheDocument()
+  })
+
+  it('swaps the like button to "Liking…" while a like is in flight, leaving block alone', () => {
+    renderCard({ busyAction: 'like' })
+
+    expect(screen.getByRole('button', { name: 'Liking…' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '♥ like' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '⊘ block' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Blocking…' })).not.toBeInTheDocument()
+  })
+
+  it('swaps the block button to "Blocking…" while a block is in flight, leaving like alone', () => {
+    renderCard({ busyAction: 'block' })
+
+    expect(screen.getByRole('button', { name: 'Blocking…' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '⊘ block' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '♥ like' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Liking…' })).not.toBeInTheDocument()
+  })
+
+  it('disables both action buttons while either is in flight', () => {
+    renderCard({ busyAction: 'like' })
+
+    expect(screen.getByRole('button', { name: 'Liking…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '⊘ block' })).toBeDisabled()
   })
 })

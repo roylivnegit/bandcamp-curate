@@ -57,7 +57,10 @@ export function ScanFeedPage() {
   const [blocked, setBlocked] = useState<Blocked[]>([])
   const [panel, setPanel] = useState<'liked' | 'blocked' | null>(null)
   const [exiting, setExiting] = useState<Record<string, 'like' | 'block'>>({})
-  const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set())
+  /** Which action, if any, is in flight for a card — mirrors `exiting`'s
+   *  per-key/per-action shape so `FeedCard` can swap its acting button's
+   *  label to "Liking…"/"Blocking…" instead of just going inert. */
+  const [busy, setBusy] = useState<Record<string, 'like' | 'block'>>({})
   /** Roving tabindex over the card list: an index into `rows`, not a scan
    *  each card would otherwise have to do to know whether it's "the active
    *  one" — every card's `active` prop is a single `i === activeIndex`
@@ -87,7 +90,7 @@ export function ScanFeedPage() {
   const feedSeq = useRef(0)
   /* In-flight like/block keys. A ref, not state: this only guards re-entry, and
    * as state it would force the handlers to depend on it, un-memoizing every card
-   * on each click. `busyKeys` below is the render-visible half. */
+   * on each click. `busy` above is the render-visible half. */
   const inFlight = useRef<Set<string>>(new Set())
   /* The generation the currently-rendered page was fetched under. A ref, not
    * state: it only feeds the reflow check below, never renders on its own. */
@@ -248,12 +251,15 @@ export function ScanFeedPage() {
   // ── like / block ─────────────────────────────────────────────────────────
   /* Every handler below is dependency-free (functional setState + the in-flight
    * ref), so `FeedCard`'s memo actually holds across unrelated re-renders. */
-  const markBusy = useCallback((key: string, on: boolean) => {
-    setBusyKeys((prev) => {
-      const next = new Set(prev)
-      if (on) next.add(key)
-      else next.delete(key)
-      return next
+  const markBusy = useCallback((key: string, action: 'like' | 'block' | null) => {
+    setBusy((prev) => {
+      if (action === null) {
+        if (!(key in prev)) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      }
+      return { ...prev, [key]: action }
     })
   }, [])
 
@@ -324,7 +330,7 @@ export function ScanFeedPage() {
       const key = keyOf(rec)
       if (inFlight.current.has(key)) return
       inFlight.current.add(key)
-      markBusy(key, true)
+      markBusy(key, 'like')
       try {
         const ref = rec.album_id !== null ? { album_id: rec.album_id } : { track_id: rec.track_id! }
         await api.like(ref)
@@ -334,7 +340,7 @@ export function ScanFeedPage() {
         setError(err instanceof Error ? err.message : 'Could not save that like.')
       } finally {
         inFlight.current.delete(key)
-        markBusy(key, false)
+        markBusy(key, null)
       }
     },
     [markBusy, retire, loadLiked, loadFacets],
@@ -345,7 +351,7 @@ export function ScanFeedPage() {
       const key = keyOf(rec)
       if (rec.band_id === null || inFlight.current.has(key)) return
       inFlight.current.add(key)
-      markBusy(key, true)
+      markBusy(key, 'block')
       try {
         await api.block(rec.band_id)
         retire(rec, 'block')
@@ -354,7 +360,7 @@ export function ScanFeedPage() {
         setError(err instanceof Error ? err.message : 'Could not block that artist.')
       } finally {
         inFlight.current.delete(key)
-        markBusy(key, false)
+        markBusy(key, null)
       }
     },
     [markBusy, retire, loadBlocked, loadFacets],
@@ -573,7 +579,7 @@ export function ScanFeedPage() {
                       cardId={cardIdOf(r)}
                       active={i === activeCardIndex}
                       exiting={exiting[key] ?? null}
-                      busy={busyKeys.has(key)}
+                      busyAction={busy[key] ?? null}
                       onLike={like}
                       onBlock={block}
                       onTagClick={includeTag}
