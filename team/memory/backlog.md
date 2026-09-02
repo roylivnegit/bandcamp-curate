@@ -522,3 +522,34 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   and clears an earlier error; an invalid URL submitted via Enter (not the Add button) is
   rejected too. 52/52 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
+
+- [x] **"Clear filters" button inside the zero-result empty state.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved)* When active filters return zero rows, the empty
+  state (`ScanFeedPage.tsx`, around the "Nothing matches these filters" message) is just text —
+  no button. The existing "Clear all filters" control in `ActivePills` (`FilterBar.tsx`) only
+  renders once 2+ filter facets are active, so a single active filter has no clear-action
+  anywhere on screen.
+  Done: added a `btn ghost` "Clear filters" button next to the empty-state message, shown only
+  when `filters.anyActive` (mirroring the existing cold-start-panel branch's condition) and
+  wired to the existing `filters.reset()` — no new state or styling. Covered by a new test in
+  `feed.test.tsx`: opening `/scans/1?tag=psybient` against a mock returning zero recommendations
+  shows the empty-filtered message and the button; clicking it clears `tag=` from the URL. 71/71
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [ ] **`useDocumentTitle` hook.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `document.title` is hardcoded to "crate digger" in `index.html` and
+  never updated, so every route/scan looks identical in the tab bar and browser history. Add a
+  small `useDocumentTitle(title)` hook, called from `ScanListPage` ("Scans") and `ScanFeedPage`
+  (the scan's name). QA: sound (plain effect, `document.title` is a real jsdom property),
+  testable via RTL + a memory router with no live deps, small.
+
+- [ ] **Toast/notification primitive — split into two sittings.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA: sound but too large as one item)* There's no shared
+  toast/notification primitive anywhere in the frontend — every screen invents its own inline
+  `role="alert"`, and `CopyLinkButton.tsx`'s clipboard-rejection catch block currently swallows
+  failure with no user feedback at all (a denied-permission click looks like nothing happened).
+  QA: build as a proper external store (`useSyncExternalStore` over a module-scope queue, not
+  `useState` mirroring, to avoid cross-test/cross-mount leakage). Split into two separate items
+  rather than one: (a) the `useToast`/`<ToastStack>` primitive itself (show/auto-dismiss/stacking,
+  tested with fake timers), then (b) wiring it into `CopyLinkButton`'s catch block (tested by
+  mocking a rejected `navigator.clipboard.writeText` and asserting a toast now appears).
