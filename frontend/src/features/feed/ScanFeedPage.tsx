@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail } from '../../api/types'
-import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS } from '../../config'
+import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
 import { count, plural } from '../../lib/format'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
@@ -51,6 +51,15 @@ export function ScanFeedPage() {
   const [error, setError] = useState('')
   const [listUpdated, setListUpdated] = useState(false)
   const headingRef = useRef<HTMLHeadingElement>(null)
+  /** The most recently retired card, restorable with "Undo". `index` is where
+   *  it sat in `rows` at the moment it was removed, so undo re-inserts it back
+   *  in roughly the same spot rather than at an arbitrary end. */
+  const [undo, setUndo] = useState<{ rec: Recommendation; kind: 'like' | 'block'; index: number } | null>(
+    null,
+  )
+  /* Timer id in a ref, not state: only `armUndo`/`clearUndo` touch it and
+   * neither needs to re-render when it changes. */
+  const undoTimer = useRef<number | null>(null)
 
   /* Bumped by every first-page load. A response whose ticket no longer matches is
    * stale — the filters moved on while it was in flight — so it must not land.
@@ -200,25 +209,67 @@ export function ScanFeedPage() {
     })
   }, [])
 
+  const clearUndoTimer = useCallback(() => {
+    if (undoTimer.current !== null) {
+      window.clearTimeout(undoTimer.current)
+      undoTimer.current = null
+    }
+  }, [])
+
+  /** Offers "Undo" on the just-retired card for `UNDO_WINDOW_MS`. Only one at
+   *  a time — a second like/block replaces whatever undo was already up. */
+  const armUndo = useCallback(
+    (rec: Recommendation, kind: 'like' | 'block', index: number) => {
+      clearUndoTimer()
+      setUndo({ rec, kind, index })
+      undoTimer.current = window.setTimeout(() => {
+        undoTimer.current = null
+        setUndo(null)
+      }, UNDO_WINDOW_MS)
+    },
+    [clearUndoTimer],
+  )
+
+  // A stale undo banner pointing at a different scan's card would be
+  // confusing (and its `index` meaningless) once the reader lands on another
+  // scan via the same route element, so drop it on every scanId change —
+  // which also covers unmount, via the returned cleanup.
+  useEffect(() => {
+    setUndo(null)
+    return clearUndoTimer
+  }, [scanId, clearUndoTimer])
+
   /** Animate the card out, then drop it and any sibling by the same band —
    *  curation excludes the whole band, so the live feed should match. */
-  const retire = useCallback((rec: Recommendation, kind: 'like' | 'block') => {
-    const key = keyOf(rec)
-    setExiting((prev) => ({ ...prev, [key]: kind }))
-    window.setTimeout(() => {
-      setRows((prev) =>
-        prev.filter((r) =>
-          rec.band_id !== null ? r.band_id !== rec.band_id : keyOf(r) !== key,
-        ),
-      )
-      setExiting((prev) => {
-        const next = { ...prev }
-        delete next[key]
-        return next
-      })
-      setTotal((t) => (t === null ? t : Math.max(0, t - 1)))
-    }, CARD_EXIT_MS)
-  }, [])
+  const retire = useCallback(
+    (rec: Recommendation, kind: 'like' | 'block') => {
+      const key = keyOf(rec)
+      setExiting((prev) => ({ ...prev, [key]: kind }))
+      window.setTimeout(() => {
+        let removedAt = -1
+        setRows((prev) => {
+          const next: Recommendation[] = []
+          prev.forEach((r, i) => {
+            const matches = rec.band_id !== null ? r.band_id === rec.band_id : keyOf(r) === key
+            if (matches) {
+              if (removedAt === -1) removedAt = i
+            } else {
+              next.push(r)
+            }
+          })
+          return next
+        })
+        setExiting((prev) => {
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+        setTotal((t) => (t === null ? t : Math.max(0, t - 1)))
+        armUndo(rec, kind, removedAt)
+      }, CARD_EXIT_MS)
+    },
+    [armUndo],
+  )
 
   const like = useCallback(
     async (rec: Recommendation) => {
@@ -271,6 +322,38 @@ export function ScanFeedPage() {
   )
 
   const dismissListUpdated = useCallback(() => setListUpdated(false), [])
+
+  /** Reverses the currently-offered undo: unlikes/unblocks server-side, then
+   *  restores the card straight into local `rows` at the spot it was removed
+   *  from. Deliberately does NOT call `loadFirstPage()` — refetching page 1 to
+   *  bring back one card would reset pagination/scroll for every other row
+   *  already on screen. */
+  async function undoRetire() {
+    if (!undo) return
+    const { rec, kind, index } = undo
+    clearUndoTimer()
+    setUndo(null)
+    try {
+      if (kind === 'like') {
+        const ref = rec.album_id !== null ? { album_id: rec.album_id } : { track_id: rec.track_id! }
+        await api.unlike(ref)
+        await loadLiked()
+      } else if (rec.band_id !== null) {
+        await api.unblock(rec.band_id)
+        await loadBlocked()
+      }
+      setRows((prev) => {
+        if (prev.some((r) => keyOf(r) === keyOf(rec))) return prev
+        const next = [...prev]
+        next.splice(index === -1 ? next.length : Math.min(index, next.length), 0, rec)
+        return next
+      })
+      setTotal((t) => (t === null ? t : t + 1))
+      await loadFacets()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not undo that.')
+    }
+  }
 
   async function unlike(item: Liked) {
     const ref = item.album_id !== null ? { album_id: item.album_id } : { track_id: item.track_id! }
@@ -367,6 +450,20 @@ export function ScanFeedPage() {
                 <span>The list updated — showing the latest order.</span>
                 <button type="button" className="rm" aria-label="Dismiss" onClick={dismissListUpdated}>
                   ✕
+                </button>
+              </p>
+            )}
+
+            {undo && (
+              <p className="banner undo" role="status">
+                <span aria-hidden="true">{undo.kind === 'like' ? '♥' : '⊘'}</span>
+                <span>
+                  {undo.kind === 'like'
+                    ? 'Added to your likes.'
+                    : `Blocked ${undo.rec.band_name ?? 'that artist'}.`}
+                </span>
+                <button type="button" className="btn ghost" onClick={() => void undoRetire()}>
+                  Undo
                 </button>
               </p>
             )}

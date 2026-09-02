@@ -215,6 +215,17 @@
   color: var(--text);
 }
 
+/* ── undo affordance ─────────────────────────────────────────────────────── */
+
+.banner.undo {
+  margin-bottom: var(--s-3);
+}
+
+.banner.undo .btn {
+  margin-left: auto;
+  padding: 6px 14px;
+}
+
 /* ── feed card ───────────────────────────────────────────────────────────── */
 
 .card {

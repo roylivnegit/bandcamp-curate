@@ -321,17 +321,26 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   clicked, asserts every pill is gone and the item-type segment reads "All" again. PR: see git
   history.
 
-- [ ] **Undo affordance after like/block.** *(proposed by the hourly routine, 2026-09-02)*
+- [x] **Undo affordance after like/block.** *(proposed by the hourly routine, 2026-09-02)*
   Like/block are one click and instant, and the feed is dense (`content-visibility: auto`
   cards), so a mis-click means digging into the Liked/Blocked panel to reverse it rather than
-  just undoing. `ScanFeedPage.tsx` already has `unlike`/`unblock` fully implemented for the
-  side panels — after `retire()` fires, show a ~6s inline "Undo" affordance that calls them.
-  Architect/QA caveat: scope the reappearance to restoring the card in local state, not calling
-  `loadFirstPage()` — refetching page 1 to bring back one card would reset pagination/scroll for
-  everything else, and the review flagged that as the one scoping fix needed before this is
-  actually a one-sitting task. Verify: click block on a card, assert the undo control appears,
-  click it, assert `api.unblock` was called with the right `band_id` and the card is restored
-  without a network refetch; a fake-timer test asserts it auto-dismisses after the window.
+  just undoing.
+  Done: `ScanFeedPage.tsx`'s `retire()` now captures the row's index in `rows` at the moment it's
+  removed (inside the `setRows` updater, so it's never stale) and hands it to a new `armUndo()`,
+  which puts up one `{ rec, kind, index }` in `undo` state and a `UNDO_WINDOW_MS` (6s, new in
+  `config.ts`) timer that clears it. A new `.banner.undo` (♥/⊘ icon, message, an "Undo" `.btn
+  ghost`) renders whenever `undo` is set — one at a time, a second like/block replaces whatever
+  was already up. Its handler, `undoRetire()`, calls `api.unlike`/`api.unblock` directly (never
+  the panel's `unlike`/`unblock`, which call `loadFirstPage()`) and splices the retired `rec`
+  back into local `rows` at its captured index — per the Architect/QA scoping note, refetching
+  page 1 to bring back one card would have reset pagination/scroll for every other row already on
+  screen. The undo banner is dropped (and its timer cleared) on every `scanId` change, since it'd
+  otherwise point at a different scan's card once the reader navigates to another scan through
+  the same `/scans/:scanId` route element. Covered by three new tests in `feed.test.tsx`: undo
+  after a like restores the card with zero extra `/api/recommendations` fetches and confirms
+  `/api/likes/unlike` was called; undo after a block; the banner auto-dismisses once
+  `UNDO_WINDOW_MS` elapses with nothing clicked. 38/38 frontend tests pass, tsc/lint/build clean
+  (route chunk split intact). PR: see git history.
 
 - [x] **Focus moves to the page heading on route change.** *(proposed by the hourly routine,
   2026-09-02)* `frontend/CLAUDE.md` already flags this gap ("Absent... revisit if nav grows") and
