@@ -274,6 +274,19 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   required props. 68/68 frontend tests pass, tsc/lint/build clean (chunk split intact). PR:
   see git history.
 
+- [ ] **Resume feed scroll position across route changes.** *(proposed by the hourly routine,
+  2026-09-02)* Clicking away from the feed (or navigating between scans) and back drops the
+  reader at the top of a long list, losing their place. Store the last-seen scroll offset (or
+  top-visible card id) in `sessionStorage`, keyed by the current filter query string, and
+  restore it when the feed remounts with matching filters; clear/ignore it when the filters
+  differ. Architect+QA: sound, testable in JSDOM (mount, scroll/record, unmount, remount,
+  assert restore; a second case with different filters confirms no stale restore), small.
+  Two other Product proposals from this round were cut before reaching Architect+QA — both
+  turned out to already be implemented: an in-flight guard against duplicate rapid like/block
+  calls (`ScanFeedPage.tsx`'s `inFlight` ref already does this) and a pluralization util for
+  feed counts (`lib/format.ts`'s `plural()` already does this, already used everywhere counts
+  render).
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
