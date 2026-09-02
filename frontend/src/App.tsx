@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { useAuth } from './auth/context'
 import { AppHeader } from './components/AppHeader'
+import { ToastStack } from './components/ToastStack'
 
 /* Split on the auth boundary. The two branches below never render together, so
  * neither should ship in the other's chunk: a signed-out visitor downloading the
@@ -42,6 +43,7 @@ export default function App() {
   return (
     <>
       <AppHeader />
+      <ToastStack />
       <Suspense fallback={<div className="wrap">{Loading}</div>}>
         <Routes>
           <Route path="/scans" element={<ScanListPage />} />

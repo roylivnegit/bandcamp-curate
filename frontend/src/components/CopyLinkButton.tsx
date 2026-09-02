@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { COPY_LINK_FEEDBACK_MS } from '../config'
+import { showToast } from '../lib/toast'
 
 /** Copies the current view's URL (including feed filters, which live in the
  *  query string via `useFeedFilters`/`useSearchParams`) to the clipboard, so
@@ -24,7 +25,10 @@ export function CopyLinkButton() {
       await navigator.clipboard.writeText(url)
     } catch {
       // Clipboard access can be denied (permissions, insecure context) — no
-      // confirmation to show rather than claiming a copy that didn't happen.
+      // "Copied" confirmation, since that would claim a copy that didn't
+      // happen, but a silent no-op looked identical to a working click doing
+      // nothing. A toast says what actually happened instead.
+      showToast('Could not copy the link — clipboard access was denied.', 'alert')
       return
     }
     setCopied(true)

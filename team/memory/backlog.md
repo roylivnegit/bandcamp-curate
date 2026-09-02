@@ -543,13 +543,38 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   (the scan's name). QA: sound (plain effect, `document.title` is a real jsdom property),
   testable via RTL + a memory router with no live deps, small.
 
-- [ ] **Toast/notification primitive — split into two sittings.** *(proposed by the hourly
-  routine, 2026-09-02, Architect+QA: sound but too large as one item)* There's no shared
-  toast/notification primitive anywhere in the frontend — every screen invents its own inline
-  `role="alert"`, and `CopyLinkButton.tsx`'s clipboard-rejection catch block currently swallows
-  failure with no user feedback at all (a denied-permission click looks like nothing happened).
-  QA: build as a proper external store (`useSyncExternalStore` over a module-scope queue, not
-  `useState` mirroring, to avoid cross-test/cross-mount leakage). Split into two separate items
-  rather than one: (a) the `useToast`/`<ToastStack>` primitive itself (show/auto-dismiss/stacking,
-  tested with fake timers), then (b) wiring it into `CopyLinkButton`'s catch block (tested by
-  mocking a rejected `navigator.clipboard.writeText` and asserting a toast now appears).
+- [x] **Toast/notification primitive.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA: sound but flagged as two sittings' worth)* There was no shared toast/notification
+  primitive anywhere in the frontend — every screen invented its own inline `role="alert"`, and
+  `CopyLinkButton.tsx`'s clipboard-rejection catch block swallowed failure with no user feedback
+  at all (a denied-permission click looked like nothing happened).
+  Done, built as one item rather than QA's suggested (a)/(b) split: a primitive with no caller
+  wired in would have been a half-finished component sitting unused in the tree, and the wiring
+  turned out to be a two-line addition once the primitive existed, so splitting it would only
+  have deferred that trivial half to a second task for no real risk reduction.
+  `lib/toast.ts` — a module-scope `{id, message, variant}` queue behind `useSyncExternalStore`
+  (not `useState` mirroring, per QA's leakage caveat: a toast can be raised from any event
+  handler, not just one with a toast-owning component in its own render tree). `showToast(message,
+  variant?, durationMs?)` is the imperative entry point (no hook, callable from anywhere);
+  `dismissToast(id)` removes one and no-ops if it's already gone (an auto-dismiss timer and a
+  manual dismiss can race). New `components/ToastStack.tsx`, mounted once in `App.tsx` next to
+  `AppHeader` (signed-in shell only — the only current caller, `CopyLinkButton`, only renders
+  there), subscribes via `useToasts()` and renders each queued toast with `role={variant}`
+  (`'alert'` vs `'status'`, so a failure interrupts a screen reader the way `.err` elements
+  already do elsewhere, per `frontend/CLAUDE.md`'s "errors get `role=alert`" rule) plus a dismiss
+  button. New `TOAST_DURATION_MS` (4000) in `config.ts`. `CopyLinkButton.tsx`'s clipboard-rejection
+  catch now calls `showToast(..., 'alert')` instead of a bare silent return.
+  Testing hit one real cross-test leak worth recording: the queue's module scope means a toast
+  raised by a test that never even rendered `<ToastStack>` still sits in it afterward, and a
+  test that triggers one under real timers (no `vi.useFakeTimers()`) leaves a *real* pending
+  dismiss timeout that a later fake-timer test's `advanceTimersByTimeAsync` cannot touch — exactly
+  the kind of leakage QA flagged, just across tests rather than across mounts. Fixed with an
+  exported test-only `resetToastsForTests()`, called from `beforeEach` in every test file that
+  exercises `showToast`. Covered by `ToastStack.test.tsx` (renders nothing on an empty queue;
+  shows a status toast and auto-dismisses it after `TOAST_DURATION_MS`; an alert-variant toast
+  gets `role="alert"` instead of `"status"`; two toasts stack and dismiss independently) and a
+  new `CopyLinkButton.test.tsx` case (a rejected clipboard write now raises an `alert`-role toast
+  with the failure message, which itself auto-dismisses). 76/76 frontend tests pass (stable
+  across repeated runs), tsc/lint/build clean (the new files land in the eagerly-loaded shared
+  chunk via `App.tsx`, not a lazy route chunk — expected, since `ToastStack` must be mounted
+  before either route is). PR: see git history.
