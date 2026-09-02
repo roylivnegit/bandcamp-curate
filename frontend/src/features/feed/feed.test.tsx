@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SCAN_POLL_MS } from '../../config'
-import { fakeMe, fakeRec, fakeScan, mockFetch, renderApp } from '../../test/renderApp'
+import { currentLocation, fakeMe, fakeRec, fakeScan, mockFetch, renderApp } from '../../test/renderApp'
 
 const signedIn = () => localStorage.setItem('crate-digger.token', 'tok')
 
@@ -179,6 +179,38 @@ describe('scan feed', () => {
 
     // The pill offers the include/exclude toggle the old UI had.
     expect(await screen.findByText(/✓ include/)).toBeInTheDocument()
+    // Filters live in the URL now, so this view can be bookmarked or shared —
+    // not just held in component state that a reload would lose.
+    expect(currentLocation().search).toContain('tag=psybient')
+  })
+
+  it('seeds filters from a bookmarked/shared URL instead of always starting blank', async () => {
+    // The reverse of the test above: opening a URL that already carries a
+    // filter (e.g. a link someone shared, or a reload) must restore it, not
+    // require re-clicking it.
+    mockFetch(feedRoutes())
+    renderApp('/scans/1?item_type=album&tag=psybient')
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    const albumsBtn = screen.getByRole('button', { name: 'Albums' })
+    expect(albumsBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByRole('button', { name: /✓ include.*psybient/ })).toBeInTheDocument()
+  })
+
+  it('keeps a filter in the URL across an unrelated filter change, so back restores it', async () => {
+    // A real page navigation (leaving, then hitting browser-back) lands back on
+    // whatever URL this page last held — so the fix only holds if a *second*
+    // filter change doesn't clobber the first one's query param.
+    mockFetch(feedRoutes())
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'psybient' }))
+    expect(currentLocation().search).toContain('tag=psybient')
+
+    await user.click(screen.getByRole('button', { name: 'Albums' }))
+    expect(currentLocation().search).toContain('tag=psybient')
+    expect(currentLocation().search).toContain('item_type=album')
   })
 
   it('rejects a non-numeric scan id instead of requesting /api/scans/NaN', async () => {
@@ -256,6 +288,8 @@ describe('scan feed', () => {
     await user.click(await screen.findByRole('button', { name: /Minds of Infinity/ }))
 
     expect(await screen.findByText(/artist:/)).toBeInTheDocument()
+    expect(currentLocation().search).toContain('label_id=20')
+    expect(currentLocation().search).toContain('label_name=Minds')
   })
 
   it('clears every stacked filter with one "Clear all filters" click', async () => {

@@ -98,9 +98,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   real ones` and `shows skeleton recommendation cards while the first page loads`. 27/27 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
-- [ ] **Feed filters belong in the URL.** `useFeedFilters` lives in `useState`, so a filtered
+- [x] **Feed filters belong in the URL.** `useFeedFilters` lives in `useState`, so a filtered
   view can't be shared or bookmarked, and browser-back silently drops it. Move it onto
   `useSearchParams`. Same source in `frontend/CLAUDE.md`.
+  Done: `useFeedFilters.ts` rewritten on `useSearchParams` instead of five separate `useState`s.
+  Reuses the exact query param names `filterQuery` (`api/client.ts`) already sends to the API
+  (`item_type`, `tag`/`exclude_tag`, `tag_contains`/`exclude_tag_contains`, `label_id`), plus a
+  UI-only `label_name` so the artist-filter pill doesn't need an extra fetch to render after a
+  fresh page load. Every setter uses `setSearchParams`'s functional-updater form against `prev`
+  (never the memoized `tags`/`label`/etc.), so none needs those as a `useCallback` dependency —
+  the same "derive during render, update functionally" shape as everywhere else in this file, now
+  against the URL instead of local state. All writes pass `{ replace: true }`, so toggling several
+  filters leaves one history entry to land back on, not one per click. **Zero changes needed** in
+  `FilterBar.tsx`/`ScanFeedPage.tsx`/`FeedCard.tsx` — the hook's public shape (`itemType`,
+  `setItemType`, `tags`, `includeTag`, …) is unchanged, only its backing store moved.
+  `test/renderApp.tsx` gained a `LocationWatcher` + `currentLocation()` so tests can assert on the
+  URL a filter click actually produced (MemoryRouter's history isn't otherwise reachable from
+  outside the tree). New/extended tests: clicking a genre chip or an artist name lands the
+  matching `tag=`/`label_id=`/`label_name=` in the URL; opening `/scans/1?item_type=album&tag=…`
+  directly restores that exact filtered view (the "shared/bookmarked link" case) instead of
+  starting blank; and a second, unrelated filter change leaves the first one's param in place
+  (the "browser-back still finds it" case) rather than clobbering it. 27/27 frontend tests pass,
+  tsc/lint/build clean. PR: see git history.
 
 - [x] **Verify contrast on hint text.** `--faint: #667085` on `--surface: #141823` is the
   likeliest AA failure in the palette and nobody has measured it. Compute the real ratio; if it
