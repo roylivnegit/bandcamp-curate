@@ -729,7 +729,23 @@ async def compute_recommendations(
             )
         )
 
-    scored.sort(key=lambda s: s.score, reverse=True)
+    # Score alone ties constantly — most candidates are "one co-owner, no tag
+    # data" (score == W_CO_OWNER, tag_term == 0), so a same-score bucket can hold
+    # hundreds of items. Sorting by score alone leaves those ordered however the
+    # DB happened to return the underlying rows, which Postgres does not
+    # guarantee across recomputes: the same feed could silently reshuffle at the
+    # exact score band Roy actually scrolls through. Break ties by the two raw
+    # signals score is built from (more co-owners, then more tag affinity) so
+    # equal-score items are still ranked by relevance, then fall back to a
+    # stable identity key so any true remainder is deterministic run to run.
+    def _tie_break_key(s: ScoredItem) -> tuple:
+        co_owners = s.reasons.get("co_owners", 0)
+        tag_affinity = s.reasons.get("tag_affinity", 0)
+        item_type_priority = 0 if s.item_type == str(ItemType.ALBUM) else 1
+        ident = s.album_id if s.album_id is not None else (s.track_id or 0)
+        return (-s.score, -co_owners, -tag_affinity, item_type_priority, -ident)
+
+    scored.sort(key=_tie_break_key)
     if one_per_band:
         seen_bands: set[int] = set()
         deduped: list[ScoredItem] = []

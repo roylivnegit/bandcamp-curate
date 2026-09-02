@@ -70,12 +70,27 @@ That is the point — the gaps are the first work.
 Ordered by the Head of Product. These are starting points, not instructions; propose better
 ones.
 
-- [ ] **Make the order mean something, not the length.** Roy wants a long list kept — do not
+- [~] **Make the order mean something, not the length.** Roy wants a long list kept — do not
   cut the feed down. The actual problem is ranking, not volume: work out whether the ranking
   is too flat, the co-ownership signal too weak, or ties too common, then sort by relevancy
   so the *best* matches are reliably at the top even with ~1,600 items sitting underneath.
   Measure: does the top of the list hold up — does Roy find something worth clicking near
   the top, not just somewhere in a long scroll.
+  One concrete piece landed: `curate.engine.compute_recommendations` sorted only by
+  `score`, and Python's stable sort then left same-score items in whatever order the
+  underlying SQL query happened to return rows in — which Postgres does not guarantee
+  without an `ORDER BY`. "One co-owner, no tag data" is the single most common score in the
+  feed (bare `W_CO_OWNER`, zero tag term), so this was exactly the score band Roy actually
+  scrolls through, and it could silently reshuffle between recomputes. Added an explicit,
+  deterministic tie-break: more co-owners, then more tag affinity (the two raw signals the
+  score is built from), then album-before-track, then a stable id — so equal-score items are
+  still ordered by whatever relevance signal is available, and any true remainder is
+  reproducible run to run instead of accidental. Covered by
+  `test_tied_scores_break_ties_deterministically`.
+  **Left open:** this doesn't touch whether the ranking is *too flat overall* (the
+  co-ownership signal too weak, most items landing in that one tied score band to begin
+  with) — that needs the same "run against a real crawl" measurement the mega-supporters
+  item below is blocked on, no sandbox DB here to produce it.
 
 - [x] **Tag coverage caps tag-affinity.** Tags live on album *pages*, which the crawl mostly
   does not fetch, so the genre signal is sparse and the "via …" explanations are thin.
