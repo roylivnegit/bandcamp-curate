@@ -41,6 +41,11 @@ class ScanOut(BaseModel):
     rec_count: int
     last_run_at: datetime | None = None
     stats: dict = {}
+    # Bumped on every recompute — see migration 0013. The frontend re-arms its
+    # page-0 reload on this instead of `rec_count`/`stats.recommendations`
+    # alone, since a swap (one item in, one out) changes the ranking without
+    # moving the total.
+    recompute_generation: int = 0
 
 
 class ScanDetailOut(ScanOut):
@@ -66,6 +71,7 @@ def _to_out(scan: Scan, seed_count: int, rec_count: int) -> ScanOut:
         id=scan.id, name=scan.name, kind=scan.kind, status=scan.status,
         error=scan.error, seed_count=seed_count, rec_count=rec_count,
         last_run_at=scan.last_run_at, stats=scan.stats or {},
+        recompute_generation=scan.recompute_generation,
     )
 
 

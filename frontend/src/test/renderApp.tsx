@@ -36,6 +36,7 @@ export const fakeScan: Scan = {
   rec_count: 2,
   last_run_at: null,
   stats: {},
+  recompute_generation: 1,
 }
 
 export function fakeRec(over: Partial<Recommendation> = {}): Recommendation {
@@ -50,6 +51,7 @@ export function fakeRec(over: Partial<Recommendation> = {}): Recommendation {
     band_name: 'Minds of Infinity',
     url: 'https://mindsofinfinity.bandcamp.com/album/eyes-of-infinity',
     reasons: { co_owners: 2, tag_affinity: 9, matched_tags: ['psybient'], seed_tags: ['ambient'] },
+    recompute_generation: 1,
     ...over,
   }
 }

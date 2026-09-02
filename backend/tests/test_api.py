@@ -135,6 +135,33 @@ async def test_recommendations_filter_and_paging(client: AsyncClient) -> None:
     assert (await client.get("/api/recommendations?offset=999")).json() == []
 
 
+async def test_recommendations_carry_recompute_generation(client: AsyncClient) -> None:
+    """Every row in one response is tagged with the scan's `recompute_generation`
+    at fetch time — the persisted counter the frontend uses to tell a genuine
+    reflow (the ranking changed, even if the total count didn't) apart from
+    "nothing changed" (see migration 0013 / backlog "The feed can silently
+    reflow under a user who's mid-scroll")."""
+    first = (await client.get("/api/recommendations")).json()
+    assert len(first) >= 1
+    generations = {r["recompute_generation"] for r in first}
+    assert len(generations) == 1  # one transaction, one generation, for every row
+    first_generation = generations.pop()
+
+    stats = (await client.get("/api/stats")).json()
+    assert stats["recompute_generation"] == first_generation
+
+    # A fresh recompute bumps the generation — a caller still holding `first`
+    # has a stable, correctly-tagged snapshot of the generation it was fetched
+    # under, even though the live scan has already moved on.
+    r = await client.post("/api/recommendations/recompute")
+    assert r.status_code == 200
+
+    second = (await client.get("/api/recommendations")).json()
+    second_generation = {row["recompute_generation"] for row in second}.pop()
+    assert second_generation == first_generation + 1
+    assert all(row["recompute_generation"] == first_generation for row in first)
+
+
 async def test_recompute_endpoint(client: AsyncClient) -> None:
     r = await client.post("/api/recommendations/recompute")
     assert r.status_code == 200 and r.json()["computed"] >= 1

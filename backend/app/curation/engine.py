@@ -774,16 +774,22 @@ async def compute_recommendations(
 
 
 async def store_recommendations(
-    session: AsyncSession, scored: list[ScoredItem], scan_id: int
+    session: AsyncSession, scored: list[ScoredItem], scan: Scan
 ) -> int:
-    """Replace one scan's recommendations with a freshly computed set."""
+    """Replace one scan's recommendations with a freshly computed set.
+
+    Bumps `scan.recompute_generation` — the tag a reader uses to tell "this
+    is the same ranking I already have" from "this is a different one, even
+    though the total count didn't change" (see migration `0013`). This is
+    the one place every re-curate path (mid-crawl slices, finalize, the API,
+    the CLI) already goes through, so it's the only place that needs to."""
     await session.execute(
-        delete(Recommendation).where(Recommendation.scan_id == scan_id)
+        delete(Recommendation).where(Recommendation.scan_id == scan.id)
     )
     for s in scored:
         session.add(
             Recommendation(
-                scan_id=scan_id,
+                scan_id=scan.id,
                 item_type=s.item_type,
                 album_id=s.album_id,
                 track_id=s.track_id,
@@ -791,6 +797,7 @@ async def store_recommendations(
                 reasons=s.reasons,
             )
         )
+    scan.recompute_generation = (scan.recompute_generation or 0) + 1
     await session.commit()
     return len(scored)
 
@@ -827,7 +834,7 @@ async def curate(
         min_co_owners=min_co_owners, weighted_co_owners=weighted_co_owners,
         stats_out=stats_out,
     )
-    await store_recommendations(session, scored, scan.id)
+    await store_recommendations(session, scored, scan)
     return scored
 
 

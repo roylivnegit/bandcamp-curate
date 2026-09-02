@@ -278,6 +278,14 @@ class Scan(Base, TimestampMixin):
     error: Mapped[str | None] = mapped_column(Text)
     stats: Mapped[dict] = mapped_column(JSONVariant, default=dict)  # credits/counts of last run
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Bumped by every `store_recommendations` call (a wholesale clear+insert).
+    # Persisted (not an in-process counter) because re-curates happen in worker
+    # processes distinct from the API process — see "The feed can silently
+    # reflow under a user who's mid-scroll" in team/memory/backlog.md. Lets a
+    # reader tell "the total count didn't move" apart from "nothing changed":
+    # a swap (one item in, one out) bumps this without moving `stats.
+    # recommendations`, which the old recCount-only re-arm signal missed.
+    recompute_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     seeds: Mapped[list["ScanSeed"]] = relationship(
         back_populates="scan", cascade="all, delete-orphan"

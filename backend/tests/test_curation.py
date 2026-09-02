@@ -343,6 +343,31 @@ async def test_curate_persists_and_is_idempotent(session: AsyncSession) -> None:
     assert await _count(session, Recommendation) == len(again) == len(scored)
 
 
+async def test_curate_bumps_recompute_generation_every_call(session: AsyncSession) -> None:
+    """`store_recommendations` bumps `scan.recompute_generation` on every call —
+    the persisted counter a reader uses to tell "the ranking changed" apart
+    from "the total count changed" (see migration 0013 / backlog "The feed
+    can silently reflow under a user who's mid-scroll"). Two calls to
+    `curate()` (the only path that reaches `store_recommendations`) must bump
+    it twice, even when the resulting recommendation set is identical."""
+    user = await _build_graph(session)
+    scan = await ensure_collection_scan(session, user)
+    assert scan.recompute_generation == 0
+
+    await curate(session, scan_id=scan.id)
+    await session.refresh(scan)
+    first_generation = scan.recompute_generation
+    assert first_generation == 1
+
+    # Recompute again with nothing in the graph changed — still a distinct
+    # generation, because a caller reading rec[N] on the old generation and
+    # rec[N+1] on the new one must be able to tell them apart even when the
+    # scored set itself didn't move.
+    await curate(session, scan_id=scan.id)
+    await session.refresh(scan)
+    assert scan.recompute_generation == first_generation + 1 == 2
+
+
 async def test_blacklist_excludes_candidate(session: AsyncSession) -> None:
     user = await _build_graph(session)
     a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()

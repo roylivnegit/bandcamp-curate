@@ -17,6 +17,13 @@ const LIMIT = FEED_PAGE_SIZE
  *  referentially stable only if nothing they call is re-created per render. */
 const keyOf = (r: Recommendation) => `${r.item_type}:${r.album_id ?? r.track_id}`
 
+/** True only for a genuine mid-session reflow — `prev` was a real generation
+ *  (not the initial `null`) and it differs from `next`. A scan's very first
+ *  observed generation must not itself count as a "reflow": there is nothing
+ *  to reflow away from yet. */
+const generationChanged = (prev: number | null, next: number | null): boolean =>
+  prev !== null && next !== null && prev !== next
+
 export function ScanFeedPage() {
   const { scanId: raw } = useParams()
   // A hand-typed or stale URL can put anything here. Number('abc') is NaN, which
@@ -41,6 +48,7 @@ export function ScanFeedPage() {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
+  const [listUpdated, setListUpdated] = useState(false)
 
   /* Bumped by every first-page load. A response whose ticket no longer matches is
    * stale — the filters moved on while it was in flight — so it must not land.
@@ -51,6 +59,9 @@ export function ScanFeedPage() {
    * as state it would force the handlers to depend on it, un-memoizing every card
    * on each click. `busyKeys` below is the render-visible half. */
   const inFlight = useRef<Set<string>>(new Set())
+  /* The generation the currently-rendered page was fetched under. A ref, not
+   * state: it only feeds the reflow check below, never renders on its own. */
+  const prevGeneration = useRef<number | null>(null)
 
   /* The feed no longer waits for the scan to finish. The backend re-curates after
    * every slice, so recommendations accrue while the crawl runs and there is no
@@ -61,6 +72,10 @@ export function ScanFeedPage() {
   /* Re-fetch when the count moves, rather than on every 4s poll tick: the scan
    * poll re-runs regardless, but the feed only changes when a slice curates. */
   const recCount = scan?.stats?.recommendations ?? 0
+  /* The re-arm signal for `loadFirstPage` below — see `generationChanged`.
+   * Bumped by every recompute, strictly more often than `recCount`: a swap
+   * (one item in, one out) reorders the feed without moving the total. */
+  const generation = scan?.recompute_generation ?? null
 
   // ── scan metadata, polled while the crawl is still in flight ──────────────
   const loadScan = useCallback(async () => {
@@ -125,11 +140,19 @@ export function ScanFeedPage() {
   }, [filters.params, filters.sort])
 
   useEffect(() => {
-    if (showFeed) void loadFirstPage()
-    // `recCount` is the re-arm signal: each slice curates, the poll picks up the
-    // new total, and the feed refreshes. Not a stray dep — removing it freezes the
-    // feed at whatever the first slice produced.
-  }, [showFeed, loadFirstPage, recCount])
+    if (!showFeed) return
+    // A real change from the generation we last rendered (not the first one
+    // ever observed) means a recompute reshuffled the feed underneath
+    // whatever page the reader has scrolled to — surface the note, not just
+    // silently reset. `recCount` alone missed this: a swap (one item in, one
+    // out) bumps `generation` without moving the total.
+    if (generationChanged(prevGeneration.current, generation)) setListUpdated(true)
+    prevGeneration.current = generation
+    void loadFirstPage()
+    // `generation` is the re-arm signal: each slice curates, the poll picks up
+    // the new value, and the feed refreshes. Not a stray dep — removing it
+    // freezes the feed at whatever the first slice produced.
+  }, [showFeed, loadFirstPage, generation])
 
   async function loadMore() {
     if (loading || done) return
@@ -237,6 +260,8 @@ export function ScanFeedPage() {
     [setLabel],
   )
 
+  const dismissListUpdated = useCallback(() => setListUpdated(false), [])
+
   async function unlike(item: Liked) {
     const ref = item.album_id !== null ? { album_id: item.album_id } : { track_id: item.track_id! }
     await api.unlike(ref)
@@ -325,6 +350,16 @@ export function ScanFeedPage() {
           {error}
         </p>
       )}
+
+            {listUpdated && (
+              <p className="banner reflow" role="status">
+                <span aria-hidden="true">◎</span>
+                <span>The list updated — showing the latest order.</span>
+                <button type="button" className="rm" aria-label="Dismiss" onClick={dismissListUpdated}>
+                  ✕
+                </button>
+              </p>
+            )}
 
             {/* Every prop here is either the row itself, a per-row primitive, or a
                 stable callback — nothing is re-created per render, so a card only
