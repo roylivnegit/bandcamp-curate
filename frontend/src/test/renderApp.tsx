@@ -1,17 +1,36 @@
 import { render } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { vi } from 'vitest'
 
 import App from '../App'
 import { AuthProvider } from '../auth/AuthContext'
 import type { Me, Recommendation, Scan } from '../api/types'
 
+/** Written by `LocationWatcher` on every render, so a test can assert on the
+ *  URL a filter/navigation change actually produced — MemoryRouter's history
+ *  isn't otherwise reachable from outside the tree. Read via `currentLocation()`
+ *  rather than destructured at import time, since `renderApp` re-mounts the
+ *  tree (and this object) on every call. */
+let current = { pathname: '', search: '' }
+
+export function currentLocation() {
+  return current
+}
+
+function LocationWatcher() {
+  const location = useLocation()
+  current = { pathname: location.pathname, search: location.search }
+  return null
+}
+
 /** Mounts the real App (router + auth provider) so tests exercise the actual
  *  routing/session wiring rather than a stand-in. */
 export function renderApp(initialPath = '/') {
+  current = { pathname: '', search: '' }
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <AuthProvider>
+        <LocationWatcher />
         <App />
       </AuthProvider>
     </MemoryRouter>,
