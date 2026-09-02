@@ -10,6 +10,8 @@ import './scans.css'
 
 import { SCAN_POLL_MS } from '../../config'
 
+const SKELETON_KEYS = ['sk-0', 'sk-1', 'sk-2']
+
 export function ScanListPage() {
   const { me, refresh } = useAuth()
   const [scans, setScans] = useState<Scan[] | null>(null)
@@ -89,7 +91,13 @@ export function ScanListPage() {
         </p>
       )}
 
-      {scans === null && !error && <p className="empty">Loading scans…</p>}
+      {scans === null && !error && (
+        <div className="cards" role="status" aria-label="Loading scans…">
+          {SKELETON_KEYS.map((k) => (
+            <ScanCardSkeleton key={k} />
+          ))}
+        </div>
+      )}
 
       {scans && (
         <div className="cards">
@@ -136,6 +144,25 @@ function ScanCard({ scan }: { scan: Scan }) {
         </span>
       </span>
     </Link>
+  )
+}
+
+/** Shaped like a real `ScanCard`, so the list doesn't shift once scans load.
+ *  Decorative only — the `role="status"` wrapper above carries the
+ *  announcement. */
+function ScanCardSkeleton() {
+  return (
+    <div className="scan skeleton" aria-hidden="true">
+      <span className="ico sk sk-ico" />
+      <span className="scan-body">
+        <span className="scan-r1">
+          <span className="sk sk-title" />
+        </span>
+        <span className="scan-meta">
+          <span className="sk sk-band" />
+        </span>
+      </span>
+    </div>
   )
 }
 
