@@ -104,6 +104,16 @@ async def test_stats(client: AsyncClient) -> None:
     assert s["request_budget"] == get_settings().crawl_max_requests
     assert s["recommendations"] >= 1
 
+    # cold_start diagnostics: f2 is the one neighbour; its candidates are
+    # A1 (owned by me), A2 (recommended), A3 (band I follow), T2 — 4 total.
+    cold_start = s["cold_start"]
+    assert cold_start["neighbour_count"] == 1
+    assert cold_start["candidates"] == 4
+    assert cold_start["excluded_owned"] == 1
+    assert cold_start["excluded_followed"] == 1
+    assert cold_start["excluded_wishlisted"] == 0
+    assert cold_start["excluded_blacklisted"] == 0
+
 
 async def test_recommendations_feed(client: AsyncClient) -> None:
     rows = (await client.get("/api/recommendations")).json()

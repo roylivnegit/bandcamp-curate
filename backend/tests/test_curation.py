@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.curation.engine import (
+    cold_start_diagnostics,
     compute_recommendations,
     curate,
     ensure_collection_scan,
@@ -795,6 +796,81 @@ async def test_filtered_by_floor_counter_excludes_already_excluded_items(
     assert {s.album_id for s in scored if s.album_id} == {a4.id}
     assert stats["filtered_by_floor"] == 2
     assert stats["candidates"] == 3  # A4, A5, T2 — the only items that reach the floor check
+
+
+async def test_cold_start_diagnostics_counts_neighbours_candidates_and_reasons(
+    session: AsyncSession,
+) -> None:
+    user = await _build_graph(session)
+    scan = await ensure_collection_scan(session, user)
+    diag = await cold_start_diagnostics(session, scan, user)
+
+    # f2 & f3 both support my A1 → 2 neighbours.
+    assert diag.neighbour_count == 2
+    # Distinct items neighbours own, before any exclusion: albums A1-A5 + track T2.
+    assert diag.candidates == 6
+    # A1 is mine (owned), A2 is wishlisted, A3's band (B3) is followed, none blacklisted.
+    assert diag.excluded_by_reason == {
+        "owned": 1, "wishlisted": 1, "followed": 1, "blacklisted": 0,
+    }
+
+
+async def test_cold_start_diagnostics_everything_excluded_by_follows(
+    session: AsyncSession,
+) -> None:
+    """A fixture where the neighbour's only candidate is from a band I follow —
+    asserts `excluded_by_reason.followed` is nonzero and accounts for every
+    candidate, distinguishing "found neighbours but their stuff is all in my
+    world already" from "found nothing at all"."""
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    neighbour = Fan(bandcamp_fan_id=2, username="n", url="https://bandcamp.com/n")
+    seed_band = Band(bandcamp_id=1, name="Seed", kind=BandKind.ARTIST)
+    followed_band = Band(bandcamp_id=2, name="Followed", kind=BandKind.ARTIST)
+    session.add_all([me, neighbour, seed_band, followed_band])
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=1, title="Seed", band_id=seed_band.id)
+    followed_album = Album(bandcamp_id=2, title="FromFollowed", band_id=followed_band.id)
+    session.add_all([seed_album, followed_album])
+    await session.flush()
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id),
+        AlbumSupporter(album_id=seed_album.id, fan_id=neighbour.id),
+        FanItem(fan_id=neighbour.id, item_type=ItemType.ALBUM, album_id=followed_album.id),
+        Follow(fan_id=me.id, band_id=followed_band.id, target_type=TargetType.ARTIST),
+    ])
+    await session.commit()
+
+    scan = await ensure_collection_scan(session, user)
+    diag = await cold_start_diagnostics(session, scan, user)
+
+    assert diag.neighbour_count == 1
+    assert diag.candidates == 1
+    assert diag.excluded_by_reason["followed"] == 1
+    assert diag.excluded_by_reason["owned"] == 0
+    assert diag.excluded_by_reason["wishlisted"] == 0
+    assert diag.excluded_by_reason["blacklisted"] == 0
+
+
+async def test_cold_start_diagnostics_no_neighbours(session: AsyncSession) -> None:
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(me)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.commit()
+    scan = await ensure_collection_scan(session, user)
+
+    diag = await cold_start_diagnostics(session, scan, user)
+    assert diag.neighbour_count == 0
+    assert diag.candidates == 0
+    assert diag.excluded_by_reason == {
+        "owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0,
+    }
 
 
 async def test_settings_reach_engine_with_no_kwargs(session: AsyncSession, monkeypatch) -> None:

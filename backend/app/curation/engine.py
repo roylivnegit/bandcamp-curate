@@ -938,6 +938,128 @@ def _size_bucket_order(bounds: tuple[int, ...]) -> list[str]:
     return labels
 
 
+@dataclass(slots=True)
+class ColdStartDiagnostics:
+    """Why a scan's feed came back thin or empty: how many taste-neighbours it
+    found, how many distinct items they collectively own before any exclusion
+    is applied, and how many of those get excluded for each reason. A reason
+    count can exceed `candidates` in total since one item can be excluded for
+    more than one reason at once (e.g. wishlisted AND from a followed band)."""
+
+    neighbour_count: int
+    candidates: int
+    excluded_by_reason: dict[str, int]
+
+
+async def cold_start_diagnostics(
+    session: AsyncSession, scan: Scan, user: User
+) -> ColdStartDiagnostics:
+    """Read-only diagnostic, computed separately from `compute_recommendations`'s
+    own `candidates`/`filtered_by_floor` stats (which are already post-exclusion,
+    since today's candidate-selection query applies exclusions in the same step
+    it selects candidates) — this recomputes the pre-exclusion candidate set from
+    scratch so a genuinely empty feed can be told apart from "no neighbours found"
+    vs. "neighbours found but everything they own is already in your world"."""
+    me = await get_me(session, user)
+    seed_album_ids, seed_track_ids = await _seed_ids(session, scan, me)
+    neighbours = await _scan_neighbours(session, seed_album_ids, seed_track_ids, me)
+
+    reasons = {"owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0}
+    if not neighbours:
+        return ColdStartDiagnostics(neighbour_count=0, candidates=0, excluded_by_reason=reasons)
+
+    album_rows = (
+        await session.execute(
+            select(FanItem.album_id, Album.band_id, Album.url)
+            .select_from(FanItem)
+            .join(Album, Album.id == FanItem.album_id)
+            .where(FanItem.album_id.isnot(None), FanItem.fan_id.in_(neighbours))
+            .distinct()
+        )
+    ).all()
+    track_rows = (
+        await session.execute(
+            select(FanItem.track_id, Track.band_id, Track.url)
+            .select_from(FanItem)
+            .join(Track, Track.id == FanItem.track_id)
+            .where(FanItem.track_id.isnot(None), FanItem.fan_id.in_(neighbours))
+            .distinct()
+        )
+    ).all()
+    candidates = len(album_rows) + len(track_rows)
+
+    my_owned_albums = await _scalar_set(
+        session,
+        select(FanItem.album_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.album_id.isnot(None)
+        ),
+    )
+    my_wishlist_albums = await _scalar_set(
+        session,
+        select(FanItem.album_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(True), FanItem.album_id.isnot(None)
+        ),
+    )
+    my_owned_tracks = await _scalar_set(
+        session,
+        select(FanItem.track_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False), FanItem.track_id.isnot(None)
+        ),
+    )
+    my_wishlist_tracks = await _scalar_set(
+        session,
+        select(FanItem.track_id).where(
+            FanItem.fan_id == me.id, FanItem.is_wishlist.is_(True), FanItem.track_id.isnot(None)
+        ),
+    )
+    followed_band_ids = await _scalar_set(
+        session, select(Follow.band_id).where(Follow.fan_id == me.id)
+    )
+    followed_urls = (
+        await session.execute(
+            select(Band.url).select_from(Follow)
+            .join(Band, Band.id == Follow.band_id)
+            .where(Follow.fan_id == me.id)
+        )
+    ).scalars()
+    followed_hosts = {h for h in (url_host(u) for u in followed_urls) if h}
+    bl_where = (
+        Blacklist.user_id == user.id,
+        Blacklist.active.is_(True),
+        or_(Blacklist.expires_at.is_(None), Blacklist.expires_at > datetime.now(UTC)),
+    )
+    bl_album_ids = await _scalar_set(session, select(Blacklist.album_id).where(*bl_where))
+    bl_track_ids = await _scalar_set(session, select(Blacklist.track_id).where(*bl_where))
+    bl_band_ids = await _scalar_set(session, select(Blacklist.band_id).where(*bl_where))
+
+    def _is_followed(band_id: int | None, url: str | None) -> bool:
+        return band_id in followed_band_ids or url_host(url) in followed_hosts
+
+    for album_id, band_id, url in album_rows:
+        if album_id in my_owned_albums:
+            reasons["owned"] += 1
+        if album_id in my_wishlist_albums:
+            reasons["wishlisted"] += 1
+        if _is_followed(band_id, url):
+            reasons["followed"] += 1
+        if album_id in bl_album_ids or band_id in bl_band_ids:
+            reasons["blacklisted"] += 1
+
+    for track_id, band_id, url in track_rows:
+        if track_id in my_owned_tracks:
+            reasons["owned"] += 1
+        if track_id in my_wishlist_tracks:
+            reasons["wishlisted"] += 1
+        if _is_followed(band_id, url):
+            reasons["followed"] += 1
+        if track_id in bl_track_ids or band_id in bl_band_ids:
+            reasons["blacklisted"] += 1
+
+    return ColdStartDiagnostics(
+        neighbour_count=len(neighbours), candidates=candidates, excluded_by_reason=reasons
+    )
+
+
 async def neighbour_size_report(
     session: AsyncSession,
     scan: Scan,
