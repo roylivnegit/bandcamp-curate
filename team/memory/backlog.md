@@ -70,6 +70,28 @@ That is the point — the gaps are the first work.
 Ordered by the Head of Product. These are starting points, not instructions; propose better
 ones.
 
+**Current focus (set 2026-09-02): UI/UX modernization.** Roy wants crate-digger to feel like a
+modern web app — better UI elements, tighter flow, fewer rough edges. Prefer picking or proposing
+frontend/ items over backend ones here, as long as they stay small and have a testable definition
+of done. The hourly routine has no browser or screenshots, so a change whose only "done" signal is
+visual taste ("looks nicer") is out of scope for it — save those for a session with Roy watching.
+Stay inside `frontend/CLAUDE.md`'s existing design system and conventions rather than inventing new
+visual direction, and leave the icon-glyphs-vs-SVG-icons question alone — that file flags it as a
+deliberate, unresolved call for Roy, not something to resolve unilaterally.
+
+- [ ] **Skeleton loading states.** Feed/scan pages show plain text `Loading…`; replace with
+  skeleton placeholders shaped like the real cards. Also fixes the layout shift when the first
+  page lands. `frontend/CLAUDE.md` "Known conflicts and deferred items" flags this as cosmetic
+  and unclaimed.
+
+- [ ] **Feed filters belong in the URL.** `useFeedFilters` lives in `useState`, so a filtered
+  view can't be shared or bookmarked, and browser-back silently drops it. Move it onto
+  `useSearchParams`. Same source in `frontend/CLAUDE.md`.
+
+- [ ] **Verify contrast on hint text.** `--faint: #667085` on `--surface: #141823` is the
+  likeliest AA failure in the palette and nobody has measured it. Compute the real ratio; if it
+  fails, adjust the token once, everywhere. Same source.
+
 - [~] **Make the order mean something, not the length.** Roy wants a long list kept — do not
   cut the feed down. The actual problem is ranking, not volume: work out whether the ranking
   is too flat, the co-ownership signal too weak, or ties too common, then sort by relevancy
