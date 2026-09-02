@@ -14,6 +14,8 @@ import { bandcampHandle, plural } from '../../lib/format'
  *  each render, so `memo` alone would never hit. */
 export const FeedCard = memo(function FeedCard({
   rec,
+  cardId,
+  active,
   exiting,
   busy,
   onLike,
@@ -22,6 +24,13 @@ export const FeedCard = memo(function FeedCard({
   onBandClick,
 }: {
   rec: Recommendation
+  /** DOM id, so the roving-tabindex handler in `ScanFeedPage` can focus this
+   *  exact card by id after an Arrow/Home/End key, without holding a ref per
+   *  row. */
+  cardId: string
+  /** Roving tabindex: only the active card is reachable by Tab (`tabIndex=0`);
+   *  the rest are `-1` but stay focusable by script for arrow-key navigation. */
+  active: boolean
   exiting: 'like' | 'block' | null
   busy: boolean
   onLike: (rec: Recommendation) => void
@@ -53,7 +62,12 @@ export const FeedCard = memo(function FeedCard({
   }
 
   return (
-    <article className={`card${exiting ? ` ${exiting}ing` : ''}`} onKeyDown={onCardKeyDown}>
+    <article
+      id={cardId}
+      className={`card${exiting ? ` ${exiting}ing` : ''}`}
+      tabIndex={active ? 0 : -1}
+      onKeyDown={onCardKeyDown}
+    >
       <div className="score" title="Recommendation score">
         <b className="num">{rec.score.toFixed(1)}</b>
         <span>score</span>

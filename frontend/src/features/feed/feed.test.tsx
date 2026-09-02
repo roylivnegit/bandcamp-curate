@@ -323,6 +323,51 @@ describe('scan feed', () => {
 
     expect(screen.queryByRole('button', { name: 'Clear all filters' })).not.toBeInTheDocument()
   })
+
+  const threeRecs = [
+    fakeRec({ album_id: 1, title: 'First album' }),
+    fakeRec({ album_id: 2, title: 'Second album' }),
+    fakeRec({ album_id: 3, title: 'Third album' }),
+  ]
+
+  it('starts with only the first card as a tab stop, and ArrowDown moves it to the next', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    expect(cards).toHaveLength(3)
+    expect(cards[0]).toHaveAttribute('tabindex', '0')
+    expect(cards[1]).toHaveAttribute('tabindex', '-1')
+    expect(cards[2]).toHaveAttribute('tabindex', '-1')
+
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'ArrowDown' })
+
+    expect(cards[0]).toHaveAttribute('tabindex', '-1')
+    expect(cards[1]).toHaveAttribute('tabindex', '0')
+    expect(document.activeElement).toBe(cards[1])
+  })
+
+  it('does not move past the first card on ArrowUp, or the last on ArrowDown', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(cards[0])
+
+    fireEvent.keyDown(cards[0], { key: 'End' })
+    expect(document.activeElement).toBe(cards[2])
+
+    fireEvent.keyDown(cards[2], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(cards[2])
+
+    fireEvent.keyDown(cards[2], { key: 'Home' })
+    expect(document.activeElement).toBe(cards[0])
+  })
 })
 
 describe('focus on route change', () => {
