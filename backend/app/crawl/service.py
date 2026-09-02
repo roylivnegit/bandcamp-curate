@@ -150,7 +150,7 @@ async def followed_bands(session: AsyncSession, fan_id: int) -> FollowedBands:
     )
 
 
-def fan_collection_request(url: str) -> FetchRequest:
+def fan_collection_request(url: str, *, scan_id: int | None = None) -> FetchRequest:
     """Plain render of the fan page — just enough to read the embedded blob.
 
     The blob carries the fan_id, the first page of owned items, and the pagination
@@ -158,15 +158,15 @@ def fan_collection_request(url: str) -> FetchRequest:
     `collection_items` XHR directly (see `CollectionApiClient`) rather than
     auto-scrolling the rendered page.
     """
-    return FetchRequest(url=url, parser_name="fan_collection", render=True)
+    return FetchRequest(url=url, parser_name="fan_collection", render=True, scan_id=scan_id)
 
 
-def album_request(url: str) -> FetchRequest:
-    return FetchRequest(url=url, parser_name="album_page", render=True)
+def album_request(url: str, *, scan_id: int | None = None) -> FetchRequest:
+    return FetchRequest(url=url, parser_name="album_page", render=True, scan_id=scan_id)
 
 
-def track_request(url: str) -> FetchRequest:
-    return FetchRequest(url=url, parser_name="track_page", render=True)
+def track_request(url: str, *, scan_id: int | None = None) -> FetchRequest:
+    return FetchRequest(url=url, parser_name="track_page", render=True, scan_id=scan_id)
 
 
 async def release_db(session: AsyncSession) -> None:
@@ -353,7 +353,7 @@ async def crawl_fan_collection(
         tokens = {k: cursor.get(k) for k in _CURSOR_STREAMS}
     else:
         await release_db(session)
-        result = await fetcher.fetch(fan_collection_request(url))
+        result = await fetcher.fetch(fan_collection_request(url, scan_id=scan_id))
         if not result.html:
             raise ValueError(f"no HTML returned for fan page {url}")
         fc = parse_fan_page(result.html)
@@ -440,7 +440,7 @@ async def crawl_album(
     capped by `max_depth`.
     """
     await release_db(session)
-    result = await fetcher.fetch(album_request(url))
+    result = await fetcher.fetch(album_request(url, scan_id=scan_id))
     if not result.html:
         raise ValueError(f"no HTML returned for album page {url}")
 
@@ -502,7 +502,7 @@ async def crawl_track(
     parent album (if any) is only stubbed, not itself crawled.
     """
     await release_db(session)
-    result = await fetcher.fetch(track_request(url))
+    result = await fetcher.fetch(track_request(url, scan_id=scan_id))
     if not result.html:
         raise ValueError(f"no HTML returned for track page {url}")
 

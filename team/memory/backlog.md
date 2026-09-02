@@ -133,8 +133,19 @@ ones.
   before going over 100; do not keep going past the cap on your own judgment. This is the
   ONLY backlog item this key may be used for.
 
-- [ ] **Per-user crawl budgets.** `crawl_max_requests` and `provider_usage` are global, so one
+- [x] **Per-user crawl budgets.** `crawl_max_requests` and `provider_usage` are global, so one
   user's deep scan starves everyone else's. From `CLAUDE.md` "Immediate next steps".
+  Done (first slice): `provider_usage.scan_id` (migration `0011`, nullable FK to `scans`)
+  attributes each page-render fetch to the scan it was spent on. `runner.user_requests_used`
+  sums a user's spend across all their own scans (join on `Scan.user_id`); `runner.
+  user_budget_exhausted` + new `Settings.crawl_max_requests_per_user` (default `None` =
+  unbounded, unchanged behavior) enforce it inside `run_until_empty` alongside the existing
+  global `crawl_max_requests`, so one user hitting their own cap stops only their own scans.
+  Threaded `ScanPlan.user_id` → `advance_scan`/`run_scan` → the ARQ worker's `run_scan` job.
+  **Left open:** `nimble_transport.post_json_via_nimble` (the paginated collection/wishlist/
+  follows/supporters XHRs routed through Nimble) doesn't carry a `scan_id` yet, so the cap
+  under-counts collection-heavy scans, which are most of a scan's real cost — a real gap for a
+  follow-up, not just polish. See `CLAUDE.md` "Immediate next steps" #2. PR: see git history.
 
 - [x] **A secondary budget cap** — max total frontier size, or max fetches per run, on top of
   the depth bound. Depth 3 on a popular album still fans out very wide. Same source.

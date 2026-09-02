@@ -183,6 +183,7 @@ class ScanPlan:
 
     self_url: str | None  # the owner's own fan page, when this scan crawls it
     seed_fan_id: int | None  # the owner's Fan, once their page has been ingested
+    user_id: int  # the scan's owner — keys the per-user request budget
 
 
 async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: int) -> ScanPlan:
@@ -251,7 +252,7 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
             )
 
         await session.commit()
-        return ScanPlan(self_url=self_url, seed_fan_id=owner.fan_id)
+        return ScanPlan(self_url=self_url, seed_fan_id=owner.fan_id, user_id=owner.id)
 
 
 async def advance_scan(
@@ -264,6 +265,7 @@ async def advance_scan(
     supporters_client=None,
     max_depth: int | None = None,
     max_requests: int | None = None,
+    max_requests_per_user: int | None = None,
     slice_entries: int = SCAN_SLICE_ENTRIES,
     concurrency: int = 1,
     slice_seconds: float | None = None,
@@ -301,6 +303,7 @@ async def advance_scan(
         collection_client=collection_client, follows_client=follows_client,
         supporters_client=supporters_client,
         max_depth=max_depth, max_requests=max_requests,
+        user_id=plan.user_id, max_requests_per_user=max_requests_per_user,
         max_iterations=entries, max_seconds=slice_seconds,
         entry_seconds=entry_seconds,
         scan_id=scan_id, concurrency=concurrency,
@@ -330,6 +333,8 @@ async def advance_scan(
     async with sessionmaker() as session:
         if await runner.budget_exhausted(session, max_requests):
             return False  # out of credits — finalize with what we have
+        if await runner.user_budget_exhausted(session, plan.user_id, max_requests_per_user):
+            return False  # this scan's owner is out of their own credits
         return await frontier.pending_count(session, scan_id=scan_id) > 0
 
 
@@ -470,6 +475,7 @@ async def run_scan(
     supporters_client=None,
     max_depth: int | None = None,
     max_requests: int | None = None,
+    max_requests_per_user: int | None = None,
     max_slices: int = MAX_SCAN_SLICES,
     concurrency: int = 1,
 ) -> Scan:
@@ -488,6 +494,7 @@ async def run_scan(
                 collection_client=collection_client, follows_client=follows_client,
                 supporters_client=supporters_client,
                 max_depth=max_depth, max_requests=max_requests,
+                max_requests_per_user=max_requests_per_user,
                 concurrency=concurrency,
             )
             if not more:

@@ -134,6 +134,19 @@ async def test_gateway_falls_back_on_quota_and_opens_circuit() -> None:
     assert ("a", False, 402) in statuses and ("b", True, 200) in statuses
 
 
+async def test_gateway_tags_usage_events_with_the_requests_scan_id() -> None:
+    # `FetchRequest.scan_id` is attribution-only metadata — the gateway must
+    # carry it through to every `UsageEvent` it logs, success or failure, so
+    # usage can later be summed per scan (and, via `Scan.user_id`, per user).
+    a = FakeProvider("a", 10, [_ok("a")])
+    usage = NullUsageSink()
+    gw = _gateway([a], usage)
+
+    await gw.fetch(FetchRequest(url="https://x", scan_id=42))
+
+    assert [e.scan_id for e in usage.events] == [42]
+
+
 async def test_gateway_fails_fast_on_auth_error() -> None:
     a = FakeProvider("a", 10, [AuthError()])
     b = FakeProvider("b", 20, [_ok("b")])

@@ -376,6 +376,11 @@ class ProviderUsage(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     provider: Mapped[str] = mapped_column(String(64), index=True)
+    # Which scan this request was spent on, for per-user budget accounting
+    # (`Scan.user_id`). Nullable: rows logged before this column existed, and
+    # any fetch not yet attributed at its call site, read as "unattributed"
+    # rather than blocking usage logging on having a scan in hand.
+    scan_id: Mapped[int | None] = mapped_column(ForeignKey("scans.id"), index=True)
     ts: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )

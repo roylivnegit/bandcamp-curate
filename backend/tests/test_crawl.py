@@ -2,6 +2,7 @@ import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -38,10 +39,12 @@ from app.db.models import (
     FanItem,
     Follow,
     ProviderUsage,
+    Scan,
     Track,
     TrackSupporter,
+    User,
 )
-from app.enums import CrawlKind, CrawlStatus, TargetType
+from app.enums import CrawlKind, CrawlStatus, ScanKind, ScanStatus, TargetType
 from app.scraping.base import FetchRequest, FetchResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -1648,6 +1651,100 @@ async def test_budget_helpers(session: AsyncSession) -> None:
     assert await runner.requests_used(session) == 3
     assert await runner.budget_exhausted(session, 3) is True
     assert await runner.budget_exhausted(session, 4) is False
+
+
+async def test_page_render_fetches_are_tagged_with_their_scan(
+    session: AsyncSession,
+) -> None:
+    """`crawl_album`/`crawl_track` must pass their own `scan_id` into the page
+    render's `FetchRequest`, so `provider_usage` rows (in production, logged by
+    the gateway from that same field) can be attributed to a scan and, via
+    `Scan.user_id`, to the user whose budget they should count against."""
+    seen: list[int | None] = []
+
+    class SpyFetcher(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            seen.append(request.scan_id)
+            return await super().fetch(request)
+
+    fetcher = SpyFetcher({"/album/": ALBUM_HTML, "/track/": TRACK_HTML})
+    await crawl_album(
+        session, fetcher, ALBUM_URL, supporters_client=FakeSupportersClient(), scan_id=SCAN
+    )
+    await crawl_track(
+        session, fetcher, TRACK_URL, supporters_client=FakeSupportersClient(), scan_id=SCAN
+    )
+
+    assert seen == [SCAN, SCAN]
+
+
+async def _make_user(session: AsyncSession) -> User:
+    user = User(username=f"u-{uuid4()}", password_hash="!")
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def _make_scan(session: AsyncSession, user_id: int) -> Scan:
+    scan = Scan(
+        user_id=user_id, name="s", kind=str(ScanKind.CUSTOM), status=str(ScanStatus.RUNNING)
+    )
+    session.add(scan)
+    await session.flush()
+    return scan
+
+
+async def test_user_budget_helpers(session: AsyncSession) -> None:
+    alice = await _make_user(session)
+    bob = await _make_user(session)
+    alice_scan = await _make_scan(session, alice.id)
+    bob_scan = await _make_scan(session, bob.id)
+    await session.commit()
+
+    assert await runner.user_budget_exhausted(session, alice.id, None) is False  # no cap
+    assert await runner.user_budget_exhausted(session, None, 3) is False  # no user to check
+
+    for _ in range(3):
+        session.add(ProviderUsage(provider="nimble", ok=True, scan_id=alice_scan.id))
+    session.add(ProviderUsage(provider="nimble", ok=False, scan_id=alice_scan.id))  # doesn't count
+    session.add(ProviderUsage(provider="nimble", ok=True, scan_id=bob_scan.id))  # not alice's
+    session.add(ProviderUsage(provider="nimble", ok=True))  # unattributed — nobody's
+    await session.commit()
+
+    assert await runner.user_requests_used(session, alice.id) == 3
+    assert await runner.user_requests_used(session, bob.id) == 1
+    assert await runner.user_budget_exhausted(session, alice.id, 3) is True
+    assert await runner.user_budget_exhausted(session, alice.id, 4) is False
+    assert await runner.user_budget_exhausted(session, bob.id, 3) is False
+
+
+async def test_user_budget_stops_the_run_even_without_a_global_cap(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    # Alice has already spent her own budget on an earlier scan; a fresh scan of
+    # hers must not process anything, even though no global `max_requests` is
+    # set and Bob (a different user) would still have plenty of room.
+    async with sessionmaker_() as s:
+        alice = await _make_user(s)
+        earlier = await _make_scan(s, alice.id)
+        for _ in range(5):
+            s.add(ProviderUsage(provider="nimble", ok=True, scan_id=earlier.id))
+        new_scan = await _make_scan(s, alice.id)
+        alice_id, scan_id = alice.id, new_scan.id
+        await seed_fan_collection(s, SEED_URL, scan_id=scan_id)
+        await s.commit()
+
+    fetcher = FakeFetcher({"bandcamp.com/guron": FAN_HTML})
+    outcomes = await runner.run_until_empty(
+        sessionmaker_, fetcher, seed_url=SEED_URL,
+        collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
+        user_id=alice_id, max_requests_per_user=5, max_iterations=25,
+        scan_id=scan_id,
+    )
+    assert outcomes == []  # her own budget was already exhausted
+    assert fetcher.calls == []
+    async with sessionmaker_() as s:
+        assert await frontier.pending_count(s, scan_id=scan_id) == 1  # seed still pending
 
 
 async def test_runner_respects_max_depth(

@@ -28,7 +28,7 @@ from app.crawl.service import (
     crawl_fan_collection,
     crawl_track,
 )
-from app.db.models import CrawlFrontier, ProviderUsage
+from app.db.models import CrawlFrontier, ProviderUsage, Scan
 from app.enums import CrawlKind
 
 logger = logging.getLogger("crate_digger.crawl")
@@ -68,6 +68,34 @@ async def budget_exhausted(session: AsyncSession, max_requests: int | None) -> b
     if max_requests is None:
         return False
     return await requests_used(session) >= max_requests
+
+
+async def user_requests_used(session: AsyncSession, user_id: int) -> int:
+    """Count this user's successful provider fetches, across all their scans.
+
+    Only fetches attributed to a scan (`ProviderUsage.scan_id`) count — a fetch
+    logged before that attribution existed, or through a path not yet threaded,
+    is invisible here (and so never counts against anyone's per-user budget).
+    """
+    return (
+        await session.execute(
+            select(func.count())
+            .select_from(ProviderUsage)
+            .join(Scan, Scan.id == ProviderUsage.scan_id)
+            .where(ProviderUsage.ok.is_(True), Scan.user_id == user_id)
+        )
+    ).scalar_one()
+
+
+async def user_budget_exhausted(
+    session: AsyncSession, user_id: int | None, max_requests_per_user: int | None
+) -> bool:
+    """Whether this user's own cumulative provider-request budget has been
+    reached. Always False without both a user to check and a cap to check it
+    against (the legacy operator crawl has no user_id, for instance)."""
+    if max_requests_per_user is None or user_id is None:
+        return False
+    return await user_requests_used(session, user_id) >= max_requests_per_user
 
 
 async def _reuse_if_already_crawled(
@@ -268,14 +296,22 @@ async def run_until_empty(
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
     max_requests: int | None = None,
+    user_id: int | None = None,
+    max_requests_per_user: int | None = None,
     max_iterations: int = 1000,
     max_seconds: float | None = None,
     entry_seconds: float | None = None,
     concurrency: int = 1,
     stale_after: timedelta = frontier.STALE_CLAIM_AFTER,
 ) -> list[CrawlOutcome]:
-    """Process this scan's frontier entries until it drains, the request budget is
+    """Process this scan's frontier entries until it drains, a request budget is
     hit, `max_iterations` entries are done, or `max_seconds` elapses.
+
+    Two independent budgets can stop the drain: `max_requests` (global,
+    cumulative across every user ever) and, when both `user_id` and
+    `max_requests_per_user` are given, this scan owner's own cumulative spend
+    across all their scans — so one user maxing out their own budget can't be
+    read as "no budget left" for anyone else's.
 
     `concurrency` workers claim and crawl in parallel. A Nimble render takes 3-35s,
     so a serial drain spends nearly all of its time waiting: at concurrency 1 this
@@ -306,6 +342,13 @@ async def run_until_empty(
             async with sessionmaker() as session:
                 if await budget_exhausted(session, max_requests):
                     logger.info("request budget reached (%s); stopping", max_requests)
+                    stop = True
+                    return
+                if await user_budget_exhausted(session, user_id, max_requests_per_user):
+                    logger.info(
+                        "user %s's request budget reached (%s); stopping",
+                        user_id, max_requests_per_user,
+                    )
                     stop = True
                     return
                 try:
