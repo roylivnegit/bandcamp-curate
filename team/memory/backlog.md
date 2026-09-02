@@ -251,19 +251,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   tsc/lint/build clean (chunk split intact — the new CSS/JS lands inside the `ScanFeedPage`
   chunk, since that's its only importer). PR: see git history.
 
-- [ ] **Roving-tabindex arrow-key navigation across feed cards.** *(proposed by the hourly
-  routine, 2026-09-02, Architect+QA-approved, not yet built)* The shortcuts help panel above
-  documents `l`/`b` and the Dropdown arrow-key nav, but there's no keyboard way to move
-  *between* feed cards — reaching the next one means Tabbing through every focusable element
-  inside the current one. Give the feed list a roving tabindex: only the "active" `FeedCard`
-  has `tabIndex=0` (the rest `-1`); `ArrowDown`/`ArrowUp` move to the next/previous card,
-  `Home`/`End` jump to the first/last; add a row for it to `ShortcutsHelp`. Architect+QA:
-  sound (standard pattern, `FeedCard` already exists as the unit to wire it to), fully
-  testable in JSDOM (`fireEvent.keyDown` + `document.activeElement` is exact, no browser
-  needed), small — one container-level key handler plus one help-panel row. One thing to
-  watch, not a blocker: compute "is this the active index" from the list's own state rather
-  than having each card re-derive it by scanning the list on every render, or the "active"
-  prop stops being cheap for the memoized-list rule in `frontend/CLAUDE.md`.
+- [x] **Roving-tabindex arrow-key navigation across feed cards.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved)* The shortcuts help panel documents `l`/`b` and
+  the Dropdown arrow-key nav, but there was no keyboard way to move *between* feed cards —
+  reaching the next one meant Tabbing through every focusable element inside the current one.
+  Done: `ScanFeedPage` keeps `activeIndex` state (an index into `rows`, reset to 0 whenever
+  `loadFirstPage` lands a fresh set, and clamped at render time so a like/block removing the
+  active row never leaves it pointing past the end) — every `FeedCard`'s `active` prop is one
+  `i === activeCardIndex` comparison in the existing `rows.map`, not a per-card scan, per the
+  Architect/QA scoping note. Rows are wrapped in a new `.cardlist` div carrying one
+  `onKeyDown`; `FeedCard`'s `<article>` gets `id={cardId}` and `tabIndex={active ? 0 : -1}`.
+  ArrowDown/ArrowUp move to the next/previous card and clamp at the ends (no wrap, unlike
+  `Dropdown`'s menu nav — a feed list has a definite start/end, not a cycling menu);
+  Home/End jump to the first/last. Scoped to fire only when the event target itself carries
+  the `card` class (mirrors `Dropdown.tsx`'s `.ddrow` scoping), so it can't hijack arrow keys
+  typed into a filter field elsewhere on the page. `ShortcutsHelp`'s existing ↑/↓ and Home/End
+  rows were reworded to cover both contexts (menus and the card list) rather than adding
+  duplicate rows. Covered by two new tests in `feed.test.tsx` with three distinct cards: only
+  the first card is a tab stop initially and ArrowDown moves both the DOM focus and the
+  `tabindex` attributes to the next card; ArrowUp/ArrowDown don't move past the first/last
+  card, and Home/End jump straight to them. `FeedCard.test.tsx` updated for the two new
+  required props. 68/68 frontend tests pass, tsc/lint/build clean (chunk split intact). PR:
+  see git history.
 
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
@@ -19,6 +20,9 @@ const SKELETON_KEYS = ['sk-0', 'sk-1', 'sk-2', 'sk-3', 'sk-4']
 /** Module scope, not a closure over render state — the like/block handlers stay
  *  referentially stable only if nothing they call is re-created per render. */
 const keyOf = (r: Recommendation) => `${r.item_type}:${r.album_id ?? r.track_id}`
+/** A DOM id derived from `keyOf`, so the roving-tabindex handler can find and
+ *  focus one exact card by id after an Arrow/Home/End key. */
+const cardIdOf = (r: Recommendation) => `card-${keyOf(r)}`
 
 /** True only for a genuine mid-session reflow — `prev` was a real generation
  *  (not the initial `null`) and it differs from `next`. A scan's very first
@@ -49,6 +53,13 @@ export function ScanFeedPage() {
   const [panel, setPanel] = useState<'liked' | 'blocked' | null>(null)
   const [exiting, setExiting] = useState<Record<string, 'like' | 'block'>>({})
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set())
+  /** Roving tabindex over the card list: an index into `rows`, not a scan
+   *  each card would otherwise have to do to know whether it's "the active
+   *  one" — every card's `active` prop is a single `i === activeIndex`
+   *  comparison in the `rows.map` below. Reset to 0 whenever `loadFirstPage`
+   *  lands a fresh set (a new filter, a new scan); clamped at render time in
+   *  case a like/block removes the currently-active row. */
+  const [activeIndex, setActiveIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
@@ -165,6 +176,7 @@ export function ScanFeedPage() {
       setRows(page)
       setTotal(c.count)
       setDone(page.length < LIMIT)
+      setActiveIndex(0)
     } catch (err) {
       if (feedSeq.current !== req) return
       setError(err instanceof Error ? err.message : 'Could not load the feed.')
@@ -338,6 +350,34 @@ export function ScanFeedPage() {
 
   const dismissListUpdated = useCallback(() => setListUpdated(false), [])
 
+  // Clamped at render time (not in an effect) so a like/block that removes the
+  // currently-active row — one card fewer, no `loadFirstPage` involved — never
+  // leaves `activeIndex` pointing past the end of `rows`.
+  const activeCardIndex = rows.length === 0 ? 0 : Math.min(activeIndex, rows.length - 1)
+
+  /** Roving tabindex, the standard WAI-ARIA pattern: ArrowDown/ArrowUp move to
+   *  the next/previous card, Home/End jump to the ends. Scoped to firing only
+   *  when the event actually originates from a card's own `tabIndex` (checked
+   *  via the `card` class), so it never hijacks arrow keys typed into a filter
+   *  field elsewhere in the page — the same scoping `Dropdown.tsx` uses for
+   *  its `.ddrow` rows. */
+  const onCardListKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (!(e.target instanceof HTMLElement) || !e.target.classList.contains('card')) return
+      if (rows.length === 0) return
+      let next: number
+      if (e.key === 'ArrowDown') next = Math.min(activeCardIndex + 1, rows.length - 1)
+      else if (e.key === 'ArrowUp') next = Math.max(activeCardIndex - 1, 0)
+      else if (e.key === 'Home') next = 0
+      else if (e.key === 'End') next = rows.length - 1
+      else return
+      e.preventDefault()
+      setActiveIndex(next)
+      document.getElementById(cardIdOf(rows[next]))?.focus()
+    },
+    [rows, activeCardIndex],
+  )
+
   /** Reverses the currently-offered undo: unlikes/unblocks server-side, then
    *  restores the card straight into local `rows` at the spot it was removed
    *  from. Deliberately does NOT call `loadFirstPage()` — refetching page 1 to
@@ -498,22 +538,29 @@ export function ScanFeedPage() {
 
             {/* Every prop here is either the row itself, a per-row primitive, or a
                 stable callback — nothing is re-created per render, so a card only
-                re-renders when its own row or flags change. */}
-            {rows.map((r) => {
-              const key = keyOf(r)
-              return (
-                <FeedCard
-                  key={key}
-                  rec={r}
-                  exiting={exiting[key] ?? null}
-                  busy={busyKeys.has(key)}
-                  onLike={like}
-                  onBlock={block}
-                  onTagClick={includeTag}
-                  onBandClick={onBandClick}
-                />
-              )
-            })}
+                re-renders when its own row or flags change. `active` is a single
+                index comparison, not a scan, so it's just as cheap. */}
+            {rows.length > 0 && (
+              <div className="cardlist" onKeyDown={onCardListKeyDown}>
+                {rows.map((r, i) => {
+                  const key = keyOf(r)
+                  return (
+                    <FeedCard
+                      key={key}
+                      rec={r}
+                      cardId={cardIdOf(r)}
+                      active={i === activeCardIndex}
+                      exiting={exiting[key] ?? null}
+                      busy={busyKeys.has(key)}
+                      onLike={like}
+                      onBlock={block}
+                      onTagClick={includeTag}
+                      onBandClick={onBandClick}
+                    />
+                  )
+                })}
+              </div>
+            )}
 
             {rows.length === 0 && !loading && !error && (
               <>

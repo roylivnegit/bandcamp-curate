@@ -13,6 +13,8 @@ function renderCard(over: { busy?: boolean; bandId?: number | null } = {}) {
   render(
     <FeedCard
       rec={rec}
+      cardId="card-test"
+      active
       exiting={null}
       busy={over.busy ?? false}
       onLike={onLike}

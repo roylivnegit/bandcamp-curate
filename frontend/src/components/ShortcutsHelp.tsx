@@ -5,8 +5,8 @@ import './ShortcutsHelp.css'
 const SHORTCUTS: Array<{ keys: string; description: string }> = [
   { keys: 'l', description: 'Like the focused recommendation' },
   { keys: 'b', description: "Block the focused recommendation's artist" },
-  { keys: '↑ / ↓', description: 'Move through an open menu' },
-  { keys: 'Home / End', description: 'Jump to the first / last row in an open menu' },
+  { keys: '↑ / ↓', description: 'Move to the next/previous card, or through an open menu' },
+  { keys: 'Home / End', description: 'Jump to the first / last card, or menu row' },
   { keys: '?', description: 'Toggle this panel' },
 ]
 
