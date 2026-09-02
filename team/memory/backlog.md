@@ -871,17 +871,48 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   clean (chunk split intact — the new files land inside the `ScanFeedPage` chunk, their only
   importer). PR: see git history.
 
-- [ ] **Command palette (Cmd/Ctrl+K).** *(proposed by the hourly routine, 2026-09-02,
+- [x] **Command palette (Cmd/Ctrl+K).** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved — "sound, testable entirely in jsdom/RTL, scope is contained because it
   explicitly reuses `ShortcutsHelp`'s existing focus-trap rather than building one")* Getting to
   Feed / Scans / Blacklist or triggering "New scan" / "Recompute" takes multiple clicks through nav —
   there's no fast path for the one person actually using this daily.
-  Idea: `components/CommandPalette.tsx`, opened by Ctrl/Cmd+K, reusing the focus-trap pattern from
-  `ShortcutsHelp` (module-scoped `FOCUSABLE_SELECTOR`, the same Escape/outside-click/restore-focus
-  effect shape): a text input, a substring-filtered action list (navigate + the two mutating
-  actions), arrow-key navigation, Enter to run, Escape to close-and-restore-focus. Verify: RTL tests —
-  Ctrl+K opens an element with `role="dialog"` and focuses the input; typing "scan" narrows the
-  rendered action list to exactly the scan-related items (assert the array); ArrowDown+Enter invokes
-  the correct callback (spy assertion, not a route check); Escape closes it and `document
-  .activeElement` is back on the element that had focus before opening. Not built this round —
-  a smaller, more bounded sibling proposal (density toggle, above) was picked instead.
+  **Scoped down on build**, from what QA sanity-checked: `NewScanForm` isn't a route (it's an
+  inline toggle on `ScanListPage`) and there is no manual "Recompute" control anywhere in the UI
+  (a previous round already confirmed recomputes are automatic, server-side) — so "navigate +
+  the two mutating actions" turned out to describe actions that don't exist as standalone
+  commands. Built as **navigation only**: jump straight to the scans list or to any scan by name,
+  which is the real, currently-missing fast path (today that's several clicks through the list
+  page every time).
+  Done: `components/CommandPalette.tsx` is generic and prop-driven — `actions: CommandAction[]`
+  (`{id, label, hint?, run}`) plus an `onOpen?` callback the caller uses to refresh whatever backs
+  those actions — so the component itself needs no router/API mocking to test at all, only a
+  callback spy. Reuses `ShortcutsHelp`'s exact focus-trap/restore-focus effect shape (the same
+  module-scoped `FOCUSABLE_SELECTOR`, Escape/outside-click/Tab-trap logic) but not its "?"
+  text-entry guard — Ctrl/Cmd+K isn't something anyone types into a field, so that guard doesn't
+  apply here. Filtering is a substring match on `label` (case-insensitive); the highlighted row is
+  an `activeIndex` moved by ArrowUp/Down (clamped, no wrap) rather than real DOM focus per row —
+  standard command-palette UX (type continuously, arrow to pick) rather than `Dropdown`'s
+  focus-per-row menu pattern. `App.tsx` wires it in next to `ToastStack` (only in the signed-in
+  shell): a `useState<Scan[]>([])` + `useCallback`'d `loadScansForPalette` (stable identity is load-
+  bearing — `onOpen` is a real effect dependency in `CommandPalette`, documented on the component
+  — an inline arrow there would reset the search on every unrelated App re-render) fetches
+  `api.listScans()` each time the palette opens; `paletteActions` is `[{Go to Scans}, ...scans
+  mapped to per-scan jump actions]`.
+  Caught one real accessibility bug before it shipped: the hint text (`"scan"`/`"your
+  collection"`) rendered as a sibling `<span>` with no separator, so an option's accessible name
+  concatenated straight into it — `"Psy digscan"` — because accessible-name computation ignores
+  flex-layout spacing between text nodes. Fixed by marking the hint `aria-hidden`; the label alone
+  is the option's name, matching how the rest of this app treats decorative/secondary text.
+  Covered by 12 new tests in `CommandPalette.test.tsx` (a standalone RTL render, no router/api
+  mocking needed): opens on Ctrl+K and Cmd+K, focuses the input, lists every action; calls
+  `onOpen` on each open (not just the first); filters to matching labels and shows a "no matches"
+  message for none; ArrowDown+Enter runs exactly the highlighted action (spy assertions) and
+  ArrowDown doesn't run past the last row; a mouse click runs and closes; Escape closes and
+  restores focus; outside-click closes, inside-click doesn't; a second Ctrl+K toggles closed;
+  reopening resets the query/highlight. Plus 3 integration tests in `feed.test.tsx`'s new
+  "command palette" block, mounting the real signed-in shell: Ctrl+K from the scans list shows
+  "Go to Scans" and every real scan; typing narrows to one match and Enter navigates there
+  (asserted via `currentLocation()`); a mouse click on a scan option navigates the same way.
+  134/134 frontend tests pass, tsc/lint/build clean (lands in the eagerly-loaded shared chunk via
+  `App.tsx`, same as `ToastStack` — not a lazy route chunk, which is correct since it must be
+  mounted before either route is). PR: see git history.
