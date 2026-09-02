@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '../../api/types'
+import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
 import { count, plural } from '../../lib/format'
 import { ColdStartPanel } from './ColdStartPanel'
@@ -402,6 +403,7 @@ export function ScanFeedPage() {
 
   return (
     <div className="wrap feedpage">
+      <ShortcutsHelp />
       <nav className="feednav">
         <Link to="/scans" className="back">
           ← Scans

@@ -228,14 +228,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   write leaves the button reading "Copy link". 55/55 frontend tests pass, tsc/lint/build clean
   (chunk split intact). PR: see git history.
 
-- [ ] **"?" keyboard-shortcuts help panel.** *(proposed by the hourly routine, 2026-09-02,
-  Architect+QA-approved, not yet built)* The `l`/`b` like/block shortcuts and the Dropdown
-  arrow-key navigation both shipped but are invisible — nothing tells a user they exist, so
-  almost no one will find them. Pressing `?` toggles a small overlay (`role="dialog"`) listing
-  the shortcuts; `Escape` or clicking outside closes it and returns focus to whatever was
-  focused before it opened. Architect+QA: sound (the shortcuts genuinely exist and are
-  undiscoverable), testable with RTL keydown/focus assertions in the existing vitest setup (no
-  browser/crawl/Docker needed), small — one dialog component plus two tests.
+- [x] **"?" keyboard-shortcuts help panel.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* The `l`/`b` like/block shortcuts and the Dropdown arrow-key
+  navigation both shipped but are invisible — nothing told a user they exist.
+  Done: new `components/ShortcutsHelp.tsx`, mounted once in `ScanFeedPage.tsx` (the page the
+  shortcuts it documents actually apply to). A document-level `keydown` listener (always
+  attached, not just while open, so `?` can open it from anywhere on the page) toggles the
+  panel — guarded against firing while the target is an `<input>`/`<textarea>`/
+  contenteditable element, so typing a literal `?` into the genre-search or tag-contains
+  fields doesn't hijack it. While open, `role="dialog" aria-modal aria-labelledby` plus the
+  same outside-click/Escape-close pattern `Dropdown.tsx` already uses (a `document`
+  `mousedown` listener checking `panelRef.contains`, effect-scoped to `[open]`); closing —
+  by Escape, outside click, or the panel's own Close button — restores focus to whatever
+  had it before the panel opened, via the same effect's cleanup. `ShortcutsHelp.css` adds a
+  centered, dimmed overlay; its one animation (a 150ms fade-in) needs no explicit
+  reduced-motion guard since `base.css`'s existing global block already zeroes all
+  `animation-duration`. Covered by five new tests in `ShortcutsHelp.test.tsx` (standalone RTL
+  render, no router/api mocking needed): `?` opens the panel and lists both shortcuts; `?`
+  while a text field is focused does nothing; Escape closes it and returns focus to the
+  previously-focused control; a click on the panel itself doesn't close it but a click
+  outside does; a second `?` press toggles it back closed. 60/60 frontend tests pass,
+  tsc/lint/build clean (chunk split intact — the new CSS/JS lands inside the `ScanFeedPage`
+  chunk, since that's its only importer). PR: see git history.
 
 - [ ] **Roving-tabindex arrow-key navigation across feed cards.** *(proposed by the hourly
   routine, 2026-09-02, Architect+QA-approved, not yet built)* The shortcuts help panel above
