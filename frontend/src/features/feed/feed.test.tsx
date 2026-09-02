@@ -29,6 +29,43 @@ describe('scan list', () => {
     expect(screen.getByText('queued')).toBeInTheDocument()
   })
 
+  it('shows skeleton scan cards while the list loads, then the real ones', async () => {
+    // Layout-shift regression: nothing rendered in the gap before scans landed,
+    // so the real cards used to pop in. A shaped placeholder should occupy
+    // that space instead, and disappear once the real list arrives.
+    let releaseScans = () => {}
+    const scansHeld = new Promise<void>((resolve) => {
+      releaseScans = resolve
+    })
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans')) {
+          await scansHeld
+          return json([fakeScan])
+        }
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans')
+
+    expect(await screen.findByLabelText('Loading scans…')).toBeInTheDocument()
+    expect(screen.queryByText('My collection')).not.toBeInTheDocument()
+
+    await act(async () => {
+      releaseScans()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(await screen.findByText('My collection')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Loading scans…')).not.toBeInTheDocument()
+  })
+
   it('tells a brand-new user their collection is still being crawled', async () => {
     // The whole point of `has_crawled`: an empty feed with no explanation is
     // indistinguishable from a broken one.
@@ -68,6 +105,44 @@ describe('scan feed', () => {
     expect(screen.getByText('Minds of Infinity')).toBeInTheDocument()
     expect(screen.getByText('3.3')).toBeInTheDocument() // score, 1dp
     expect(screen.getByText(/2 neighbours own this/)).toBeInTheDocument()
+  })
+
+  it('shows skeleton recommendation cards while the first page loads', async () => {
+    let releaseRecs = () => {}
+    const recsHeld = new Promise<void>((resolve) => {
+      releaseRecs = resolve
+    })
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) {
+          await recsHeld
+          return json([fakeRec()])
+        }
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByLabelText('Loading recommendations…')).toBeInTheDocument()
+    expect(screen.queryByText('Eyes of Infinity')).not.toBeInTheDocument()
+
+    await act(async () => {
+      releaseRecs()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Loading recommendations…')).not.toBeInTheDocument()
   })
 
   it('shows the banner instead of the feed while a scan is still running', async () => {

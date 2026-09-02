@@ -82,6 +82,28 @@ a {
   }
 }
 
+/* ── loading skeletons ───────────────────────────────────────────────────── */
+
+/* Shared shimmer block. Feature stylesheets set size/shape via `.sk-*`
+ * modifiers. Reduced-motion above already zeroes `animation-duration`
+ * globally, which freezes this to a flat `var(--surface-2)` — an acceptable
+ * static placeholder, not a state change that only happens via animation. */
+.sk {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 37%, var(--surface-2) 63%);
+  background-size: 400% 100%;
+  animation: sk-shimmer 1.4s ease infinite;
+  border-radius: var(--r-sm);
+}
+
+@keyframes sk-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
 /* ── layout ──────────────────────────────────────────────────────────────── */
 
 .wrap {

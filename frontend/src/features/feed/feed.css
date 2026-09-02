@@ -247,6 +247,41 @@
   box-shadow: var(--shadow-card);
 }
 
+.card.skeleton:hover {
+  border-color: var(--line);
+  transform: none;
+  box-shadow: none;
+}
+
+.card.skeleton::before {
+  opacity: 0;
+}
+
+.sk-score {
+  width: 60px;
+  height: 60px;
+  flex: none;
+  border-radius: var(--r-lg);
+}
+
+.sk-title {
+  height: 17px;
+  width: 55%;
+  margin-bottom: 10px;
+}
+
+.sk-band {
+  height: 12px;
+  width: 30%;
+  margin-bottom: 13px;
+}
+
+.sk-chip {
+  height: 20px;
+  width: 140px;
+  border-radius: var(--r-pill);
+}
+
 .card::before {
   content: '';
   position: absolute;

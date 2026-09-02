@@ -41,6 +41,34 @@
   box-shadow: 0 16px 36px -20px rgba(0, 0, 0, 0.75);
 }
 
+.scan.skeleton:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.scan.skeleton::before {
+  background: var(--line);
+}
+
+.sk-ico {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border-radius: var(--r-md);
+}
+
+.scan .sk-title {
+  height: 15px;
+  width: 40%;
+}
+
+.scan .sk-band {
+  display: inline-block;
+  height: 12px;
+  width: 55%;
+  margin-top: 6px;
+}
+
 /* Severity stripe: state reads before you get to the words. */
 .scan::before {
   content: '';

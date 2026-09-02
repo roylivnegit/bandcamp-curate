@@ -79,10 +79,24 @@ Stay inside `frontend/CLAUDE.md`'s existing design system and conventions rather
 visual direction, and leave the icon-glyphs-vs-SVG-icons question alone — that file flags it as a
 deliberate, unresolved call for Roy, not something to resolve unilaterally.
 
-- [ ] **Skeleton loading states.** Feed/scan pages show plain text `Loading…`; replace with
+- [x] **Skeleton loading states.** Feed/scan pages show plain text `Loading…`; replace with
   skeleton placeholders shaped like the real cards. Also fixes the layout shift when the first
   page lands. `frontend/CLAUDE.md` "Known conflicts and deferred items" flags this as cosmetic
   and unclaimed.
+  Done: `FeedCard.tsx` exports `FeedCardSkeleton` (mirrors a real card's score box, title, band
+  line and one chip) and `ScanListPage.tsx` gets a matching `ScanCardSkeleton`. `ScanFeedPage`
+  shows 5 of them, wrapped in `role="status" aria-label="Loading recommendations…"`, only for the
+  first page (`loading && rows.length === 0`) — `loadMore`'s `loading` shares the flag but already
+  has real rows on screen, so it's excluded. `ScanListPage` shows 3 in place of the old "Loading
+  scans…" text, same `role="status"` pattern. Shimmer is a shared `.sk` class in `base.css`
+  (`background-position` keyframe, no library); the global `prefers-reduced-motion` block already
+  zeroes `animation-duration`, freezing it to a static placeholder rather than a spinning one.
+  Individual skeleton cards are `aria-hidden` since the wrapper's `role="status"` carries the
+  announcement. Verified behaviorally, not visually: two new tests hold the relevant fetch behind
+  an unresolved promise and assert the skeleton (`getByLabelText`) is present while it's pending
+  and gone once real content lands — `shows skeleton scan cards while the list loads, then the
+  real ones` and `shows skeleton recommendation cards while the first page loads`. 27/27 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [x] **Feed filters belong in the URL.** `useFeedFilters` lives in `useState`, so a filtered
   view can't be shared or bookmarked, and browser-back silently drops it. Move it onto
