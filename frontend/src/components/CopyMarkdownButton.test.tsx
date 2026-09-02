@@ -78,4 +78,18 @@ describe('CopyMarkdownButton', () => {
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  it('raises a status toast on a successful copy, not just the button-text swap', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderWith([fakeRec()], { withToasts: true })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy as Markdown' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/copied as markdown/i)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
 })

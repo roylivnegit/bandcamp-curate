@@ -81,4 +81,20 @@ describe('CopyLinkButton', () => {
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  it('raises a status toast on a successful copy, not just the button-text swap', async () => {
+    // The "Copied" text swap alone reaches no screen reader — the failure
+    // path already gets a proper toast, so the success path should too.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderAt('/scans/7', { withToasts: true })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/link copied/i)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
 })
