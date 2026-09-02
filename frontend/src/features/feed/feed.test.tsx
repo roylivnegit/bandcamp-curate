@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -546,6 +546,118 @@ describe('undo after like/block', () => {
       await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS)
     })
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+  })
+})
+
+describe('unlike/unblock from the side panels', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const fakeLiked = { id: 1, item_type: 'album', album_id: 9, track_id: null, title: 'Liked One', band_name: 'A Band', url: null } as const
+  const fakeBlocked = { id: 1, band_id: 5, band_name: 'Blocked Band', band_url: null, reason: null } as const
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  it('shows "Unliking…" while an unlike is in flight, then removes the row', async () => {
+    let releaseUnlike = () => {}
+    const unlikeHeld = new Promise<void>((resolve) => {
+      releaseUnlike = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/likes/unlike')) {
+          await unlikeHeld
+          return json({ unliked: true })
+        }
+        if (url.includes('/api/likes')) return json([fakeLiked])
+        if (url.includes('/api/blacklist')) return json([])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: /♥ Liked/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'unlike' }))
+
+    expect(await screen.findByRole('button', { name: 'Unliking…' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Unliking…' })).toBeDisabled()
+
+    await act(async () => {
+      releaseUnlike()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // The mock server doesn't actually drop the item from its liked list, so
+    // the row is still here after the refetch — the point is that it's no
+    // longer stuck on the busy label once the request settles.
+    expect(screen.queryByRole('button', { name: 'Unliking…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'unlike' })).not.toBeDisabled()
+  })
+
+  it('surfaces an error and leaves the row usable when an unblock fails', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/blacklist/5/unblock', { detail: 'nope' }, 500],
+      ['/api/blacklist', [fakeBlocked]],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'unblock' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/nope/i)
+    // Not left stuck busy after the failure — the row is clickable again.
+    expect(screen.getByRole('button', { name: 'unblock' })).not.toBeDisabled()
+  })
+
+  it('ignores a second click on the same row while the first unlike is still in flight', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+      if (url.includes('/api/likes/unlike')) return json({ unliked: true })
+      if (url.includes('/api/likes')) return json([fakeLiked])
+      if (url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: /♥ Liked/ }))
+    const unlikeBtn = await screen.findByRole('button', { name: 'unlike' })
+    fireEvent.click(unlikeBtn)
+    fireEvent.click(unlikeBtn)
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/likes/unlike')).length).toBe(
+        1,
+      ),
+    )
   })
 })
 
