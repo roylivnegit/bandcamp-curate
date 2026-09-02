@@ -104,6 +104,7 @@ async def _reuse_if_already_crawled(
     *,
     max_depth: int | None,
     seed_url: str | None,
+    seed_fan_id: int | None = None,
 ) -> CrawlOutcome | None:
     """If another scan already crawled this (url, kind), complete it for free.
 
@@ -129,6 +130,7 @@ async def _reuse_if_already_crawled(
     if max_depth is None or entry.depth < max_depth:
         enqueued = await replay_fanout(
             session, entry.url, entry.kind, scan_id=entry.scan_id, depth=entry.depth + 1,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
         )
     await session.commit()
     logger.info(
@@ -152,7 +154,7 @@ async def process_entry(
 ) -> CrawlOutcome:
     """Run one already-claimed frontier entry by kind. Raises on failure."""
     reused = await _reuse_if_already_crawled(
-        session, entry, max_depth=max_depth, seed_url=seed_url
+        session, entry, max_depth=max_depth, seed_url=seed_url, seed_fan_id=seed_fan_id,
     )
     if reused is not None:
         return reused
@@ -173,11 +175,13 @@ async def process_entry(
         return await crawl_album(
             session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
             supporters_client=supporters_client, scan_id=entry.scan_id,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
         )
     if entry.kind == CrawlKind.TRACK:
         return await crawl_track(
             session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
             supporters_client=supporters_client, scan_id=entry.scan_id,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
         )
     raise ValueError(f"unsupported crawl kind: {entry.kind}")
 
