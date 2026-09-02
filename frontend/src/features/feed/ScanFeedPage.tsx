@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '../../api/types'
+import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
 import { count, plural } from '../../lib/format'
@@ -135,6 +136,14 @@ export function ScanFeedPage() {
   useEffect(() => {
     headingRef.current?.focus()
   }, [scanId])
+
+  // Shared by <ScrollTopButton>: scrolls back up and, like a route change,
+  // hands focus to the page heading rather than leaving it wherever it was
+  // (often a card no longer near the viewport).
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    headingRef.current?.focus()
+  }, [])
 
   useEffect(() => {
     if (!scan || scan.status === 'done' || scan.status === 'error') return
@@ -456,6 +465,7 @@ export function ScanFeedPage() {
   return (
     <div className="wrap feedpage">
       <ShortcutsHelp />
+      <ScrollTopButton onClick={scrollToTop} />
       <nav className="feednav">
         <Link to="/scans" className="back">
           ← Scans
