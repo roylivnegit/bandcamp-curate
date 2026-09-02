@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
-import type { Blocked, Facet, Liked, Recommendation, ScanDetail } from '../../api/types'
+import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '../../api/types'
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
 import { count, plural } from '../../lib/format'
+import { ColdStartPanel } from './ColdStartPanel'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
 import { BlockedPanel, LikedPanel } from './SidePanels'
@@ -42,6 +43,7 @@ export function ScanFeedPage() {
   const [rows, setRows] = useState<Recommendation[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [facetTags, setFacetTags] = useState<Facet[]>([])
+  const [stats, setStats] = useState<Stats | null>(null)
   const [liked, setLiked] = useState<Liked[]>([])
   const [blocked, setBlocked] = useState<Blocked[]>([])
   const [panel, setPanel] = useState<'liked' | 'blocked' | null>(null)
@@ -127,6 +129,10 @@ export function ScanFeedPage() {
   const loadFacets = useCallback(async () => {
     setFacetTags((await api.facets(scanId)).tags)
   }, [scanId])
+  const loadStats = useCallback(async () => {
+    if (scanId === null) return
+    setStats(await api.stats(scanId))
+  }, [scanId])
 
   useEffect(() => {
     void loadLiked().catch(() => {})
@@ -136,6 +142,14 @@ export function ScanFeedPage() {
   useEffect(() => {
     if (showFeed) void loadFacets().catch(() => {})
   }, [showFeed, loadFacets, recCount])
+
+  // `total` (not `rows.length`) is the stable "the whole result set is empty"
+  // signal — a like/block animates a row out of `rows` locally without ever
+  // touching `total`, so this only fires for a genuinely empty scan, not a
+  // momentary gap while the last visible card exits.
+  useEffect(() => {
+    if (total === 0) void loadStats().catch(() => {})
+  }, [total, loadStats])
 
   // ── the feed itself ──────────────────────────────────────────────────────
   const loadFirstPage = useCallback(async () => {
@@ -502,11 +516,14 @@ export function ScanFeedPage() {
             })}
 
             {rows.length === 0 && !loading && !error && (
-              <p className="empty">
-                {filters.anyActive
-                  ? 'Nothing matches these filters — try clearing one.'
-                  : 'No recommendations in this scan yet.'}
-              </p>
+              <>
+                <p className="empty">
+                  {filters.anyActive
+                    ? 'Nothing matches these filters — try clearing one.'
+                    : 'No recommendations in this scan yet.'}
+                </p>
+                {!filters.anyActive && <ColdStartPanel coldStart={stats?.cold_start} />}
+              </>
             )}
 
             {!done && rows.length > 0 && (

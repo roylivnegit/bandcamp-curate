@@ -251,6 +251,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   tsc/lint/build clean (chunk split intact — the new CSS/JS lands inside the `ScanFeedPage`
   chunk, since that's its only importer). PR: see git history.
 
+- [ ] **Roving-tabindex arrow-key navigation across feed cards.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved, not yet built)* The shortcuts help panel above
+  documents `l`/`b` and the Dropdown arrow-key nav, but there's no keyboard way to move
+  *between* feed cards — reaching the next one means Tabbing through every focusable element
+  inside the current one. Give the feed list a roving tabindex: only the "active" `FeedCard`
+  has `tabIndex=0` (the rest `-1`); `ArrowDown`/`ArrowUp` move to the next/previous card,
+  `Home`/`End` jump to the first/last; add a row for it to `ShortcutsHelp`. Architect+QA:
+  sound (standard pattern, `FeedCard` already exists as the unit to wire it to), fully
+  testable in JSDOM (`fireEvent.keyDown` + `document.activeElement` is exact, no browser
+  needed), small — one container-level key handler plus one help-panel row. One thing to
+  watch, not a blocker: compute "is this the active index" from the list's own state rather
+  than having each card re-derive it by scanning the list on every render, or the "active"
+  prop stops being cheap for the memoized-list rule in `frontend/CLAUDE.md`.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
@@ -275,9 +289,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `excluded_by_reason.followed` is nonzero and accounts for every candidate),
   `test_cold_start_diagnostics_no_neighbours`, and an API-level assertion in `test_stats`.
   235/235 backend tests pass, ruff clean. PR: see git history.
-  **Left open:** no frontend surfacing yet — the data is in `/api/stats` but nothing in
-  `frontend/` reads `cold_start` yet. A follow-up can add the "why is my feed empty" UI on
-  top of this without touching the backend again.
+  **Frontend follow-up landed (2026-09-02):** new `features/feed/ColdStartPanel.tsx` — a
+  pure presentational component (`{neighbour_count, candidates, excluded_*}` in, prose out,
+  matching the actual `ColdStartOut` shape exactly rather than an invented `reason` enum a
+  previous Architect+QA round had rejected) — renders under `ScanFeedPage`'s existing "No
+  recommendations in this scan yet." message (only in that branch, not the "nothing matches
+  your filters" one — a narrow filter isn't a cold-start problem). `Stats`/`ColdStart` added
+  to `api/types.ts`, mirroring `StatsOut`/`ColdStartOut` field-for-field. `ScanFeedPage` fetches
+  `/api/stats` only when `total === 0` — deliberately keyed on `total`, not `rows.length`,
+  since a like/block animates a row out of `rows` locally without moving `total`, so a
+  transient one-row gap during that animation never triggers an extra fetch. Covered by 4 new
+  tests in `ColdStartPanel.test.tsx` (standalone RTL render: renders every count and exclusion
+  reason; a distinct message when there are no neighbours at all rather than an exclusion
+  story; renders nothing for `null`/`undefined`) and 2 new integration tests in
+  `feed.test.tsx` (a `count: 0` scan shows the diagnostics with the right numbers; a scan with
+  rows never fetches `/api/stats` at all). 61/61 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). PR: see git history.
 
 - [x] **The feed can silently reflow under a user who's mid-scroll.** *(proposed by the hourly
   routine, 2026-09-02)* Done: `scans.recompute_generation` (migration `0013`, guarded), bumped

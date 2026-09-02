@@ -42,6 +42,18 @@ export interface Facets {
   seed_tags: Facet[]
 }
 
+/** Why the feed came back thin or empty for a scan — see the backend's
+ *  `curation.engine.cold_start_diagnostics`. Present only once the crawl has
+ *  identified "me" (a `me`-scoped stats request on a scan that has one). */
+export interface ColdStart {
+  neighbour_count: number
+  candidates: number
+  excluded_owned: number
+  excluded_wishlisted: number
+  excluded_followed: number
+  excluded_blacklisted: number
+}
+
 export interface Stats {
   recommendations: number
   fans: number
@@ -54,6 +66,7 @@ export interface Stats {
   liked: number
   requests_used: number
   request_budget: number
+  cold_start: ColdStart | null
   recompute_generation: number | null
 }
 

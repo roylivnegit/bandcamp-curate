@@ -580,3 +580,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── cold-start diagnostics under the empty state ───────────────────────── */
+
+.coldstart {
+  text-align: center;
+  padding-bottom: var(--s-8);
+}
+
+.coldstart p {
+  margin: var(--s-1) 0;
+}
