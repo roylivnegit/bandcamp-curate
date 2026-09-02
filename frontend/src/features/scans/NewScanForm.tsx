@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ClipboardEvent as ReactClipboardEvent } from 'react'
 
 import { api } from '../../api/client'
 import { seedKind } from '../../lib/format'
@@ -31,6 +31,34 @@ export function NewScanForm({
     }
     setError('')
     setSeeds((prev) => (prev.includes(u) ? prev : [...prev, u]))
+    setSeedUrl('')
+  }
+
+  // A single pasted line falls through to the default paste behavior (lands
+  // in the input, same as typing) — only a multi-line paste (a batch of
+  // copied tabs) is handled here, since that's the case Enter-to-add can't
+  // cover at all. Invalid/duplicate lines are silently dropped, same as
+  // `addSeed`'s own dedupe; only a paste with *no* valid lines surfaces an
+  // error, mirroring the single-URL rejection message.
+  function onSeedPaste(e: ReactClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!/\r|\n/.test(text)) return
+    e.preventDefault()
+    const lines = text
+      .split(/\r\n|\r|\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+    const valid = lines.filter((l) => SEED_URL_RE.test(l))
+    if (valid.length === 0) {
+      setError('None of the pasted lines looked like a Bandcamp album or track URL.')
+      return
+    }
+    setError('')
+    setSeeds((prev) => {
+      const next = [...prev]
+      for (const u of valid) if (!next.includes(u)) next.push(u)
+      return next
+    })
     setSeedUrl('')
   }
 
@@ -90,6 +118,7 @@ export function NewScanForm({
                 addSeed()
               }
             }}
+            onPaste={onSeedPaste}
           />
           <button type="button" className="btn ghost" onClick={addSeed} disabled={!seedUrl.trim()}>
             Add

@@ -12,6 +12,12 @@ function addViaButton(url: string) {
   fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 }
 
+function pasteInto(text: string) {
+  fireEvent.paste(screen.getByLabelText('Seed releases'), {
+    clipboardData: { getData: () => text },
+  })
+}
+
 describe('NewScanForm seed URL validation', () => {
   it('rejects a non-Bandcamp string and shows an alert without adding it', () => {
     renderForm()
@@ -55,6 +61,58 @@ describe('NewScanForm seed URL validation', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+  })
+})
+
+describe('NewScanForm multi-URL paste', () => {
+  it('splits a multi-line paste into individual seeds, keeping only the valid lines', () => {
+    renderForm()
+    pasteInto(
+      [
+        'https://a.bandcamp.com/album/one',
+        'not a url',
+        'https://b.bandcamp.com/track/two',
+        'https://c.bandcamp.com/album/three',
+      ].join('\n'),
+    )
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(3)
+    expect(screen.getByText('https://a.bandcamp.com/album/one')).toBeInTheDocument()
+    expect(screen.getByText('https://b.bandcamp.com/track/two')).toBeInTheDocument()
+    expect(screen.getByText('https://c.bandcamp.com/album/three')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows an alert and adds nothing when every pasted line is invalid', () => {
+    renderForm()
+    pasteInto(['nope', 'also nope'].join('\n'))
+
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+  })
+
+  it('dedupes pasted lines against already-added seeds and against each other', () => {
+    renderForm()
+    addViaButton('https://a.bandcamp.com/album/one')
+    pasteInto(
+      [
+        'https://a.bandcamp.com/album/one', // already added
+        'https://b.bandcamp.com/album/two',
+        'https://b.bandcamp.com/album/two', // duplicate within the same paste
+      ].join('\n'),
+    )
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  })
+
+  it('leaves a single-line paste to the default paste behavior instead of auto-adding', () => {
+    // Only a multi-line paste is special-cased; a single URL still requires
+    // Enter/Add, same as typing one in — this proves that branch didn't grow
+    // to swallow a plain single-URL paste too.
+    renderForm()
+    pasteInto('https://a.bandcamp.com/album/one')
+
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
   })
 })

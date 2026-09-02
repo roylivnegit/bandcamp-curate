@@ -931,18 +931,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   confirm it's gone (so it doesn't leak into the next test via the module-scope toast queue).
   136/136 frontend tests pass, tsc/lint/build clean, chunk split intact. PR: see git history.
 
-- [ ] **Paste several seed URLs into a new scan at once.** *(proposed by the hourly routine,
+- [x] **Paste several seed URLs into a new scan at once.** *(proposed by the hourly routine,
   2026-09-02, Architect+QA-approved — "sound, `fireEvent.paste` testable in jsdom, small, one
-  function")* `NewScanForm`'s seed field accepts one URL per Enter press, so seeding a scan from
-  5-10 album/track links already copied means paste-Enter, paste-Enter, repeated — a "tighter flow"
-  gap if queuing a scan from a batch of open tabs. Idea: an `onPaste` handler on the seed-url input
-  — if the pasted text contains a newline, split on lines, validate each against the existing
-  `SEED_URL_RE`, dedupe against current `seeds`, add all the valid ones in one `setSeeds` call,
-  clear the input, `preventDefault()`; a single-line paste falls through to today's unchanged
-  behavior. Verify: `fireEvent.paste` with clipboard text of 3 valid URLs + 1 line of garbage, then
-  assert the rendered seed list has exactly 3 items (only the valid ones) — pure DOM assertion, no
-  screenshot. Not built this round — a smaller, more bounded sibling proposal (the copy-success
-  toast, above) was picked instead.
+  function")* `NewScanForm`'s seed field accepted one URL per Enter press, so seeding a scan from
+  5-10 album/track links already copied meant paste-Enter, paste-Enter, repeated — a "tighter flow"
+  gap when queuing a scan from a batch of open tabs.
+  Done: `NewScanForm.tsx` gets an `onPaste` handler on the seed-url input. A single-line paste is
+  left alone (`e.clipboardData.getData('text')` has no `\r`/`\n` → the handler returns without
+  calling `preventDefault`, so it falls through to today's unchanged behavior — still requires
+  Enter/Add, same as typing one in). A multi-line paste is `preventDefault()`'d, split into lines,
+  each validated against the existing `SEED_URL_RE`, and added in one `setSeeds` call that dedupes
+  against both the already-added seeds and duplicate lines within the same paste. A paste with zero
+  valid lines shows the same `role="alert"` rejection message the single-URL path already uses,
+  rather than silently doing nothing. Covered by 4 new tests in a new `NewScanForm multi-URL paste`
+  block in `NewScanForm.test.tsx`: 3 valid lines + 1 garbage line yields exactly 3 seed-list items
+  and no alert; an all-garbage paste shows the alert and adds nothing; a paste that repeats an
+  already-added seed and repeats a line within itself still lands exactly 2 new distinct items; a
+  single-line paste adds nothing on its own (proving the multi-line branch didn't grow to swallow
+  the single-URL case too). 140/140 frontend tests pass, tsc/lint/build clean, chunk split intact.
+  PR: see git history.
 
 - [ ] **`RemoveButton({ label, onClick })` — dedupe the `×` "remove" pattern.** *(proposed by the
   hourly routine, 2026-09-02, Architect+QA-approved — "mechanical dedup, not a new-behavior change;
