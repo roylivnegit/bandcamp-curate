@@ -400,13 +400,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   proposal from the same Product round was NOT built this task (routine hit its per-run task cap)
   and is queued below: validating seed URLs before they're added to a new scan.
 
-- [ ] **Validate seed URLs before they're added.** *(proposed by the hourly routine, 2026-09-02,
-  Architect+QA-approved, not yet built)* `NewScanForm.addSeed()` accepts any non-empty string —
-  typos or non-Bandcamp links sit silently in the seed list until the backend rejects the whole
-  scan on submit. Reject anything that doesn't match a Bandcamp album/track URL shape at
-  `addSeed()` time, showing the existing `role="alert"` error styling instead of adding it to the
-  list. QA caveat: check the backend's actual URL validation (`app/bandcamp/urls.py` or wherever
-  `NewScanForm`'s submit-time validation lives today, if any) before writing the regex — don't
-  invent a stricter pattern than the API itself accepts. Verify: an RTL test types a non-Bandcamp
-  string, clicks Add, asserts the seed list stays empty and the alert text appears; a second test
-  with a valid `.../album/...` or `.../track/...` URL asserts it's added with no alert.
+- [x] **Validate seed URLs before they're added.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `NewScanForm.addSeed()` accepted any non-empty string — typos or
+  non-Bandcamp links sat silently in the seed list until the backend rejected the whole scan on
+  submit.
+  Done: added `SEED_URL_RE` in `NewScanForm.tsx`, deliberately mirroring the backend's own
+  acceptance shape — `app.crawl.scan_service._SEED_RE`
+  (`^(https?://[^/]+/(album|track)/[^/?#]+)`, any host, no bandcamp.com check) — rather than a
+  stricter, invented pattern, per the QA caveat. `addSeed()` now rejects anything that doesn't
+  match, showing the existing `role="alert"` error styling instead of adding it to the seed list;
+  a subsequent valid add clears the error. Covered by five new tests in
+  `NewScanForm.test.tsx` (a standalone RTL render, no router/api mocking needed since
+  `addSeed()`/validation has no dependency on either): a non-URL string is rejected with an
+  alert and nothing added; a well-formed but non-album/track path (`/merch/...`) is rejected the
+  same way; a valid `/album/...` URL is added with no alert; a valid `/track/...` URL is added
+  and clears an earlier error; an invalid URL submitted via Enter (not the Add button) is
+  rejected too. 52/52 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
+  history.
