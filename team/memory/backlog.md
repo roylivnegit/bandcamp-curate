@@ -800,3 +800,27 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   already fired and armed Undo restores the card, shows the error, and clears the now-stale Undo
   button. 109/109 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
+
+- [x] **Skip-to-content link.** *(proposed by the hourly routine, 2026-09-02, Architect+QA-approved)*
+  A keyboard/screen-reader user landing on any page had to tab through the whole header before
+  reaching the actual content, every single page load. `frontend/CLAUDE.md`'s "Known conflicts and
+  deferred items" flagged this as an acknowledged, deliberately-deferred gap ("revisit if nav
+  grows") — the nav has grown since (shortcuts panel, roving tabindex, several keyboard-only
+  affordances), so it was worth picking up.
+  Done, per QA's scoping notes: one shared signed-in shell (`App.tsx`, wrapping `AppHeader` + the
+  routed pages), so the skip link and its target landmark live there once, not per page.
+  `App.tsx` now wraps `<Suspense><Routes>…</Routes></Suspense>` in `<main id="main-content">`, with
+  a `<a className="sr-only" href="#main-content">Skip to content</a>` as the very first element in
+  the signed-in tree, ahead of `<AppHeader />`. `ScanFeedPage`'s own inner `<main>` (which only ever
+  mounted inside `{showFeed && …}`, so it couldn't have been the skip target on its own) is now a
+  plain `<div>` — two nested `<main>` landmarks would have been invalid and confused assistive tech;
+  `ScanListPage`'s `<div className="wrap">` was never a `<main>` to begin with, so it needed no
+  change. New `.sr-only` utility in `base.css` (clip-based, not `display:none`, so it's still
+  reachable in the tab order) that reveals itself — fixed position, padded, `var(--surface)`
+  background — on `:focus`, reusable for future visually-hidden-until-focused content, not just this
+  link. Covered by a new `skip to content` describe block in `feed.test.tsx`, mounting the real
+  signed-in shell (same pattern as "focus on route change"/"document title"): the link renders with
+  `href="#main-content"`, an element with that id exists and is a real `<main>`, and the link
+  precedes the header (`role="banner"`) in DOM order — the third assertion is what actually proves
+  it's reachable by a single Tab from page load, not merely present somewhere on the page. 110/110
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.

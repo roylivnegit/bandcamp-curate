@@ -459,6 +459,33 @@ describe('document title', () => {
   })
 })
 
+describe('skip to content', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('offers a skip-to-content link ahead of the header, targeting the shared main landmark', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans', [fakeScan]],
+    ])
+    renderApp('/scans')
+
+    const skipLink = await screen.findByRole('link', { name: 'Skip to content' })
+    expect(skipLink).toHaveAttribute('href', '#main-content')
+
+    const main = document.getElementById('main-content')
+    expect(main?.tagName).toBe('MAIN')
+
+    // Must be reachable by a single Tab from page load, before the header's
+    // own content — not just present somewhere in the document.
+    const header = screen.getByRole('banner')
+    expect(skipLink.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
 describe('undo after like/block', () => {
   beforeEach(() => {
     localStorage.clear()
