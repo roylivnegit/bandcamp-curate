@@ -7,6 +7,7 @@ import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '.
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
 import { count, plural } from '../../lib/format'
+import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { ColdStartPanel } from './ColdStartPanel'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
@@ -46,6 +47,7 @@ export function ScanFeedPage() {
   const { includeTag, setLabel } = filters
 
   const [scan, setScan] = useState<ScanDetail | null>(null)
+  useDocumentTitle(scan?.name)
   const [rows, setRows] = useState<Recommendation[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [facetTags, setFacetTags] = useState<Facet[]>([])
