@@ -666,6 +666,33 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   makes the stale `If-None-Match` return a fresh `200` instead. 241/241 backend tests pass (239 +
   2 new), ruff clean. PR: see git history.
 
+- [x] **`POST /api/blacklist` silently no-ops on a past `expires_at`.** *(found by the hourly
+  routine, 2026-09-02, Product read the actual endpoint code rather than brainstorming —
+  Architect+QA-approved)* `BlockIn.expires_at` had no lower-bound check. A past `expires_at` (a
+  date-picker typo, a client bug) created a row and returned a normal-looking `200`, but both
+  `list_blocked` and the curation exclusion query filter on `expires_at > now()` — so the band was
+  never actually excluded from recs and never showed up as blocked either. The caller believes
+  they blocked something; nothing happened, no error anywhere.
+  Done: `BlockIn` gets a `model_validator(mode="after")` (matching `LikeIn`'s existing pattern in
+  `likes.py`) rejecting a non-null `expires_at` that isn't strictly in the future — a naive
+  datetime (no tzinfo) is treated as UTC before comparing, so a bare `"2020-01-01T00:00:00"` is
+  still caught, not silently accepted as some other timezone's future. Pydantic turns the
+  `ValueError` into FastAPI's standard `422`, same as `LikeIn`'s existing one-of-album/track
+  validator. Covered by `test_block_rejects_past_expires_at`: posting a 2020 `expires_at` returns
+  `422` and confirms no row appears in `GET /api/blacklist` afterward — the existing
+  `test_block_with_expiry_round_trips` (a real future date) is untouched and still passes.
+  242/242 backend tests pass (241 + 1 new), ruff clean. PR: see git history.
+
+- [ ] **`POST /api/scans` seed list has no size cap.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved)* `scan_service.create_scan` takes `urls: list[str]` and
+  inserts one `ScanSeed` row per de-duped URL with no upper bound — the same class of problem
+  `Settings.crawl_max_frontier_size` was added to solve for frontier growth *during* a crawl (see
+  CLAUDE.md "Immediate next steps" #1), but that cap doesn't cover the initial seed batch, which
+  lands straight in `ScanSeed` before crawling even starts. Add `Settings.max_scan_seeds` (default
+  e.g. 500), checked in `create_scan`, raising `ValueError` → the existing 400 handler in
+  `scans.py`. Verify: `pytest` — posting 501 seed URLs to `POST /api/scans` returns `400`; posting
+  500 still succeeds.
+
 - [x] **Per-user rate limit on `POST /api/recommendations/recompute`.** *(proposed by the hourly
   routine, 2026-09-02, Architect+QA-approved)* `app/api/feed.py`'s recompute endpoint does a full
   unowned-catalog scoring pass with zero throttling today — confirmed live gap, not speculative.

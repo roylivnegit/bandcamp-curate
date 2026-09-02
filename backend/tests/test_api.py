@@ -315,6 +315,26 @@ async def test_block_with_expiry_round_trips(client: AsyncClient) -> None:
     assert (await client.post(f"/api/blacklist/{band_id}/unblock")).status_code == 200
 
 
+async def test_block_rejects_past_expires_at(client: AsyncClient) -> None:
+    # A past expires_at would create a row that both `list_blocked` and the
+    # curation exclusion query immediately filter out as expired — a 200 that
+    # looks like a block but excludes nothing and shows up nowhere. Rejected
+    # at the request-validation layer instead.
+    rows = (await client.get("/api/recommendations")).json()
+    band_id = rows[0]["band_id"]
+
+    r = await client.post(
+        "/api/blacklist",
+        json={"band_id": band_id, "expires_at": "2020-01-01T00:00:00+00:00"},
+    )
+    assert r.status_code == 422
+
+    # Never created: neither an active block nor a (silently-inactive-by-being-
+    # -expired) row shows up.
+    blocked = (await client.get("/api/blacklist")).json()
+    assert band_id not in {b["band_id"] for b in blocked}
+
+
 async def test_label_filter(client: AsyncClient) -> None:
     rows = (await client.get("/api/recommendations")).json()
     band_id = rows[0]["band_id"]
