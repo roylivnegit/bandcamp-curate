@@ -3,6 +3,12 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import { seedKind } from '../../lib/format'
 
+// Mirrors the backend's own acceptance shape (`app.crawl.scan_service._SEED_RE`):
+// any host, path starting /album/<slug> or /track/<slug>. Deliberately no
+// bandcamp.com host check here — the API doesn't require one either, so this
+// must not reject anything the API would accept.
+const SEED_URL_RE = /^https?:\/\/[^/]+\/(album|track)\/[^/?#]+/i
+
 export function NewScanForm({
   onCreated,
   onCancel,
@@ -19,6 +25,11 @@ export function NewScanForm({
   function addSeed() {
     const u = seedUrl.trim()
     if (!u) return
+    if (!SEED_URL_RE.test(u)) {
+      setError('That doesn’t look like a Bandcamp album or track URL (e.g. https://artist.bandcamp.com/album/name).')
+      return
+    }
+    setError('')
     setSeeds((prev) => (prev.includes(u) ? prev : [...prev, u]))
     setSeedUrl('')
   }
