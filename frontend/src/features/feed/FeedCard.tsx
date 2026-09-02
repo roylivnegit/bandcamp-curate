@@ -1,8 +1,9 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
 import { bandcampHandle, plural } from '../../lib/format'
+import { isVisited, markVisited } from '../../lib/visited'
 
 /** `exiting` drives the evaporate animation the old UI had: a liked/blocked card
  *  dissolves upward instead of vanishing, so you can see what you just acted on.
@@ -46,6 +47,11 @@ export const FeedCard = memo(function FeedCard({
   const handle = bandcampHandle(rec.url)
   const tags = rec.reasons.matched_tags ?? []
   const seedTags = rec.reasons.seed_tags ?? []
+  // `cardId` is already a stable per-item key (see ScanFeedPage's `cardIdOf`),
+  // so it doubles as the "seen" storage key with nothing extra to compute.
+  // Local state (not a prop) because clicking "Bandcamp ↗" only changes what
+  // this one card knows — nothing the parent tracks.
+  const [visited, setVisited] = useState(() => isVisited(cardId))
 
   /** Triaging a long feed is mouse-only otherwise. Scoped to the card via a
    *  single listener on the article — any focused element inside it (a chip,
@@ -71,6 +77,7 @@ export const FeedCard = memo(function FeedCard({
       className={`card${exiting ? ` ${exiting}ing` : ''}`}
       tabIndex={active ? 0 : -1}
       onKeyDown={onCardKeyDown}
+      data-visited={visited ? 'true' : undefined}
     >
       <div className="score" title="Recommendation score">
         <b className="num">{rec.score.toFixed(1)}</b>
@@ -134,10 +141,20 @@ export const FeedCard = memo(function FeedCard({
             </button>
           )}
           {rec.url && (
-            <a className="listen" href={rec.url} target="_blank" rel="noopener noreferrer">
+            <a
+              className="listen"
+              href={rec.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => {
+                markVisited(cardId)
+                setVisited(true)
+              }}
+            >
               Bandcamp ↗
             </a>
           )}
+          {visited && <span className="seen-tag">seen</span>}
         </div>
       </div>
     </article>
