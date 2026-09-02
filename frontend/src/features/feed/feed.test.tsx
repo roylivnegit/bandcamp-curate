@@ -182,6 +182,38 @@ describe('scan feed', () => {
 
     expect(await screen.findByText(/artist:/)).toBeInTheDocument()
   })
+
+  it('clears every stacked filter with one "Clear all filters" click', async () => {
+    mockFetch(feedRoutes())
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+
+    // Stack two filter facets (a genre tag, an artist) plus the item-type
+    // segment, which isn't a pill but is part of reset()'s job too.
+    await user.click(await screen.findByRole('button', { name: 'psybient' }))
+    await user.click(await screen.findByRole('button', { name: /Minds of Infinity/ }))
+    await user.click(screen.getByRole('button', { name: 'Albums' }))
+
+    expect(await screen.findByRole('button', { name: /✓ include.*psybient/ })).toBeInTheDocument()
+    expect(screen.getByText(/artist:/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Clear all filters' }))
+
+    expect(screen.queryByRole('button', { name: /✓ include.*psybient/ })).not.toBeInTheDocument()
+    expect(screen.queryByText(/artist:/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('does not show "Clear all filters" for a single active facet', async () => {
+    mockFetch(feedRoutes())
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'psybient' }))
+    expect(await screen.findByRole('button', { name: /✓ include.*psybient/ })).toBeInTheDocument()
+
+    expect(screen.queryByRole('button', { name: 'Clear all filters' })).not.toBeInTheDocument()
+  })
 })
 
 describe('feed while the scan is still running', () => {
