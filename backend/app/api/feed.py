@@ -77,6 +77,12 @@ class RecommendationOut(BaseModel):
     band_name: str | None
     url: str | None
     reasons: Reasons
+    # The scan's `recompute_generation` at fetch time — see migration 0013.
+    # Every row in one response carries the same value: `store_recommendations`
+    # clears + inserts inside one transaction, so a reader never sees a mix of
+    # two generations. Lets the frontend tell "I'm still holding the ranking
+    # this page came from" from "a recompute already replaced it".
+    recompute_generation: int = 0
 
 
 class Facet(BaseModel):
@@ -116,6 +122,7 @@ class StatsOut(BaseModel):
     requests_used: int
     request_budget: int
     cold_start: ColdStartOut | None = None
+    recompute_generation: int | None = None
 
 
 async def _count(session: AsyncSession, stmt) -> int:
@@ -239,18 +246,21 @@ async def stats(
             session, select(func.count()).select_from(Follow).where(Follow.fan_id == me)
         )
     cold_start = None
-    if sid is not None and me is not None:
+    recompute_generation = None
+    if sid is not None:
         scan = await session.get(Scan, sid)
         if scan is not None:
-            diag = await cold_start_diagnostics(session, scan, current_user)
-            cold_start = ColdStartOut(
-                neighbour_count=diag.neighbour_count,
-                candidates=diag.candidates,
-                excluded_owned=diag.excluded_by_reason["owned"],
-                excluded_wishlisted=diag.excluded_by_reason["wishlisted"],
-                excluded_followed=diag.excluded_by_reason["followed"],
-                excluded_blacklisted=diag.excluded_by_reason["blacklisted"],
-            )
+            recompute_generation = scan.recompute_generation
+            if me is not None:
+                diag = await cold_start_diagnostics(session, scan, current_user)
+                cold_start = ColdStartOut(
+                    neighbour_count=diag.neighbour_count,
+                    candidates=diag.candidates,
+                    excluded_owned=diag.excluded_by_reason["owned"],
+                    excluded_wishlisted=diag.excluded_by_reason["wishlisted"],
+                    excluded_followed=diag.excluded_by_reason["followed"],
+                    excluded_blacklisted=diag.excluded_by_reason["blacklisted"],
+                )
     return StatsOut(
         recommendations=await _count(
             session,
@@ -269,6 +279,7 @@ async def stats(
         requests_used=await requests_used(session),
         request_budget=settings.crawl_max_requests,
         cold_start=cold_start,
+        recompute_generation=recompute_generation,
     )
 
 
@@ -319,6 +330,14 @@ async def recommendations(
     stmt = stmt.where(Recommendation.scan_id == sid).limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
+    # One scalar lookup, reused for every row in this response — all of them
+    # necessarily belong to the same generation (store_recommendations clears +
+    # inserts inside one transaction), so there's nothing to join per-row.
+    generation = (
+        (await session.execute(select(Scan.recompute_generation).where(Scan.id == sid)))
+        .scalars().first()
+        if sid is not None else None
+    ) or 0
     return [
         RecommendationOut(
             rank=offset + i + 1,
@@ -331,6 +350,7 @@ async def recommendations(
             band_name=r.band_name,
             url=r.url,
             reasons=Reasons(**(r.reasons or {})),
+            recompute_generation=generation,
         )
         for i, r in enumerate(rows)
     ]

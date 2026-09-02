@@ -25,6 +25,9 @@ export interface Recommendation {
   band_name: string | null
   url: string | null
   reasons: Reasons
+  /** The scan's recompute_generation at fetch time — every row in one
+   *  response shares it (see backend migration 0013). */
+  recompute_generation: number
 }
 
 export interface Facet {
@@ -51,6 +54,7 @@ export interface Stats {
   liked: number
   requests_used: number
   request_budget: number
+  recompute_generation: number | null
 }
 
 export interface ScanSeed {
@@ -70,6 +74,10 @@ export interface Scan {
   rec_count: number
   last_run_at: string | null
   stats: { recommendations?: number; credits?: number }
+  /** Bumped on every recompute — see backend migration 0013. Changes strictly
+   *  more often than `stats.recommendations`: a swap (one item in, one out)
+   *  reorders the feed without moving the total count. */
+  recompute_generation: number
 }
 
 export interface ScanDetail extends Scan {

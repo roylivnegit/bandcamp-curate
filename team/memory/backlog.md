@@ -166,21 +166,27 @@ ones.
   `frontend/` reads `cold_start` yet. A follow-up can add the "why is my feed empty" UI on
   top of this without touching the backend again.
 
-- [ ] **The feed can silently reflow under a user who's mid-scroll.** *(proposed by the hourly
-  routine, 2026-09-02)* Because `crawl_curate_each_slice` does wholesale clear+insert while a
-  scan is running and the React feed re-fetches on `stats.recommendations` changes, a user
-  paging with offset/limit can see items shift, repeat, or vanish between requests as ranking
-  changes underneath them — worse the longer a scan runs. Add a monotonic
-  `recompute_generation` counter, bumped once per curate call, returned in `/api/stats` and
-  `/api/recommendations`; frontend resets pagination to page 0 (and shows a "list updated"
-  affordance) only when the generation it's holding differs from the one just fetched.
-  Architect note: the counter must be **persisted** (a DB column, e.g. on `scans`), not an
-  in-process int — `crawl_curate_each_slice` runs in worker processes distinct from the API
-  process, so a module-level counter would desync across them; once persisted it's trivial.
-  Verify: pytest — two calls to `compute_recommendations` bump the counter and old
-  offset-based reads return a stable snapshot tagged with the generation they were computed
-  under; vitest — feed component given a stats poll with a changed generation calls its
-  "reset to page 0" handler, and does not call it when generation is unchanged.
+- [x] **The feed can silently reflow under a user who's mid-scroll.** *(proposed by the hourly
+  routine, 2026-09-02)* Done: `scans.recompute_generation` (migration `0013`, guarded), bumped
+  by `curation.engine.store_recommendations` on every call — the one place every re-curate path
+  (mid-crawl slices, finalize, the API, the CLI) already goes through. Persisted, not an
+  in-process int, per the architect note (slices re-curate from ARQ worker processes distinct
+  from the API process). Returned in `GET /api/scans/{id}` (`ScanOut.recompute_generation`,
+  what `ScanFeedPage` actually polls), `GET /api/stats`, and `GET /api/recommendations` (every
+  row in one response carries the scan's generation at fetch time — they're all from the same
+  transaction). `ScanFeedPage`'s page-0 reload effect now re-arms on `scan.recompute_generation`
+  instead of `stats.recommendations`: strictly more often, since a swap (one item in, one out)
+  bumps the generation without moving the total, which the old count-only signal missed
+  entirely. A genuine reflow (the generation changed after the reader already had a page loaded,
+  not the scan's first-ever observed generation) also sets a dismissible "list updated" notice
+  (`.banner.reflow`) so the silent reset the old code already did for `recCount` changes doesn't
+  stay silent for this one. Covered by `test_curate_bumps_recompute_generation_every_call`,
+  `test_recommendations_carry_recompute_generation` (backend — the persisted counter and the
+  per-response stable snapshot), and two vitest cases in `feed.test.tsx` ("feed reflow notice":
+  a poll landing a new generation resets to page 0 and shows/dismisses the notice; a poll
+  landing the same generation does neither) using `vi.useFakeTimers` to drive the real 4s poll
+  deterministically. 237/237 backend tests pass, ruff clean; 25/25 frontend tests pass (stable
+  across repeated runs), lint/tsc/build clean. PR: see git history.
 
 - [x] **Blacklist is all-or-nothing forever.** *(proposed by the hourly routine, 2026-09-02)*
   Merged same run: PR #33 (`auto/blacklist-expiry`), squash-merged into main, CI green

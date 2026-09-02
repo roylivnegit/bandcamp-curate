@@ -178,6 +178,27 @@
   font-size: var(--fs-md);
 }
 
+/* ── list-updated notice ─────────────────────────────────────────────────── */
+
+.banner.reflow {
+  margin-bottom: var(--s-3);
+}
+
+.banner.reflow .rm {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  color: var(--muted);
+}
+
+.banner.reflow .rm:hover {
+  background: var(--line);
+  color: var(--text);
+}
+
 /* ── feed card ───────────────────────────────────────────────────────────── */
 
 .card {

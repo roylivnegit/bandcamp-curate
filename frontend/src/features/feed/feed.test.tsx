@@ -1,7 +1,8 @@
-import { act, screen } from '@testing-library/react'
+import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { SCAN_POLL_MS } from '../../config'
 import { fakeMe, fakeRec, fakeScan, mockFetch, renderApp } from '../../test/renderApp'
 
 const signedIn = () => localStorage.setItem('crate-digger.token', 'tok')
@@ -223,5 +224,89 @@ describe('feed while the scan is still running', () => {
     renderApp('/scans/1')
 
     expect(await screen.findByText(/queued/i)).toBeInTheDocument()
+  })
+})
+
+describe('feed reflow notice', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+  /** A running scan whose `/api/scans/1` generation is controlled by `gen()`,
+   *  so a test can change what the *next* poll returns before advancing the
+   *  clock. Everything else behaves like a normal one-item feed. */
+  function mockPollingScan(gen: () => number) {
+    return vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1')) {
+        return json({
+          ...fakeScan,
+          status: 'running',
+          stats: { recommendations: 1 },
+          recompute_generation: gen(),
+          seeds: [],
+        })
+      }
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('resets to page 0 and shows a notice when a poll lands a new generation', async () => {
+    let generation = 1
+    const fetchMock = mockPollingScan(() => generation)
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(screen.queryByText(/list updated/i)).not.toBeInTheDocument()
+    const recFetchesBefore = fetchMock.mock.calls.filter((c) =>
+      String(c[0]).includes('/api/recommendations') && !String(c[0]).includes('count'),
+    ).length
+
+    // The scan reflowed underneath the reader — same total, different ranking
+    // — so the next poll comes back with a new generation.
+    generation = 2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    expect(await screen.findByText(/list updated/i)).toBeInTheDocument()
+    const recFetchesAfter = fetchMock.mock.calls.filter((c) =>
+      String(c[0]).includes('/api/recommendations') && !String(c[0]).includes('count'),
+    ).length
+    expect(recFetchesAfter).toBeGreaterThan(recFetchesBefore) // page 0 was re-fetched
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText(/list updated/i)).not.toBeInTheDocument()
+  })
+
+  it('does not show the notice when a poll lands the same generation', async () => {
+    const generation = 1
+    const fetchMock = mockPollingScan(() => generation)
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    expect(screen.queryByText(/list updated/i)).not.toBeInTheDocument()
   })
 })
