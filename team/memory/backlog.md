@@ -588,3 +588,43 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   across repeated runs), tsc/lint/build clean (the new files land in the eagerly-loaded shared
   chunk via `App.tsx`, not a lazy route chunk — expected, since `ToastStack` must be mounted
   before either route is). PR: see git history.
+
+- [x] **Live-updating relative timestamps.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Scan cards show `ago(scan.last_run_at)` ("3m ago"), but the text only
+  updates when something else forces a re-render — `ScanListPage`'s poll stops once every scan is
+  `done`, so a tab left open on a finished scan list silently goes stale.
+  Done: new `components/RelativeTime.tsx` — owns its own `window.setInterval`
+  (`RELATIVE_TIME_REFRESH_MS`, 30s, new in `config.ts`), effect-scoped per rule 7 in
+  `frontend/CLAUDE.md` (closure `id`, not a ref, so StrictMode's double-invoke can't leak the
+  first timer). Renders `ago(iso)`; no timer at all for a `null` iso, since there's nothing to
+  advance. Swapped in for the one call site, `ScanListPage.tsx`'s `{ago(scan.last_run_at)}` →
+  `<RelativeTime iso={scan.last_run_at} />`. Covered by four new tests in
+  `RelativeTime.test.tsx` (standalone RTL render, no router/api mocking needed): text advances
+  from "just now" to "1m ago" after `RELATIVE_TIME_REFRESH_MS` of fake-timer advance with no prop
+  change or remount; a `null` iso starts no interval and renders nothing; unmount clears the
+  interval; the boundary crossing lands exactly on `RELATIVE_TIME_REFRESH_MS`, not some other
+  cadence. 84/84 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
+  lands inside the `ScanListPage` chunk, its only importer). PR: see git history.
+
+- [ ] **Pending-state microcopy on like/block.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved with one caveat)* `FeedCard`'s like/block buttons go `disabled` while
+  `busy` but keep the same label ("♥ like"), so a click reads as unresponsive for roughly
+  `CARD_EXIT_MS` before the card animates out. Swap to "Liking…" / "Blocking…" while busy.
+  **Caveat from QA**: `busy` is currently a single boolean per card (`busyKeys: Set<string>` in
+  `ScanFeedPage.tsx`), not per-action, so it can't yet distinguish "liking" from "blocking" —
+  needs upgrading to carry which action, mirroring the existing `exiting: Record<string,
+  'like'|'block'>` shape already in that file. Still small, self-contained, and testable purely
+  with RTL role/name assertions (`busy=true` → button reads "Liking…"/"Blocking…" and "♥ like" is
+  gone; `busy=false` → the reverse). Not yet built.
+
+- [ ] **"Back to top" affordance for long feeds.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* The feed grows to hundreds of rows via "load more," but there's no fast
+  way back to the filter bar/top once scrolled deep. Add a `<ScrollTopButton>` that renders only
+  past a scroll threshold (~600px), and on click calls `window.scrollTo({top:0,
+  behavior:'smooth'})` plus refocuses the page heading (the existing `headingRef.current?.focus()`
+  pattern already used in both `ScanListPage`/`ScanFeedPage`). QA confirmed `useResumeScroll.ts`
+  already proves `window.scrollY`/`window.scrollTo`/a scroll listener are jsdom-testable in this
+  repo, so this needs no new testing approach. Verify: RTL — dispatch a `scroll` event below
+  threshold, assert the button is absent; above threshold, assert it's present; click it, assert
+  a mocked `window.scrollTo` was called with `{top:0,...}` and that `document.activeElement` is
+  the heading. Not yet built.

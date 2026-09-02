@@ -29,3 +29,7 @@ export const COPY_LINK_FEEDBACK_MS = 2000
 
 /** How long a toast (see lib/toast.ts) stays up before auto-dismissing, in ms. */
 export const TOAST_DURATION_MS = 4000
+
+/** How often `<RelativeTime>` re-renders itself to keep "Xm ago" text current
+ *  on a page that isn't otherwise polling. */
+export const RELATIVE_TIME_REFRESH_MS = 30000
