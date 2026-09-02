@@ -1063,3 +1063,19 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `data-visited="true"` + a small "seen" label when present. Verify: unit-test the storage helper
   (add/has/cap eviction) directly; RTL test that clicking the link then re-rendering the card yields
   `getByText('seen')` / `toHaveAttribute('data-visited', 'true')`.
+
+- [x] **No way to delete a scan from the UI.** *(found by the hourly routine, 2026-09-02, via direct
+  code audit — `api.deleteScan`/`DELETE /api/scans/{id}` already existed and worked, but nothing in
+  the frontend ever called it: a mis-seeded or abandoned custom scan could only be removed by hand
+  against the database)* Added `DeleteScanButton` (`components/DeleteScanButton.tsx`), wired into the
+  feed page's nav bar next to the scan title. Renders nothing for the `collection` scan (the backend
+  itself refuses to delete that one — this mirrors the rule instead of duplicating it). Two clicks,
+  not a native `confirm()` (this app doesn't use those anywhere else): the first arms a "Confirm
+  delete?" state that auto-reverts after 4s if never followed up; the second calls the API, toasts
+  success, and navigates back to `/scans`; a failed delete toasts the server's error and leaves the
+  scan in place. Verify: 5 new RTL tests in `feed.test.tsx`'s new "delete scan" block — no button on
+  the collection scan; first click arms confirm and it reverts on its own after the window closes;
+  "Cancel" reverts immediately and never calls the API; confirming calls `DELETE` and lands on
+  `/scans`; a failed `DELETE` shows the error via `role="alert"` and leaves the scan/route in place.
+  164/164 frontend tests pass (159 + 5 new), tsc/lint/build clean (chunk split intact — the button
+  bundles into the existing `ScanFeedPage` chunk, its only importer). PR: see git history.

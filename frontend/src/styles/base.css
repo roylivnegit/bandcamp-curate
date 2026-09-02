@@ -210,6 +210,17 @@ a {
   border-color: var(--accent);
 }
 
+.btn.ghost.danger {
+  color: var(--danger);
+  border-color: var(--danger-dim);
+}
+
+.btn.ghost.danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+  filter: none;
+}
+
 .btn.block {
   width: 100%;
   padding: 12px 16px;

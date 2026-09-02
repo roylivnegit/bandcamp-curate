@@ -5,6 +5,7 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '../../api/types'
 import { BulkActionBar } from '../../components/BulkActionBar'
+import { DeleteScanButton } from '../../components/DeleteScanButton'
 import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
@@ -688,6 +689,7 @@ export function ScanFeedPage() {
           {scan?.name ?? 'Loading…'}
           {scan && <span className="ktag">{scan.kind}</span>}
         </h1>
+        {scan && <DeleteScanButton scanId={scan.id} scanName={scan.name} kind={scan.kind} />}
       </nav>
 
       {scan && scan.status !== 'done' && (

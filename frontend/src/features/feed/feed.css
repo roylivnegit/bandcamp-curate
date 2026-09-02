@@ -38,6 +38,12 @@
   white-space: nowrap;
 }
 
+.feednav .delscan {
+  display: flex;
+  gap: var(--s-2);
+  margin-left: auto;
+}
+
 .scantitle .ktag {
   font-family: var(--mono);
   font-size: var(--fs-micro);

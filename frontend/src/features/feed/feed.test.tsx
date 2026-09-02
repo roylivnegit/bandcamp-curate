@@ -495,6 +495,109 @@ describe('scan feed', () => {
   })
 })
 
+describe('delete scan', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  /** `deleteOk: false` fails the DELETE call (a 400, mirroring the backend's
+   *  real "the collection scan can't be deleted" response shape) so a test
+   *  can exercise the error path without touching the collection-scan guard,
+   *  which is rendered client-side instead (see the "collection scans" test
+   *  below). */
+  function mockCustomScan({ deleteOk = true } = {}) {
+    return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1') && init?.method === 'DELETE') {
+        return deleteOk ? json({ deleted: 1 }) : json({ detail: 'nope' }, 400)
+      }
+      if (url.includes('/api/scans/1')) return json({ ...fakeScan, id: 1, kind: 'custom', seeds: [] })
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('does not render for the collection scan', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }], // fakeScan defaults to kind: 'collection'
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    await screen.findByText('Eyes of Infinity')
+    expect(screen.queryByRole('button', { name: /Delete scan/ })).not.toBeInTheDocument()
+  })
+
+  it('requires a second click, and reverts if the second click never comes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal('fetch', mockCustomScan())
+
+    renderApp('/scans/1')
+    const deleteBtn = await screen.findByRole('button', { name: 'Delete scan "My collection"' })
+
+    fireEvent.click(deleteBtn)
+    expect(await screen.findByRole('button', { name: 'Confirm delete?' })).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    expect(screen.queryByRole('button', { name: 'Confirm delete?' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+  })
+
+  it('"Cancel" reverts immediately without ever calling the API', async () => {
+    const fetchMock = mockCustomScan()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
+  })
+
+  it('confirming deletes the scan and returns to the scans list', async () => {
+    vi.stubGlobal('fetch', mockCustomScan())
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete?' }))
+
+    await waitFor(() => expect(currentLocation().pathname).toBe('/scans'))
+  })
+
+  it('a failed delete shows an error and leaves the scan in place', async () => {
+    vi.stubGlobal('fetch', mockCustomScan({ deleteOk: false }))
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete?' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('nope')
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+    expect(currentLocation().pathname).toBe('/scans/1')
+  })
+})
+
 describe('focus on route change', () => {
   beforeEach(() => {
     localStorage.clear()
