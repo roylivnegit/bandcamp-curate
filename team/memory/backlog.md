@@ -88,9 +88,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   view can't be shared or bookmarked, and browser-back silently drops it. Move it onto
   `useSearchParams`. Same source in `frontend/CLAUDE.md`.
 
-- [ ] **Verify contrast on hint text.** `--faint: #667085` on `--surface: #141823` is the
+- [x] **Verify contrast on hint text.** `--faint: #667085` on `--surface: #141823` is the
   likeliest AA failure in the palette and nobody has measured it. Compute the real ratio; if it
   fails, adjust the token once, everywhere. Same source.
+  Done: it failed. `--faint` on `--surface`/`--surface-2` (the two backgrounds it renders text
+  against — `.via`, `.field-hint`, `.score span`, `.eyebrow`/`.label`, input placeholders, all
+  9-13px so none qualify for WCAG's "large text" 3:1 exception) measured 3.56:1 / 3.23:1, below
+  the 4.5:1 AA minimum for normal text. Retuned the token to `#7e889c` (same hue, lightened) —
+  now 4.97:1 / 4.51:1 against those two, 5.49:1 against `--bg`, and still clearly darker than
+  `--muted` so the two-tier hierarchy holds. Added `lib/contrast.ts` (a small WCAG relative-
+  luminance/contrast-ratio helper — no new dependency) and `lib/contrast.test.ts`, which reads
+  `tokens.css` itself via a Vite `?raw` import rather than a hand-copied hex, so the test fails
+  the moment the token drifts back below 4.5:1 rather than only catching a value computed once by
+  hand. Required a narrow `vite.config.ts` tweak: `test.css` was `false` (mocks out all CSS
+  content in tests, for speed), changed to `{ include: [/\.css\?raw$/] }` so an explicit `?raw`
+  import still gets the real file text while ordinary side-effect CSS imports stay mocked
+  everywhere else. 28/28 frontend tests pass, tsc/lint/build clean. PR: see git history.
 
 - [~] **Make the order mean something, not the length.** Roy wants a long list kept — do not
   cut the feed down. The actual problem is ranking, not volume: work out whether the ranking
