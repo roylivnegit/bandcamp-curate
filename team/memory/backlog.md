@@ -951,7 +951,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   the single-URL case too). 140/140 frontend tests pass, tsc/lint/build clean, chunk split intact.
   PR: see git history.
 
-- [ ] **`RemoveButton({ label, onClick })` — dedupe the `×` "remove" pattern.** *(proposed by the
+- [x] **`RemoveButton({ label, onClick })` — dedupe the `×` "remove" pattern.** *(proposed by the
   hourly routine, 2026-09-02, Architect+QA-approved — "mechanical dedup, not a new-behavior change;
   testable via `tsc` + one render test")* The smaller slice of an earlier-rejected "shared
   Button/Badge primitives" proposal (that one needed migrating 8 call sites and a visual pass — cut
@@ -965,3 +965,15 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `aria-label` (a deliberate compile-error check, or at minimum confirm the type signature makes it
   impossible to omit); one render test per usage confirming the accessible name comes through
   unchanged. Not built this round — left queued behind the paste-multiple-URLs proposal above.
+  Done: new `components/RemoveButton.tsx` — `{ label, onClick }`, `label` required (not optional),
+  so a call site missing it fails `tsc` rather than only an a11y audit. Swapped in at all 3 sites:
+  `FilterBar.tsx`'s `Pill` "remove filter" button, `FilterBar.tsx`'s "Clear artist filter" button,
+  and `NewScanForm.tsx`'s seed-list remove button. No CSS changes needed — `.rm` styling in
+  `base.css` is scoped by ancestor selector (`.fpill .rm`, `.seed .rm`), not the component itself.
+  `ToastStack`'s dismiss `×` stayed untouched, per the proposal's own scoping (a distinct semantic).
+  Covered by a new `RemoveButton.test.tsx` (accessible name renders, `onClick` fires); the existing
+  per-site tests (`FilterBar`/`NewScanForm` coverage in `feed.test.tsx`/`NewScanForm.test.tsx`)
+  already assert the same buttons by accessible name and needed no changes, confirming the swap was
+  behavior-preserving. 141/141 frontend tests pass (140 + 1 new), tsc/lint/build clean — the shared
+  component lands in its own small chunk (used by both lazy routes), route chunk split intact. PR:
+  see git history.
