@@ -644,14 +644,27 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   focus. 85/85 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
   lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
 
-- [ ] **Conditional GET (ETag) on `/api/recommendations` and `/api/facets`.** *(proposed by the
+- [x] **Conditional GET (ETag) on `/api/recommendations` and `/api/facets`.** *(proposed by the
   hourly routine, 2026-09-02, Architect+QA-approved with a correction)* Every feed poll re-transfers
-  the full payload even when nothing changed. Set `ETag: gen-{scan_id}-{generation}` on both
-  responses (reusing `scans.recompute_generation` — no new state, corrected from the Product
-  proposal's global `gen-{generation}`, since generation is per-scan); a matching `If-None-Match`
-  returns `304` with no body. Verify: `pytest` — GET recs, assert `ETag: gen-{scan_id}-N`; repeat
-  with `If-None-Match` set to that value, assert `304` + empty body; recompute (bumps generation),
-  repeat, assert `200` with a new ETag.
+  the full payload even when nothing changed.
+  Done: `ETag: "gen-{scan_id}-{generation}"` (quoted per the HTTP ETag grammar; `{scan_id}` is the
+  literal string `none` for a brand-new user with no scan yet) on both responses, computed by a new
+  `_scan_generation()`/`_generation_etag()` pair in `app/api/feed.py` that reuses
+  `scans.recompute_generation` — no new state, per QA's correction that generation is per-scan, not
+  global. A matching `If-None-Match` short-circuits to a real `304` with an empty body (returning a
+  raw `Response(status_code=304, ...)`, which FastAPI passes through unvalidated even though the
+  route declares a `response_model` — returning `[]`/`{}` instead would have serialized to a
+  non-empty JSON body, which a `304` must not carry). For `/recommendations` specifically, the
+  generation is computed *before* the filtered/joined main query runs, so a cache hit skips that
+  query entirely rather than only skipping re-serialization — the actual point of the
+  optimization. `/facets`'s `seed_tags` facet (the caller's own album tags) isn't strictly tied to
+  `recompute_generation` and could in theory go stale without a recompute — noted in a comment,
+  accepted as the same scope this scan's other read endpoints already share, not worth a second
+  cache key for. Covered by `test_recommendations_etag_conditional_get` and
+  `test_facets_etag_conditional_get`: first GET returns a non-empty ETag; replaying it via
+  `If-None-Match` gets `304` with `r.content == b""`; a recompute in between changes the ETag and
+  makes the stale `If-None-Match` return a fresh `200` instead. 241/241 backend tests pass (239 +
+  2 new), ruff clean. PR: see git history.
 
 - [x] **Per-user rate limit on `POST /api/recommendations/recompute`.** *(proposed by the hourly
   routine, 2026-09-02, Architect+QA-approved)* `app/api/feed.py`'s recompute endpoint does a full
