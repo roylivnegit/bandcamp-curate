@@ -8,6 +8,7 @@ import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
 import { count, plural } from '../../lib/format'
+import { useDensity } from '../../lib/useDensity'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { ColdStartPanel } from './ColdStartPanel'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
@@ -47,6 +48,7 @@ export function ScanFeedPage() {
   const scanId = Number.isInteger(parsed) && parsed > 0 ? parsed : null
   const location = useLocation()
   const filters = useFeedFilters(scanId)
+  const [density, toggleDensity] = useDensity()
   /* Destructured so the handlers below can depend on the individual stable
    * callbacks. `filters` itself is a fresh object every render, so depending on
    * it would defeat the point. */
@@ -616,6 +618,8 @@ export function ScanFeedPage() {
             blockedCount={blocked.length}
             panel={panel}
             onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
+            density={density}
+            onToggleDensity={toggleDensity}
           />
 
           {panel === 'liked' && (
@@ -691,7 +695,7 @@ export function ScanFeedPage() {
                 re-renders when its own row or flags change. `active` is a single
                 index comparison, not a scan, so it's just as cheap. */}
             {rows.length > 0 && (
-              <div className="cardlist" onKeyDown={onCardListKeyDown}>
+              <div className="cardlist" data-density={density} onKeyDown={onCardListKeyDown}>
                 {rows.map((r, i) => {
                   const key = keyOf(r)
                   return (

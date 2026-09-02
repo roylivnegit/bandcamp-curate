@@ -1110,3 +1110,59 @@ describe('scroll-to-top button', () => {
     expect(screen.getByRole('heading', { name: /My collection/ })).toHaveFocus()
   })
 })
+
+describe('density toggle', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('defaults to comfortable, toggles the cardlist attribute, and persists the choice', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    const toggle = screen.getByRole('button', { name: '☰ Comfortable' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    // The density attribute lives on the cardlist wrapper, not on any
+    // queryable role/text, so this reads the DOM directly rather than via RTL.
+    const cardlist = document.querySelector('.cardlist')
+    expect(cardlist).toHaveAttribute('data-density', 'comfortable')
+
+    fireEvent.click(toggle)
+
+    const toggledOn = await screen.findByRole('button', { name: '☰ Compact' })
+    expect(toggledOn).toHaveAttribute('aria-pressed', 'true')
+    expect(cardlist).toHaveAttribute('data-density', 'compact')
+    expect(localStorage.getItem('crate-digger.density')).toBe('compact')
+  })
+
+  it('starts compact when that was the last persisted choice', async () => {
+    localStorage.setItem('crate-digger.density', 'compact')
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    expect(await screen.findByRole('button', { name: '☰ Compact' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+})

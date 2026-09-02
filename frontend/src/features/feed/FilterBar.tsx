@@ -4,6 +4,7 @@ import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { CopyLinkButton } from '../../components/CopyLinkButton'
 import { CopyMarkdownButton } from '../../components/CopyMarkdownButton'
 import { Dropdown } from '../../components/Dropdown'
+import type { Density } from '../../lib/density'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
 
@@ -27,6 +28,8 @@ export function FilterBar({
   blockedCount,
   panel,
   onTogglePanel,
+  density,
+  onToggleDensity,
 }: {
   filters: FeedFilters
   facetTags: Facet[]
@@ -35,6 +38,8 @@ export function FilterBar({
   blockedCount: number
   panel: 'liked' | 'blocked' | null
   onTogglePanel: (p: 'liked' | 'blocked') => void
+  density: Density
+  onToggleDensity: () => void
 }) {
   return (
     <div className="filterbar">
@@ -79,6 +84,14 @@ export function FilterBar({
 
         <div className="spacer" />
 
+        <button
+          type="button"
+          className={`btn ghost${density === 'compact' ? ' on' : ''}`}
+          aria-pressed={density === 'compact'}
+          onClick={onToggleDensity}
+        >
+          {density === 'compact' ? '☰ Compact' : '☰ Comfortable'}
+        </button>
         <CopyLinkButton />
         <CopyMarkdownButton rows={rows} />
         <button
