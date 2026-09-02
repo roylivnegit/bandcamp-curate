@@ -325,16 +325,18 @@ stop postgresql@16 redis` — still installed but off, so it won't fight compose
 1. ~~Consider a secondary budget cap...~~ **Done.** `Settings.crawl_max_frontier_size` (default
    `None` = unbounded) caps each scan's total frontier rows in `frontier.enqueue` — the one choke
    point every fan-out path already goes through, so no other call site needed to change.
-2. ~~Per-user crawl budgets...~~ **Done (first slice).** `provider_usage.scan_id` (migration
+2. ~~Per-user crawl budgets...~~ **Done.** `provider_usage.scan_id` (migration
    `0011`) attributes each page-render fetch to the scan it was spent on; `runner.
    user_requests_used`/`user_budget_exhausted` sum a user's spend across their own scans via
    `Scan.user_id`, and `Settings.crawl_max_requests_per_user` (default `None` = unbounded)
    enforces it in `run_until_empty` alongside the existing global `crawl_max_requests`. Threaded
-   through `advance_scan`/`run_scan`/the ARQ worker via `ScanPlan.user_id`. **Not yet covered:**
-   pagination-via-Nimble fetches (`nimble_transport.post_json_via_nimble`, the majority of a
-   collection-heavy scan's cost) don't carry a `scan_id` yet, so the per-user cap under-counts
-   until that's threaded too — a real gap, not just a nice-to-have, since collections dominate
-   spend.
+   through `advance_scan`/`run_scan`/the ARQ worker via `ScanPlan.user_id`. **Gap closed
+   (2026-09-02):** `nimble_transport.post_json_via_nimble` now takes a `scan_id` kwarg and folds
+   it into the `FetchRequest`, and `CollectionApiClient`/`FollowsApiClient`/`SupportersApiClient`
+   thread it from `fetch_page`/`iter_supporters` down to the transport. `crawl_fan_collection`'s
+   collection/wishlist/follows pagination and `crawl_album`/`crawl_track`'s supporters pagination
+   now pass their `scan_id` through, so the per-user budget counts collection-heavy scans (the
+   majority of a scan's real cost) correctly instead of undercounting them.
 3. Retire or relabel the legacy `seed_crawl`/`crawl_next` ARQ chain and `scripts/crawl.py`, which
    still key off the single global `BANDCAMP_FAN_URL` (documented as operator-only for now).
 

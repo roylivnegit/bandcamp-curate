@@ -21,9 +21,14 @@ class GatewayFetcher(Protocol):
 
 
 async def post_json_via_nimble(
-    gateway: GatewayFetcher, url: str, payload: dict
+    gateway: GatewayFetcher, url: str, payload: dict, *, scan_id: int | None = None
 ) -> dict:
-    """POST `payload` to a Bandcamp API `url` through Nimble; return the parsed JSON."""
+    """POST `payload` to a Bandcamp API `url` through Nimble; return the parsed JSON.
+
+    `scan_id` is attribution-only (see `FetchRequest.scan_id`) — it lets
+    `provider_usage` and the per-user crawl budget count these pagination
+    fetches against the scan that spent them, same as page renders.
+    """
     request = FetchRequest(
         url=url,
         render=False,
@@ -33,6 +38,7 @@ async def post_json_via_nimble(
             "body": json.dumps(payload),
             "headers": {"Content-Type": "application/json"},
         },
+        scan_id=scan_id,
     )
     result = await gateway.fetch(request)
     if not result.html:

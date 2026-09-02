@@ -157,10 +157,12 @@ ones.
   unbounded, unchanged behavior) enforce it inside `run_until_empty` alongside the existing
   global `crawl_max_requests`, so one user hitting their own cap stops only their own scans.
   Threaded `ScanPlan.user_id` → `advance_scan`/`run_scan` → the ARQ worker's `run_scan` job.
-  **Left open:** `nimble_transport.post_json_via_nimble` (the paginated collection/wishlist/
-  follows/supporters XHRs routed through Nimble) doesn't carry a `scan_id` yet, so the cap
-  under-counts collection-heavy scans, which are most of a scan's real cost — a real gap for a
-  follow-up, not just polish. See `CLAUDE.md` "Immediate next steps" #2. PR: see git history.
+  **Follow-up landed (2026-09-02):** `nimble_transport.post_json_via_nimble` now takes a
+  `scan_id` kwarg folded into the `FetchRequest`; `CollectionApiClient`/`FollowsApiClient`/
+  `SupportersApiClient` thread it from `fetch_page`/`iter_supporters` through to the transport,
+  and `crawl_fan_collection`'s collection/wishlist/follows pagination plus `crawl_album`/
+  `crawl_track`'s supporters pagination now pass their `scan_id`. The cap no longer undercounts
+  collection-heavy scans. See `CLAUDE.md` "Immediate next steps" #2. PR: see git history.
 
 - [x] **A secondary budget cap** — max total frontier size, or max fetches per run, on top of
   the depth bound. Depth 3 on a popular album still fans out very wide. Same source.

@@ -46,7 +46,12 @@ class FollowsApiClient:
         self._delay = 0.0 if gateway is not None else delay
 
     async def fetch_page(
-        self, fan_id: int, older_than_token: str, *, count: int | None = None
+        self,
+        fan_id: int,
+        older_than_token: str,
+        *,
+        count: int | None = None,
+        scan_id: int | None = None,
     ) -> tuple[list[ParsedBand], str | None, bool]:
         payload = {
             "fan_id": fan_id,
@@ -54,7 +59,9 @@ class FollowsApiClient:
             "count": count or self._count,
         }
         if self._gateway is not None:
-            body = await post_json_via_nimble(self._gateway, FOLLOWING_BANDS_URL, payload)
+            body = await post_json_via_nimble(
+                self._gateway, FOLLOWING_BANDS_URL, payload, scan_id=scan_id
+            )
         else:
             client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
             owns_client = self._client is None
@@ -68,14 +75,19 @@ class FollowsApiClient:
         return parse_following_bands_api(body)
 
     async def iter_bands(
-        self, fan_id: int, start_token: str, *, max_pages: int = 200
+        self,
+        fan_id: int,
+        start_token: str,
+        *,
+        max_pages: int = 200,
+        scan_id: int | None = None,
     ) -> AsyncIterator[ParsedBand]:
         """Yield every followed band after `start_token`, to the end of the list."""
         token: str | None = start_token
         for _ in range(max_pages):
             if not token:
                 return
-            bands, last_token, more = await self.fetch_page(fan_id, token)
+            bands, last_token, more = await self.fetch_page(fan_id, token, scan_id=scan_id)
             for band in bands:
                 yield band
             if not more or not last_token or last_token == token:

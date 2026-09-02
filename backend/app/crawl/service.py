@@ -385,21 +385,25 @@ async def crawl_fan_collection(
     await release_db(session)
     pages_left = pages_per_visit
     while pages_left > 0 and tokens["collection"]:
-        batch, nxt, more = await col_client.fetch_page(bc_fan_id, tokens["collection"])
+        batch, nxt, more = await col_client.fetch_page(
+            bc_fan_id, tokens["collection"], scan_id=scan_id
+        )
         pages_left -= 1
         tokens["collection"] = _next_token(tokens["collection"], nxt, more)
         await absorb(batch)
 
     while is_me and pages_left > 0 and tokens["wishlist"]:
         batch, nxt, more = await col_client.fetch_page(
-            bc_fan_id, tokens["wishlist"], url=WISHLIST_ITEMS_URL
+            bc_fan_id, tokens["wishlist"], url=WISHLIST_ITEMS_URL, scan_id=scan_id
         )
         pages_left -= 1
         tokens["wishlist"] = _next_token(tokens["wishlist"], nxt, more)
         await absorb(batch, is_wishlist=True)
 
     while is_me and pages_left > 0 and tokens["follows"]:
-        bands, nxt, more = await fol_client.fetch_page(bc_fan_id, tokens["follows"])
+        bands, nxt, more = await fol_client.fetch_page(
+            bc_fan_id, tokens["follows"], scan_id=scan_id
+        )
         pages_left -= 1
         tokens["follows"] = _next_token(tokens["follows"], nxt, more)
         await ingest_follows_batch(session, fan, bands)
@@ -460,7 +464,7 @@ async def crawl_album(
         client = supporters_client or SupportersApiClient()
         seen = {s.username for s in sup.supporters}
         async for s in client.iter_supporters(
-            sup.album_id, sup.last_token, tralbum_type=sup.tralbum_type
+            sup.album_id, sup.last_token, tralbum_type=sup.tralbum_type, scan_id=scan_id
         ):
             if s.username not in seen:
                 seen.add(s.username)
@@ -521,7 +525,7 @@ async def crawl_track(
         client = supporters_client or SupportersApiClient()
         seen = {s.username for s in sup.supporters}
         async for s in client.iter_supporters(
-            sup.album_id, sup.last_token, tralbum_type=sup.tralbum_type
+            sup.album_id, sup.last_token, tralbum_type=sup.tralbum_type, scan_id=scan_id
         ):
             if s.username not in seen:
                 seen.add(s.username)

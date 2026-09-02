@@ -65,6 +65,7 @@ class CollectionApiClient:
         *,
         count: int | None = None,
         url: str = COLLECTION_ITEMS_URL,
+        scan_id: int | None = None,
     ) -> tuple[list[ParsedItem], str | None, bool]:
         """Fetch one page → (items, last_token, more_available)."""
         payload = {
@@ -73,7 +74,7 @@ class CollectionApiClient:
             "count": count or self._count,
         }
         if self._gateway is not None:
-            body = await post_json_via_nimble(self._gateway, url, payload)
+            body = await post_json_via_nimble(self._gateway, url, payload, scan_id=scan_id)
         else:
             client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
             owns_client = self._client is None
@@ -93,13 +94,16 @@ class CollectionApiClient:
         *,
         url: str = COLLECTION_ITEMS_URL,
         max_pages: int = 100,
+        scan_id: int | None = None,
     ) -> AsyncIterator[ParsedItem]:
         """Yield every item after `start_token`, following pagination to the end."""
         token: str | None = start_token
         for _ in range(max_pages):
             if not token:
                 return
-            items, last_token, more = await self.fetch_page(fan_id, token, url=url)
+            items, last_token, more = await self.fetch_page(
+                fan_id, token, url=url, scan_id=scan_id
+            )
             for item in items:
                 yield item
             if not more or not last_token or last_token == token:
