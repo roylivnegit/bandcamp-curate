@@ -248,6 +248,8 @@ class Blacklist(Base, TimestampMixin):
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     reason: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """NULL = blocked indefinitely. Set = "not now" — curation stops excluding once past."""
 
 
 class CurationRule(Base, TimestampMixin):

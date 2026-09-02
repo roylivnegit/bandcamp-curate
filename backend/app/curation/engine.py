@@ -15,8 +15,9 @@ Recommendations are recomputed wholesale (clear + insert) so re-running is idemp
 
 import math
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bandcamp.urls import url_host
@@ -171,7 +172,13 @@ async def build_exclusions(session: AsyncSession, me: Fan, user: User) -> Exclus
     ).scalars()
     band_hosts = {h for h in (url_host(u) for u in followed_urls) if h}
     # Active blacklist — per-user (blocking a band is a per-tenant preference).
-    bl_where = (Blacklist.user_id == user.id, Blacklist.active.is_(True))
+    # `expires_at` is a "not now": NULL blocks indefinitely, a past timestamp
+    # stops excluding without anyone needing to unblock it by hand.
+    bl_where = (
+        Blacklist.user_id == user.id,
+        Blacklist.active.is_(True),
+        or_(Blacklist.expires_at.is_(None), Blacklist.expires_at > datetime.now(UTC)),
+    )
     bl_albums = await _scalar_set(session, select(Blacklist.album_id).where(*bl_where))
     bl_tracks = await _scalar_set(session, select(Blacklist.track_id).where(*bl_where))
     bl_bands = await _scalar_set(session, select(Blacklist.band_id).where(*bl_where))

@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -352,6 +353,43 @@ async def test_blacklist_excludes_candidate(session: AsyncSession) -> None:
     scored = await _recs(session, user)
     rec_album_ids = {s.album_id for s in scored if s.album_id}
     assert a4.id not in rec_album_ids  # blacklisted → gone
+
+
+async def test_expired_blacklist_stops_excluding(session: AsyncSession) -> None:
+    """A "not now" block (expires_at set) must stop excluding once past —
+    without anyone unblocking it by hand — while a future or absent expiry
+    still suppresses the candidate."""
+    user = await _build_graph(session)
+    a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
+    now = datetime.now(UTC)
+    session.add(
+        Blacklist(
+            user_id=user.id, target_type=str(TargetType.ALBUM), album_id=a4.id,
+            active=True, expires_at=now - timedelta(hours=1),
+        )
+    )
+    await session.commit()
+
+    scored = await _recs(session, user)
+    rec_album_ids = {s.album_id for s in scored if s.album_id}
+    assert a4.id in rec_album_ids  # expired → back in the feed
+
+
+async def test_future_expiry_still_excludes(session: AsyncSession) -> None:
+    user = await _build_graph(session)
+    a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
+    now = datetime.now(UTC)
+    session.add(
+        Blacklist(
+            user_id=user.id, target_type=str(TargetType.ALBUM), album_id=a4.id,
+            active=True, expires_at=now + timedelta(hours=1),
+        )
+    )
+    await session.commit()
+
+    scored = await _recs(session, user)
+    rec_album_ids = {s.album_id for s in scored if s.album_id}
+    assert a4.id not in rec_album_ids  # not expired yet → still excluded
 
 
 async def test_follow_by_label_url_excludes_albums_on_that_page(
