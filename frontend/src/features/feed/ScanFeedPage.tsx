@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '../../api/types'
@@ -12,6 +12,7 @@ import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
 import { BlockedPanel, LikedPanel } from './SidePanels'
 import { useFeedFilters } from './useFeedFilters'
+import { useResumeScroll } from './useResumeScroll'
 import './feed.css'
 
 const LIMIT = FEED_PAGE_SIZE
@@ -37,6 +38,7 @@ export function ScanFeedPage() {
   // would otherwise be sent as literal /api/scans/NaN.
   const parsed = Number(raw)
   const scanId = Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  const location = useLocation()
   const filters = useFeedFilters(scanId)
   /* Destructured so the handlers below can depend on the individual stable
    * callbacks. `filters` itself is a fresh object every render, so depending on
@@ -101,6 +103,14 @@ export function ScanFeedPage() {
    * Bumped by every recompute, strictly more often than `recCount`: a swap
    * (one item in, one out) reorders the feed without moving the total. */
   const generation = scan?.recompute_generation ?? null
+
+  /* Resume-scroll key is the scan id plus the filter query string — the same
+   * filters live in `location.search` (useFeedFilters/useSearchParams), so a
+   * different filter set is just a different key rather than something this
+   * page has to explicitly detect and clear. Gated on rows actually being on
+   * screen, not just `showFeed`, so it never fires against an empty page. */
+  const scrollStorageKey = scanId === null ? null : `crate-digger.feedScroll:${scanId}${location.search}`
+  useResumeScroll(scrollStorageKey, showFeed && rows.length > 0)
 
   // ── scan metadata, polled while the crawl is still in flight ──────────────
   const loadScan = useCallback(async () => {
