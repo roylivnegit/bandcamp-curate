@@ -916,3 +916,45 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   134/134 frontend tests pass, tsc/lint/build clean (lands in the eagerly-loaded shared chunk via
   `App.tsx`, same as `ToastStack` — not a lazy route chunk, which is correct since it must be
   mounted before either route is). PR: see git history.
+
+- [x] **Successful clipboard copies are silent for screen-reader users.** *(proposed by the
+  hourly routine, 2026-09-02, Architect+QA-approved — "1-line addition, testable in jsdom, trivially
+  under an hour")* Clicking "Copy link" or "Copy as Markdown" only swapped the button's own text to
+  "Copied" — a screen-reader user got no confirmation, while a *failed* copy already raised a proper
+  `showToast(..., 'alert')`. The failure path was announced; the success path wasn't.
+  Done: `CopyLinkButton.tsx`/`CopyMarkdownButton.tsx` now call `showToast('Link copied to
+  clipboard.', 'status')` / `showToast('Feed copied as Markdown.', 'status')` right after
+  `setCopied(true)` — the exact same toast infra the failure branch already used, just the other
+  variant. Covered by one new test per component (`CopyLinkButton.test.tsx`,
+  `CopyMarkdownButton.test.tsx`), mirroring the existing failure-toast test's shape: click the
+  button, `findByRole('status')` has the expected text, advance past `TOAST_DURATION_MS` and
+  confirm it's gone (so it doesn't leak into the next test via the module-scope toast queue).
+  136/136 frontend tests pass, tsc/lint/build clean, chunk split intact. PR: see git history.
+
+- [ ] **Paste several seed URLs into a new scan at once.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved — "sound, `fireEvent.paste` testable in jsdom, small, one
+  function")* `NewScanForm`'s seed field accepts one URL per Enter press, so seeding a scan from
+  5-10 album/track links already copied means paste-Enter, paste-Enter, repeated — a "tighter flow"
+  gap if queuing a scan from a batch of open tabs. Idea: an `onPaste` handler on the seed-url input
+  — if the pasted text contains a newline, split on lines, validate each against the existing
+  `SEED_URL_RE`, dedupe against current `seeds`, add all the valid ones in one `setSeeds` call,
+  clear the input, `preventDefault()`; a single-line paste falls through to today's unchanged
+  behavior. Verify: `fireEvent.paste` with clipboard text of 3 valid URLs + 1 line of garbage, then
+  assert the rendered seed list has exactly 3 items (only the valid ones) — pure DOM assertion, no
+  screenshot. Not built this round — a smaller, more bounded sibling proposal (the copy-success
+  toast, above) was picked instead.
+
+- [ ] **`RemoveButton({ label, onClick })` — dedupe the `×` "remove" pattern.** *(proposed by the
+  hourly routine, 2026-09-02, Architect+QA-approved — "mechanical dedup, not a new-behavior change;
+  testable via `tsc` + one render test")* The smaller slice of an earlier-rejected "shared
+  Button/Badge primitives" proposal (that one needed migrating 8 call sites and a visual pass — cut
+  as too large for one sitting), scoped down to just the 3 sites that already share one exact
+  pattern: `Pill`'s `.rm` button (`FilterBar.tsx`), `NewScanForm`'s seed-list `.rm` button, and the
+  "Clear artist filter" `.rm` button (also `FilterBar.tsx`) — all three already pass an `aria-label`
+  today, so this is a mechanical dedup, not new behavior. (`ToastStack`'s dismiss `×` is a distinct
+  semantic — not in scope.) Idea: one `components/RemoveButton.tsx` with `aria-label` as a
+  **required** prop (not optional), so a call site that forgets one fails `tsc`, not just an a11y
+  audit; the three sites above switch to it. Verify: `tsc -b` refuses to compile a call site missing
+  `aria-label` (a deliberate compile-error check, or at minimum confirm the type signature makes it
+  impossible to omit); one render test per usage confirming the accessible name comes through
+  unchanged. Not built this round — left queued behind the paste-multiple-URLs proposal above.

@@ -32,6 +32,10 @@ export function CopyLinkButton() {
       return
     }
     setCopied(true)
+    // The "Copied" text swap alone is announced to nobody — a screen-reader
+    // user gets no confirmation, while the failure path above already gets a
+    // proper alert toast. Same infra, so the success path isn't silent either.
+    showToast('Link copied to clipboard.', 'status')
     if (timerRef.current !== null) window.clearTimeout(timerRef.current)
     timerRef.current = window.setTimeout(() => setCopied(false), COPY_LINK_FEEDBACK_MS)
   }

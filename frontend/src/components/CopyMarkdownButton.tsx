@@ -29,6 +29,9 @@ export function CopyMarkdownButton({ rows }: { rows: Recommendation[] }) {
       return
     }
     setCopied(true)
+    // Same rationale as CopyLinkButton: the "Copied" text swap alone reaches
+    // no screen reader, while the failure path already gets a proper toast.
+    showToast('Feed copied as Markdown.', 'status')
     if (timerRef.current !== null) window.clearTimeout(timerRef.current)
     timerRef.current = window.setTimeout(() => setCopied(false), COPY_LINK_FEEDBACK_MS)
   }
