@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react'
 
 import './Dropdown.css'
 
@@ -38,6 +44,26 @@ export function Dropdown({
     }
   }, [open])
 
+  /* Arrow-key nav among the panel's `.ddrow` buttons (the WAI-ARIA menu-button
+   * pattern's core behavior). Scoped to when a row itself already has focus —
+   * the Genre/Contains panels also hold a text input, and hijacking Home/End
+   * there would break normal cursor movement inside it. */
+  function onPanelKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement
+    if (!target.classList.contains('ddrow')) return
+    const rows = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('.ddrow'))
+    const idx = rows.indexOf(target as HTMLButtonElement)
+    if (idx === -1) return
+    let next: number
+    if (e.key === 'ArrowDown') next = (idx + 1) % rows.length
+    else if (e.key === 'ArrowUp') next = (idx - 1 + rows.length) % rows.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = rows.length - 1
+    else return
+    e.preventDefault()
+    rows[next].focus()
+  }
+
   return (
     <div className="dd" ref={root}>
       <button
@@ -53,7 +79,11 @@ export function Dropdown({
         {label}
       </button>
       {open && (
-        <div className="ddpanel" style={width ? { width } : undefined}>
+        <div
+          className="ddpanel"
+          style={width ? { width } : undefined}
+          onKeyDown={onPanelKeyDown}
+        >
           {children(() => setOpen(false))}
         </div>
       )}
