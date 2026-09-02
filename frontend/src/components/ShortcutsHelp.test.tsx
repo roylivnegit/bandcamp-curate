@@ -58,6 +58,37 @@ describe('ShortcutsHelp', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('traps Tab within the panel, wrapping back onto its only focusable control', () => {
+    renderWithControls()
+    fireEvent.keyDown(document, { key: '?' })
+    const dialog = screen.getByRole('dialog')
+    const closeButton = screen.getByRole('button', { name: 'Close' })
+
+    // The panel itself takes focus on open; the first Tab should land on its
+    // one focusable descendant rather than leaking out to the page behind it.
+    expect(dialog).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(closeButton).toHaveFocus()
+
+    // With a single focusable element, Tab keeps wrapping onto it instead of
+    // escaping the dialog.
+    fireEvent.keyDown(closeButton, { key: 'Tab' })
+    expect(closeButton).toHaveFocus()
+  })
+
+  it('traps Shift+Tab within the panel the same way', () => {
+    renderWithControls()
+    fireEvent.keyDown(document, { key: '?' })
+    const dialog = screen.getByRole('dialog')
+    const closeButton = screen.getByRole('button', { name: 'Close' })
+
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(closeButton).toHaveFocus()
+
+    fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
+    expect(closeButton).toHaveFocus()
+  })
+
   it('toggles closed on a second "?" press', () => {
     renderWithControls()
     fireEvent.keyDown(document, { key: '?' })

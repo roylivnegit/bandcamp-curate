@@ -801,6 +801,23 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   button. 109/109 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
 
+- [x] **Focus trap for the shortcuts-help panel.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `ShortcutsHelp.tsx` is a real `role="dialog" aria-modal` overlay that
+  already restores focus to its trigger on close, but nothing stopped Tab/Shift+Tab from leaving
+  the open dialog and landing on the page behind it — a keyboard user could tab straight out of a
+  modal that's supposed to own focus while open.
+  Done: the panel's existing `keydown` effect (already handling Escape) now also traps `Tab` —
+  queries `panelRef`'s focusable descendants fresh on every press (a `FOCUSABLE_SELECTOR` constant,
+  hoisted to module scope per rule 9) rather than caching the list once, per QA's note that the
+  panel has exactly one focusable element today (the Close button) but a hardcoded version would
+  silently stop working if a future row added a link or button. Tab from the last element (or from
+  outside the tracked list, which covers the initial state where the panel div itself holds focus)
+  wraps to the first; Shift+Tab from the first wraps to the last — today's single-button case
+  degenerates to "Tab keeps focus on Close," which is the correct trap behavior for that case, not
+  a bug. Covered by two new tests in `ShortcutsHelp.test.tsx`: Tab from the initially-focused panel
+  lands on the Close button and a second Tab keeps it there; Shift+Tab does the same in reverse.
+  111/111 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
 - [x] **Skip-to-content link.** *(proposed by the hourly routine, 2026-09-02, Architect+QA-approved)*
   A keyboard/screen-reader user landing on any page had to tab through the whole header before
   reaching the actual content, every single page load. `frontend/CLAUDE.md`'s "Known conflicts and
