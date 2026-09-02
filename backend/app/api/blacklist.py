@@ -3,9 +3,11 @@ unblock. Curation already excludes active blacklist rows; blocking also prunes a
 current recommendations for that band so the feed updates immediately.
 """
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import get_current_user
@@ -19,6 +21,8 @@ router = APIRouter(prefix="/api/blacklist", tags=["blacklist"])
 class BlockIn(BaseModel):
     band_id: int
     reason: str | None = None
+    expires_at: datetime | None = None
+    """Optional "not now" — omit to block indefinitely, as before."""
 
 
 class BlacklistOut(BaseModel):
@@ -27,6 +31,7 @@ class BlacklistOut(BaseModel):
     band_name: str | None
     band_url: str | None
     reason: str | None
+    expires_at: datetime | None
 
 
 @router.get("", response_model=list[BlacklistOut])
@@ -36,19 +41,23 @@ async def list_blocked(
 ) -> list[BlacklistOut]:
     rows = (
         await session.execute(
-            select(Blacklist.id, Blacklist.band_id, Band.name, Band.url, Blacklist.reason)
+            select(
+                Blacklist.id, Blacklist.band_id, Band.name, Band.url,
+                Blacklist.reason, Blacklist.expires_at,
+            )
             .join(Band, Band.id == Blacklist.band_id)
             .where(
                 Blacklist.user_id == current_user.id,
                 Blacklist.active.is_(True),
                 Blacklist.band_id.isnot(None),
+                or_(Blacklist.expires_at.is_(None), Blacklist.expires_at > datetime.now(UTC)),
             )
             .order_by(Band.name)
         )
     ).all()
     return [
-        BlacklistOut(id=i, band_id=b, band_name=n, band_url=u, reason=r)
-        for i, b, n, u, r in rows
+        BlacklistOut(id=i, band_id=b, band_name=n, band_url=u, reason=r, expires_at=e)
+        for i, b, n, u, r, e in rows
     ]
 
 
@@ -75,11 +84,12 @@ async def block(
     if entry is None:
         entry = Blacklist(
             user_id=current_user.id, band_id=band.id, target_type=target,
-            active=True, reason=payload.reason,
+            active=True, reason=payload.reason, expires_at=payload.expires_at,
         )
         session.add(entry)
     else:
         entry.active = True
+        entry.expires_at = payload.expires_at
         if payload.reason:
             entry.reason = payload.reason
 
@@ -97,7 +107,8 @@ async def block(
     await session.flush()
     await session.commit()
     return BlacklistOut(
-        id=entry.id, band_id=band.id, band_name=band.name, band_url=band.url, reason=entry.reason
+        id=entry.id, band_id=band.id, band_name=band.name, band_url=band.url,
+        reason=entry.reason, expires_at=entry.expires_at,
     )
 
 

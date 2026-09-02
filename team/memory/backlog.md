@@ -148,6 +148,51 @@ ones.
   before going over 100; do not keep going past the cap on your own judgment. This is the
   ONLY backlog item this key may be used for.
 
+- [ ] **Cold-start feeds give no reason, just emptiness.** *(proposed by the hourly routine,
+  2026-09-02)* A new or niche-taste user finalizes a scan and sees zero or three
+  recommendations with no indication of why — too few neighbours found, vs. everything got
+  excluded by follows/wishlist/blacklist, vs. the crawl just hasn't reached deep enough yet.
+  Add a cheap diagnostic to `/api/stats`: counts of candidates before exclusion,
+  excluded-by-reason (owned/wishlisted/followed/blacklisted), neighbour count — computed
+  during `compute_recommendations`. Architect note: the pre-exclusion count isn't free —
+  today's query applies exclusions in the candidate-selection step itself, so this needs a
+  genuinely separate pre-exclusion count/query, not just instrumentation of existing state;
+  still pytest-only and small. Verify: a fixture with a fan owning 2 albums and 1 neighbour
+  who owns nothing new asserts `neighbour_count=1, candidates=0` rather than a bare empty
+  list; a second fixture where everything gets excluded by follows asserts
+  `excluded_by_reason.followed` is nonzero. Most likely to explain the "is ranking too flat"
+  question the ranking item above is blocked on measuring live.
+
+- [ ] **The feed can silently reflow under a user who's mid-scroll.** *(proposed by the hourly
+  routine, 2026-09-02)* Because `crawl_curate_each_slice` does wholesale clear+insert while a
+  scan is running and the React feed re-fetches on `stats.recommendations` changes, a user
+  paging with offset/limit can see items shift, repeat, or vanish between requests as ranking
+  changes underneath them — worse the longer a scan runs. Add a monotonic
+  `recompute_generation` counter, bumped once per curate call, returned in `/api/stats` and
+  `/api/recommendations`; frontend resets pagination to page 0 (and shows a "list updated"
+  affordance) only when the generation it's holding differs from the one just fetched.
+  Architect note: the counter must be **persisted** (a DB column, e.g. on `scans`), not an
+  in-process int — `crawl_curate_each_slice` runs in worker processes distinct from the API
+  process, so a module-level counter would desync across them; once persisted it's trivial.
+  Verify: pytest — two calls to `compute_recommendations` bump the counter and old
+  offset-based reads return a stable snapshot tagged with the generation they were computed
+  under; vitest — feed component given a stats poll with a changed generation calls its
+  "reset to page 0" handler, and does not call it when generation is unchanged.
+
+- [~] **Blacklist is all-or-nothing forever.** *(proposed by the hourly routine, 2026-09-02)*
+  Implemented same run: PR #33 (`auto/blacklist-expiry`), auto-merge enabled, awaiting CI.
+  Flip to `[x]` once merged confirmed.
+  A user annoyed by one artist's recs today has no way to say "not now" without permanently
+  blocking them — `POST /api/blacklist` has no expiry, so temporary fatigue turns into a
+  manual unblock chore later (or the artist is just gone for good). Add optional
+  `expires_at` on `blacklist` (nullable, migration), and have `build_exclusions` filter to
+  rows where `expires_at IS NULL OR expires_at > now()`. Smallest and most bounded of the
+  three proposals this cycle — one nullable column plus a `WHERE` clause tweak. Verify:
+  frozen/injected `now` in pytest — a blacklist row with `expires_at` in the past is excluded
+  from `build_exclusions`'s active set (band reappears in recs), one in the future still
+  suppresses it; API test confirms `POST /api/blacklist` accepts an optional `expires_at` and
+  round-trips it.
+
 - [x] **Per-user crawl budgets.** `crawl_max_requests` and `provider_usage` are global, so one
   user's deep scan starves everyone else's. From `CLAUDE.md` "Immediate next steps".
   Done (first slice): `provider_usage.scan_id` (migration `0011`, nullable FK to `scans`)

@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -172,6 +173,33 @@ async def test_block_prunes_and_lists_then_unblock(client: AsyncClient) -> None:
 
 async def test_block_unknown_band_404(client: AsyncClient) -> None:
     assert (await client.post("/api/blacklist", json={"band_id": 999999})).status_code == 404
+
+
+async def test_block_with_expiry_round_trips(client: AsyncClient) -> None:
+    rows = (await client.get("/api/recommendations")).json()
+    target = next(r for r in rows if r["title"] == "Recommend Me")
+    band_id = target["band_id"]
+
+    def _naive_utc(iso: str) -> datetime:
+        # SQLite (test DB only; Postgres preserves the offset) drops tzinfo
+        # on a raw column read-back, so compare wall-clock value only.
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            return dt
+        return dt.astimezone(UTC).replace(tzinfo=None)
+
+    expires_at = "2099-01-01T00:00:00+00:00"
+    r = await client.post(
+        "/api/blacklist", json={"band_id": band_id, "expires_at": expires_at}
+    )
+    assert r.status_code == 200
+    assert _naive_utc(r.json()["expires_at"]) == _naive_utc(expires_at)
+
+    blocked = (await client.get("/api/blacklist")).json()
+    entry = next(b for b in blocked if b["band_id"] == band_id)
+    assert _naive_utc(entry["expires_at"]) == _naive_utc(expires_at)
+
+    assert (await client.post(f"/api/blacklist/{band_id}/unblock")).status_code == 200
 
 
 async def test_label_filter(client: AsyncClient) -> None:
