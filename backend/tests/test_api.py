@@ -214,6 +214,41 @@ async def test_recompute_rate_limited_when_cooldown_enabled(
         feed_module._reset_recompute_cooldown_for_tests()
 
 
+async def test_recommendations_etag_conditional_get(client: AsyncClient) -> None:
+    r1 = await client.get("/api/recommendations")
+    assert r1.status_code == 200
+    etag = r1.headers["ETag"]
+    assert etag  # gen-{scan_id}-{generation}, quoted
+
+    # Same ETag sent back → 304, empty body, no re-serialized rows.
+    r2 = await client.get("/api/recommendations", headers={"If-None-Match": etag})
+    assert r2.status_code == 304
+    assert r2.content == b""
+    assert r2.headers["ETag"] == etag
+
+    # A recompute bumps the generation → a stale If-None-Match no longer
+    # matches, and the fresh response carries a new ETag.
+    await client.post("/api/recommendations/recompute")
+    r3 = await client.get("/api/recommendations", headers={"If-None-Match": etag})
+    assert r3.status_code == 200
+    assert r3.headers["ETag"] != etag
+
+
+async def test_facets_etag_conditional_get(client: AsyncClient) -> None:
+    r1 = await client.get("/api/facets")
+    assert r1.status_code == 200
+    etag = r1.headers["ETag"]
+
+    r2 = await client.get("/api/facets", headers={"If-None-Match": etag})
+    assert r2.status_code == 304
+    assert r2.content == b""
+
+    await client.post("/api/recommendations/recompute")
+    r3 = await client.get("/api/facets", headers={"If-None-Match": etag})
+    assert r3.status_code == 200
+    assert r3.headers["ETag"] != etag
+
+
 async def test_legacy_ui_route_is_not_served(client: AsyncClient) -> None:
     # The old server-rendered feed is unregistered (see app/main.py): its fetch()
     # calls carry no bearer token, so it would render and then silently 401 on

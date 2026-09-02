@@ -5,7 +5,7 @@ recompute. Read endpoints power the UI; recompute re-runs the curation engine.
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -146,6 +146,28 @@ class StatsOut(BaseModel):
 
 async def _count(session: AsyncSession, stmt) -> int:
     return (await session.execute(stmt)).scalar_one()
+
+
+async def _scan_generation(session: AsyncSession, sid: int | None) -> int:
+    """`scans.recompute_generation` for `sid`, or 0 when there's no scan yet
+    (a brand-new user) — mirrors the `or 0` already used when building
+    `RecommendationOut` rows below."""
+    if sid is None:
+        return 0
+    return (
+        (await session.execute(select(Scan.recompute_generation).where(Scan.id == sid)))
+        .scalars().first()
+    ) or 0
+
+
+def _generation_etag(sid: int | None, generation: int) -> str:
+    """A weak identifier for "this scan's feed as of this recompute" — every
+    read endpoint scoped to one scan's recommendations (recs, facets) changes
+    only when `store_recommendations` bumps the generation (see migration
+    0013), so it doubles as a conditional-GET cache key: unchanged generation
+    ⇒ byte-identical response for the same request URL (filters and all,
+    since the URL — not the ETag alone — is what a client/cache keys on)."""
+    return f'"gen-{sid if sid is not None else "none"}-{generation}"'
 
 
 def _has_tag(names: list[str]):
@@ -304,8 +326,10 @@ async def stats(
 
 @router.get("/recommendations", response_model=list[RecommendationOut])
 async def recommendations(
+    response: Response,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    if_none_match: str | None = Header(None, alias="If-None-Match"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     item_type: str | None = Query(None, pattern="^(album|track)$"),
@@ -319,6 +343,15 @@ async def recommendations(
     scan_id: int | None = Query(None),            # which scan's feed (default: collection)
 ) -> list[RecommendationOut]:
     sid = await _resolve_scan_id(session, current_user.id, scan_id)
+    # Cheap enough to compute before the (filtered, joined) main query: when it
+    # matches what the caller already has cached, this skips that query
+    # entirely rather than only skipping re-serialization.
+    generation = await _scan_generation(session, sid)
+    etag = _generation_etag(sid, generation)
+    if if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+
     ab = aliased(Band)
     tb = aliased(Band)
     band_id_col = func.coalesce(Album.band_id, Track.band_id)
@@ -349,14 +382,10 @@ async def recommendations(
     stmt = stmt.where(Recommendation.scan_id == sid).limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
-    # One scalar lookup, reused for every row in this response — all of them
-    # necessarily belong to the same generation (store_recommendations clears +
-    # inserts inside one transaction), so there's nothing to join per-row.
-    generation = (
-        (await session.execute(select(Scan.recompute_generation).where(Scan.id == sid)))
-        .scalars().first()
-        if sid is not None else None
-    ) or 0
+    # `generation` (and its ETag) were computed above, before this query ran —
+    # all rows necessarily belong to it regardless (store_recommendations
+    # clears + inserts inside one transaction), so there's nothing to re-derive
+    # per row.
     return [
         RecommendationOut(
             rank=offset + i + 1,
@@ -408,12 +437,25 @@ async def recommendations_count(
 
 @router.get("/facets", response_model=FacetsOut)
 async def facets(
+    response: Response,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    if_none_match: str | None = Header(None, alias="If-None-Match"),
     scan_id: int | None = Query(None),
 ) -> FacetsOut:
     """Tags and labels present in one scan's recommendations, with counts."""
     sid = await _resolve_scan_id(session, current_user.id, scan_id)
+    # Same ETag as /recommendations: tied to the scan's recompute_generation,
+    # which is what every facet here is actually joined against. The one gap —
+    # `seed_tags` reflects the caller's own album tags, which could in theory
+    # change without a recompute — matches this scan's other read endpoints and
+    # wasn't worth a second cache key for.
+    generation = await _scan_generation(session, sid)
+    etag = _generation_etag(sid, generation)
+    if if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+
     tag_rows = (
         await session.execute(
             select(Tag.name, func.count().label("n"))
