@@ -294,6 +294,44 @@ async def test_one_recommendation_per_band(session: AsyncSession) -> None:
     assert len(full) > len(deduped)  # dedup actually removed something
 
 
+async def test_tied_scores_break_ties_deterministically(session: AsyncSession) -> None:
+    """Two candidates with the exact same score (same co_owners, zero tag
+    affinity on both) must not be left in whatever order the DB happened to
+    return their rows in — Postgres doesn't guarantee that order without an
+    ORDER BY, so a same-score band of the feed (the common case: "one
+    co-owner, no tag data") could silently reshuffle between recomputes. The
+    tie should resolve to a stable, reproducible order instead."""
+    user = await _build_graph(session)
+    b6 = Band(bandcamp_id=6, name="B6", kind=BandKind.ARTIST)
+    b7 = Band(bandcamp_id=7, name="B7", kind=BandKind.ARTIST)
+    session.add_all([b6, b7])
+    await session.flush()
+    a10 = Album(bandcamp_id=10, title="A10", band_id=b6.id)
+    a11 = Album(bandcamp_id=11, title="A11", band_id=b7.id)
+    session.add_all([a10, a11])
+    await session.flush()
+    f2 = (await session.execute(select(Fan).where(Fan.username == "f2"))).scalar_one()
+    # Same single owner, no tags on either → identical co_owners and tag_affinity.
+    session.add_all([
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a10.id),
+        FanItem(fan_id=f2.id, item_type=ItemType.ALBUM, album_id=a11.id),
+    ])
+    await session.commit()
+
+    scored = await _recs(session, user)
+    tied = [s for s in scored if s.album_id in (a10.id, a11.id)]
+    assert len(tied) == 2
+    assert tied[0].score == tied[1].score
+    assert tied[0].reasons["co_owners"] == tied[1].reasons["co_owners"] == 1
+
+    order = [s.album_id for s in tied]
+    # Recomputing repeatedly must always reproduce the same order.
+    for _ in range(3):
+        again = await _recs(session, user)
+        again_order = [s.album_id for s in again if s.album_id in (a10.id, a11.id)]
+        assert again_order == order
+
+
 async def test_curate_persists_and_is_idempotent(session: AsyncSession) -> None:
     user = await _build_graph(session)
     scored = await curate(session, user=user)
