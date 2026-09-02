@@ -26,6 +26,11 @@ const keyOf = (r: Recommendation) => `${r.item_type}:${r.album_id ?? r.track_id}
 /** A DOM id derived from `keyOf`, so the roving-tabindex handler can find and
  *  focus one exact card by id after an Arrow/Home/End key. */
 const cardIdOf = (r: Recommendation) => `card-${keyOf(r)}`
+/** Keys for the Liked/Blocked side-panel rows' own in-flight tracking — a
+ *  distinct namespace from `keyOf` above (prefixed, not item-type-shaped) so
+ *  they can share `inFlight`/`panelBusy` with nothing to collide against. */
+const likedKeyOf = (item: Liked) => `liked-${item.id}`
+const blockedKeyOf = (bandId: number) => `blocked-${bandId}`
 
 /** True only for a genuine mid-session reflow — `prev` was a real generation
  *  (not the initial `null`) and it differs from `next`. A scan's very first
@@ -61,6 +66,12 @@ export function ScanFeedPage() {
    *  per-key/per-action shape so `FeedCard` can swap its acting button's
    *  label to "Liking…"/"Blocking…" instead of just going inert. */
   const [busy, setBusy] = useState<Record<string, 'like' | 'block'>>({})
+  /** The Liked/Blocked side panels' own in-flight set (`likedKeyOf`/
+   *  `blockedKeyOf` keys) — same guard/busy shape as `busy` above, kept
+   *  separate since a panel row's identity (a liked item's id, a blocked
+   *  band's id) isn't a feed-card key. The panels hold no state of their
+   *  own; this is the single source of truth threaded down as a lookup. */
+  const [panelBusy, setPanelBusy] = useState<Record<string, true>>({})
   /** Roving tabindex over the card list: an index into `rows`, not a scan
    *  each card would otherwise have to do to know whether it's "the active
    *  one" — every card's `active` prop is a single `i === activeIndex`
@@ -263,6 +274,18 @@ export function ScanFeedPage() {
     })
   }, [])
 
+  const markPanelBusy = useCallback((key: string, on: boolean) => {
+    setPanelBusy((prev) => {
+      if (!on) {
+        if (!(key in prev)) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      }
+      return { ...prev, [key]: true }
+    })
+  }, [])
+
   const clearUndoTimer = useCallback(() => {
     if (undoTimer.current !== null) {
       window.clearTimeout(undoTimer.current)
@@ -438,14 +461,36 @@ export function ScanFeedPage() {
   }
 
   async function unlike(item: Liked) {
-    const ref = item.album_id !== null ? { album_id: item.album_id } : { track_id: item.track_id! }
-    await api.unlike(ref)
-    await Promise.all([loadLiked(), loadFirstPage()])
+    const key = likedKeyOf(item)
+    if (inFlight.current.has(key)) return
+    inFlight.current.add(key)
+    markPanelBusy(key, true)
+    try {
+      const ref = item.album_id !== null ? { album_id: item.album_id } : { track_id: item.track_id! }
+      await api.unlike(ref)
+      await Promise.all([loadLiked(), loadFirstPage()])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not undo that like.')
+    } finally {
+      inFlight.current.delete(key)
+      markPanelBusy(key, false)
+    }
   }
 
   async function unblock(bandId: number) {
-    await api.unblock(bandId)
-    await Promise.all([loadBlocked(), loadFirstPage()])
+    const key = blockedKeyOf(bandId)
+    if (inFlight.current.has(key)) return
+    inFlight.current.add(key)
+    markPanelBusy(key, true)
+    try {
+      await api.unblock(bandId)
+      await Promise.all([loadBlocked(), loadFirstPage()])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not undo that block.')
+    } finally {
+      inFlight.current.delete(key)
+      markPanelBusy(key, false)
+    }
   }
 
   // ── render ───────────────────────────────────────────────────────────────
@@ -509,9 +554,19 @@ export function ScanFeedPage() {
             onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
           />
 
-          {panel === 'liked' && <LikedPanel items={liked} onUnlike={(i) => void unlike(i)} />}
+          {panel === 'liked' && (
+            <LikedPanel
+              items={liked}
+              onUnlike={(i) => void unlike(i)}
+              busy={(i) => likedKeyOf(i) in panelBusy}
+            />
+          )}
           {panel === 'blocked' && (
-            <BlockedPanel items={blocked} onUnblock={(id) => void unblock(id)} />
+            <BlockedPanel
+              items={blocked}
+              onUnblock={(id) => void unblock(id)}
+              busy={(id) => blockedKeyOf(id) in panelBusy}
+            />
           )}
 
           <main>

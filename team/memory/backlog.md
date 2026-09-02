@@ -643,3 +643,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   clicking the button, and asserting both the `scrollTo` call and that the page heading receives
   focus. 85/85 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
   lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **Unlike/unblock from the side panels have no re-entry guard or error handling.**
+  *(found by the hourly routine, 2026-09-02, Option C round 4 — Architect+QA-approved)* Every
+  other mutation in `ScanFeedPage.tsx` (`like`, `block`, `undoRetire`) uses an `inFlight` ref
+  guard and a try/catch → `setError(...)` on failure — this round's pending-state-microcopy item
+  even added visible busy labels for `like`/`block`. `unlike`/`unblock` (called from the
+  Liked/Blocked side panels) were bare `async function`s with neither: a fast double-click could
+  fire the request twice, and a failed request was a silently swallowed unhandled rejection with
+  zero user feedback.
+  Done: `unlike`/`unblock` now follow the exact same shape as `like`/`block` — an `inFlight.
+  current.has(key)` guard, `setError(...)` in a catch block, and a new `panelBusy: Record<string,
+  true>` state (kept separate from `busy`, since a panel row's identity — a liked item's id, a
+  blocked band's id — isn't a feed-card key; new `likedKeyOf`/`blockedKeyOf` module-scope
+  helpers). Per QA's scope-trap warning, the side panels (`SidePanels.tsx`) hold no state of
+  their own — `LikedPanel`/`BlockedPanel` gained a `busy: (item) => boolean` prop that's a pure
+  lookup into `ScanFeedPage`'s single source of truth, so a busy row disables its button and
+  swaps the label to "Unliking…"/"Unblocking…" without inventing a second local busy-tracking
+  mechanism. Covered by three new tests in `feed.test.tsx`'s "unlike/unblock from the side
+  panels" block: the busy label appears and disables the row while an unlike is held behind an
+  unresolved promise, then clears once it resolves; a rejected unblock surfaces a `role="alert"`
+  error and leaves the row usable again (not stuck busy); two rapid clicks on the same row call
+  the API exactly once. 91/91 frontend tests pass, tsc/lint/build clean. PR: see git history.
