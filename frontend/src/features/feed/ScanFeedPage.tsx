@@ -548,6 +548,7 @@ export function ScanFeedPage() {
           <FilterBar
             filters={filters}
             facetTags={facetTags}
+            rows={rows}
             likedCount={liked.length}
             blockedCount={blocked.length}
             panel={panel}

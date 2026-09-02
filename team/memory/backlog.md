@@ -644,6 +644,46 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   focus. 85/85 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
   lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
 
+- [ ] **Conditional GET (ETag) on `/api/recommendations` and `/api/facets`.** *(proposed by the
+  hourly routine, 2026-09-02, Architect+QA-approved with a correction)* Every feed poll re-transfers
+  the full payload even when nothing changed. Set `ETag: gen-{scan_id}-{generation}` on both
+  responses (reusing `scans.recompute_generation` — no new state, corrected from the Product
+  proposal's global `gen-{generation}`, since generation is per-scan); a matching `If-None-Match`
+  returns `304` with no body. Verify: `pytest` — GET recs, assert `ETag: gen-{scan_id}-N`; repeat
+  with `If-None-Match` set to that value, assert `304` + empty body; recompute (bumps generation),
+  repeat, assert `200` with a new ETag.
+
+- [ ] **Per-user rate limit on `POST /api/recommendations/recompute`.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved)* `app/api/feed.py`'s recompute endpoint does a full
+  unowned-catalog scoring pass with zero throttling today — confirmed live gap, not speculative.
+  No UI button calls it yet (recomputes are automatic, server-side, after each crawl slice), so
+  this guards scripted/direct callers, not a user-facing bug. Track `last_recompute_at` per user;
+  reject a call inside a short cooldown (e.g. 30s) with `429` + `Retry-After`. Verify: `pytest` —
+  call recompute, call again immediately, assert `429` + `Retry-After`; advance a
+  monkeypatched/injected clock past the cooldown, assert the third call returns `200`.
+
+- [x] **"Copy feed as Markdown" export.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved — confirmed `Recommendation.url` exists end-to-end so no link needs
+  deriving, with the caveat that a `null` url must not fabricate one)* Users who want to share or
+  paste their current filtered feed (e.g. into Discord/notes) had no way out except manually
+  retyping band/track names.
+  Done: new `lib/markdown.ts` — `recsToMarkdown(recs)`, a pure formatter: `- [Band – Title](url)`
+  per row, falling back to whichever of `title`/`band_name` is present (`'Untitled'` if neither),
+  and — the QA caveat — a row with a `null` `url` (the discover-by-id convention) renders as plain
+  `- label` text rather than a fabricated link. `[`/`]` in a label are backslash-escaped so an
+  in-title bracket can't break the Markdown link syntax. New `components/CopyMarkdownButton.tsx`
+  mirrors `CopyLinkButton`'s clipboard-write + toast-on-failure pattern exactly (same
+  `COPY_LINK_FEEDBACK_MS` "Copied" reversion, same `showToast(..., 'alert')` on a rejected write)
+  and is `disabled` when there are no rows to export. Wired into `FilterBar.tsx` next to
+  `CopyLinkButton`, which needed a new `rows: Recommendation[]` prop threaded from
+  `ScanFeedPage.tsx`'s existing `rows` state (the currently loaded/filtered page, not a re-fetch of
+  the full feed). Covered by 6 new tests in `markdown.test.ts` (band+title link, multi-row
+  newline-joining, null-url omits the link, title-only/band-only/neither fallback, bracket
+  escaping, empty list) and 4 in `CopyMarkdownButton.test.tsx` (copies the formatted text; disabled
+  on an empty row list; "Copied" reverts after the feedback window; a rejected write raises a toast
+  and leaves the button unchanged). 106/106 frontend tests pass, tsc/lint/build clean (chunk split
+  intact — lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
 - [x] **Unlike/unblock from the side panels have no re-entry guard or error handling.**
   *(found by the hourly routine, 2026-09-02, Option C round 4 — Architect+QA-approved)* Every
   other mutation in `ScanFeedPage.tsx` (`like`, `block`, `undoRetire`) uses an `inFlight` ref
