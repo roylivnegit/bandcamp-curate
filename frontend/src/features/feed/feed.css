@@ -104,6 +104,12 @@
   padding: var(--s-2) 10px;
 }
 
+.quickfilter {
+  width: 190px;
+  font-size: var(--fs-sm);
+  padding: var(--s-2) 10px;
+}
+
 /* ── active filter pills ─────────────────────────────────────────────────── */
 
 .active {

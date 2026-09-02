@@ -384,6 +384,41 @@ describe('scan feed', () => {
     fireEvent.keyDown(cards[2], { key: 'Home' })
     expect(document.activeElement).toBe(cards[0])
   })
+
+  it('narrows the rendered cards to a title/band match, with no new fetch', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    expect(screen.getAllByRole('article')).toHaveLength(3)
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'second')
+
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+    expect(screen.getByText('Second album')).toBeInTheDocument()
+  })
+
+  it('shows a distinct empty message when the quick filter matches nothing, not the real empty state', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'nonexistent-xyz')
+
+    expect(await screen.findByText('No loaded cards match “nonexistent-xyz”.')).toBeInTheDocument()
+    expect(screen.queryByText('No recommendations in this scan yet.')).not.toBeInTheDocument()
+  })
+
+  it('"/" focuses the quick filter input from anywhere on the page', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    fireEvent.keyDown(document, { key: '/' })
+
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Filter loaded cards (/)'))
+  })
 })
 
 describe('focus on route change', () => {

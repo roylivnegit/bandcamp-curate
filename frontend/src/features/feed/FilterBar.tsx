@@ -1,4 +1,5 @@
 import { useDeferredValue, useMemo, useState } from 'react'
+import type { RefObject } from 'react'
 
 import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { CopyLinkButton } from '../../components/CopyLinkButton'
@@ -31,6 +32,9 @@ export function FilterBar({
   onTogglePanel,
   density,
   onToggleDensity,
+  quickQuery,
+  onQuickQueryChange,
+  quickFilterRef,
 }: {
   filters: FeedFilters
   facetTags: Facet[]
@@ -41,6 +45,9 @@ export function FilterBar({
   onTogglePanel: (p: 'liked' | 'blocked') => void
   density: Density
   onToggleDensity: () => void
+  quickQuery: string
+  onQuickQueryChange: (q: string) => void
+  quickFilterRef: RefObject<HTMLInputElement | null>
 }) {
   return (
     <div className="filterbar">
@@ -58,6 +65,15 @@ export function FilterBar({
             </button>
           ))}
         </div>
+
+        <input
+          ref={quickFilterRef}
+          className="input quickfilter"
+          aria-label="Filter loaded cards"
+          placeholder="Filter loaded cards (/)"
+          value={quickQuery}
+          onChange={(e) => onQuickQueryChange(e.target.value)}
+        />
 
         <Dropdown label={`Sort · ${SORTS[filters.sort]} ▾`} width={210}>
           {(close) => (

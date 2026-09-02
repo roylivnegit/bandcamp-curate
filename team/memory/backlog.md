@@ -977,3 +977,58 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   behavior-preserving. 141/141 frontend tests pass (140 + 1 new), tsc/lint/build clean — the shared
   component lands in its own small chunk (used by both lazy routes), route chunk split intact. PR:
   see git history.
+
+- [x] **Quick filter over loaded cards.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Once you've paged in a few hundred recs, there's no way to jump straight
+  to "that one album" — genre/contains filters narrow by tag, not by name, so finding a specific
+  title or artist means scrolling. Add a text input to `FilterBar` that narrows the already-fetched
+  `rows` client-side (title/`band_name` substring match, case-insensitive) — no API call, purely a
+  view filter — with `/` focusing it, matching the existing `l`/`b`/Ctrl+K shortcut pattern. Verify:
+  unit-test the pure `matchesQuery(rec, query)` helper (title match, band match, empty-query
+  passthrough, case-insensitivity); RTL test that typing reduces the rendered `.card` count and that
+  `/` moves `document.activeElement` to the input.
+  Done same run (Option C step 5, built immediately after proposing): new `lib/quickFilter.ts` —
+  pure `matchesQuery(rec, query)`, case-insensitive substring match against `title`/`band_name`, an
+  empty/whitespace query matching everything. `ScanFeedPage.tsx` derives `visibleRows =
+  useMemo(() => quickQuery.trim() ? rows.filter(...) : rows, [rows, quickQuery])` and renders that
+  instead of `rows` for the card list — the roving-tabindex handler (ArrowUp/Down/Home/End) and
+  `activeCardIndex` clamp now move over `visibleRows` too, since that's what's actually on screen;
+  `rows` itself (and `total`, pagination, "Load more") is untouched, so the quick filter never
+  touches the server-side result set. The input lives in `FilterBar.tsx` (`quickQuery`/
+  `onQuickQueryChange`/`quickFilterRef` props, same "controlled value + parent-owned state" shape as
+  `density`), with a new `.quickfilter` sizing rule in `feed.css` (the shared `.input` class is
+  `width:100%`, so a fixed width was needed inside the flex `.controls` row). A document-level `/`
+  listener in `ScanFeedPage` (mirroring `ShortcutsHelp`'s always-listening + `isTextEntryTarget`
+  guard, duplicated locally per the codebase's existing convention — `CommandPalette`/
+  `ShortcutsHelp` each already carry their own copy rather than a shared helper) focuses the input;
+  `ShortcutsHelp`'s own list gained a `/` row. Query resets to empty on every `scanId` change, same
+  as the `undo` banner, so it can't silently carry over to a different scan's feed. A distinct empty
+  message (`No loaded cards match "…"`) covers the filtered-to-zero case, kept separate from the
+  real "no recommendations"/"nothing matches these filters" states, which are about the server-side
+  result set. Covered by 5 new tests in `quickFilter.test.ts` (title match, band match, no match,
+  empty/whitespace query passthrough, null title/band tolerance) and 3 new integration tests in
+  `feed.test.tsx`'s roving-tabindex block (reusing its existing three-card fixture): typing narrows
+  the rendered `.card`/`article` count and shows the matching card; a query matching nothing shows
+  the distinct empty message, not the real one; `/` moves `document.activeElement` to the input.
+  149/149 frontend tests pass (141 + 8 new), tsc/lint/build clean, chunk split intact. PR: see git
+  history.
+
+- [ ] **Bulk select + bulk block.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Clearing a run of obviously-irrelevant recs (a whole genre you don't want)
+  means clicking "block" one card at a time, which feels tedious for something that's conceptually
+  one action. Add a per-card checkbox (shown once "select mode" is toggled from the filter bar) and
+  a floating bar — "N selected — Block / Cancel" — that calls the existing block handler once per
+  selected key, reusing current optimistic-update/undo plumbing. QA confirmed the real `block(rec)`
+  handler exists at `ScanFeedPage.tsx:710`. Verify: RTL test — check two cards, click "Block
+  selected", assert the block handler/mock API was called exactly twice with the right ids and
+  selection state clears after; a second test asserts the bulk bar renders nothing when the
+  selection set is empty.
+
+- [ ] **"Seen" marker for opened Bandcamp links.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Scrolling back through a long feed, you can't tell which recs you already
+  clicked through to Bandcamp to check out, so you re-open ones you've already mentally dismissed.
+  Record the card's key in `localStorage` (capped set, same try/catch pattern as the existing token
+  storage in `api/client.ts`) when "Bandcamp ↗" is clicked; `FeedCard` reads that set and renders
+  `data-visited="true"` + a small "seen" label when present. Verify: unit-test the storage helper
+  (add/has/cap eviction) directly; RTL test that clicking the link then re-rendering the card yields
+  `getByText('seen')` / `toHaveAttribute('data-visited', 'true')`.

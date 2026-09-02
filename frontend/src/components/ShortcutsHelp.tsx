@@ -7,6 +7,7 @@ const SHORTCUTS: Array<{ keys: string; description: string }> = [
   { keys: 'b', description: "Block the focused recommendation's artist" },
   { keys: '↑ / ↓', description: 'Move to the next/previous card, or through an open menu' },
   { keys: 'Home / End', description: 'Jump to the first / last card, or menu row' },
+  { keys: '/', description: 'Focus the quick filter (narrows the loaded cards by title/artist)' },
   { keys: '?', description: 'Toggle this panel' },
 ]
 
