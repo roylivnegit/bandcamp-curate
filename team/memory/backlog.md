@@ -841,3 +841,47 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   precedes the header (`role="banner"`) in DOM order — the third assertion is what actually proves
   it's reachable by a single Tab from page load, not merely present somewhere on the page. 110/110
   frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Density toggle (comfortable/compact), persisted.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved — "smallest of the three, sound, trivially testable")* The feed
+  is one fixed row height regardless of list length — someone with a big crawl scanning hundreds of
+  recs has no way to see more per screen, a normal control in every "grown-up" list app (Gmail,
+  Linear, Notion) whose absence made this feel unfinished by comparison. A sibling Product proposal
+  from the same round, shared `Button`/`Badge` primitives to de-duplicate 8 hand-rolled `className=
+  "btn ..."` call sites, was cut by Architect+QA on size (1.5-2 sittings, not one) — left unqueued
+  since it wasn't concrete enough to pick up later without re-scoping.
+  Done: `lib/density.ts` — pure `getDensity()`/`setDensity()` against a `crate-digger.density`
+  localStorage key, `try`-wrapped the same way `api/client.ts`'s token storage is (private mode /
+  storage-disabled browsers fall back to the `'comfortable'` default instead of throwing). New
+  `lib/useDensity.ts` hook (`useState(() => getDensity())`, a real-work lazy init per rule 12 in
+  `frontend/CLAUDE.md`) lives in `ScanFeedPage` — the one place that owns both the `.cardlist` wrapper
+  the attribute lands on and the `FilterBar` the toggle button lives in, so no context/prop-drilling
+  scheme was needed beyond passing `density`/`onToggleDensity` down one level. `FilterBar.tsx` gets a
+  `btn ghost` toggle (`☰ Compact` / `☰ Comfortable`, `aria-pressed`) next to the Copy Link/Markdown
+  buttons; `ScanFeedPage.tsx` sets `data-density={density}` on the `.cardlist` div. `feed.css` adds
+  `[data-density='compact'] .card`/`.score` rules (tighter padding/margin/gap, a smaller score box) —
+  pure CSS, no dependency, composes with the existing `content-visibility: auto` rule per rule 6 in
+  the UI/UX guidelines. Covered by 4 new tests in `lib/density.test.ts` (defaults to comfortable when
+  unset; round-trips a written value; falls back to comfortable on a corrupted stored value; both
+  functions degrade to a silent no-op/default rather than throwing when `localStorage` itself throws,
+  simulated via a `Storage.prototype` spy) and 2 new integration tests in `feed.test.tsx`'s "density
+  toggle" block (clicking the toggle flips its own label/`aria-pressed`, the `.cardlist`'s
+  `data-density` attribute, and the persisted `localStorage` value in the same assertion; a page load
+  with `'compact'` already persisted starts in that state). 119/119 frontend tests pass, tsc/lint/build
+  clean (chunk split intact — the new files land inside the `ScanFeedPage` chunk, their only
+  importer). PR: see git history.
+
+- [ ] **Command palette (Cmd/Ctrl+K).** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved — "sound, testable entirely in jsdom/RTL, scope is contained because it
+  explicitly reuses `ShortcutsHelp`'s existing focus-trap rather than building one")* Getting to
+  Feed / Scans / Blacklist or triggering "New scan" / "Recompute" takes multiple clicks through nav —
+  there's no fast path for the one person actually using this daily.
+  Idea: `components/CommandPalette.tsx`, opened by Ctrl/Cmd+K, reusing the focus-trap pattern from
+  `ShortcutsHelp` (module-scoped `FOCUSABLE_SELECTOR`, the same Escape/outside-click/restore-focus
+  effect shape): a text input, a substring-filtered action list (navigate + the two mutating
+  actions), arrow-key navigation, Enter to run, Escape to close-and-restore-focus. Verify: RTL tests —
+  Ctrl+K opens an element with `role="dialog"` and focuses the input; typing "scan" narrows the
+  rendered action list to exactly the scan-related items (assert the array); ArrowDown+Enter invokes
+  the correct callback (spy assertion, not a route check); Escape closes it and `document
+  .activeElement` is back on the element that had focus before opening. Not built this round —
+  a smaller, more bounded sibling proposal (density toggle, above) was picked instead.
