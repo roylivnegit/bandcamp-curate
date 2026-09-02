@@ -179,9 +179,9 @@ ones.
   under; vitest — feed component given a stats poll with a changed generation calls its
   "reset to page 0" handler, and does not call it when generation is unchanged.
 
-- [~] **Blacklist is all-or-nothing forever.** *(proposed by the hourly routine, 2026-09-02)*
-  Implemented same run: PR #33 (`auto/blacklist-expiry`), auto-merge enabled, awaiting CI.
-  Flip to `[x]` once merged confirmed.
+- [x] **Blacklist is all-or-nothing forever.** *(proposed by the hourly routine, 2026-09-02)*
+  Merged same run: PR #33 (`auto/blacklist-expiry`), squash-merged into main, CI green
+  (232/232 backend tests, ruff clean).
   A user annoyed by one artist's recs today has no way to say "not now" without permanently
   blocking them — `POST /api/blacklist` has no expiry, so temporary fatigue turns into a
   manual unblock chore later (or the artist is just gone for good). Add optional
