@@ -633,7 +633,10 @@ export function ScanFeedPage() {
             />
           )}
 
-          <main>
+          {/* Not a `<main>` — `App.tsx` already wraps every routed page in one
+           *  shared `<main id="main-content">`, the skip link's target; a second
+           *  nested landmark here would be invalid and confuse assistive tech. */}
+          <div>
             {total !== null && (
               <p className="countline">
                 <b className="num">{count(total)}</b> {kindWord}
@@ -730,7 +733,7 @@ export function ScanFeedPage() {
                 {loading ? 'Loading…' : `Load ${plural(LIMIT, 'more')}`}
               </button>
             )}
-          </main>
+          </div>
         </>
       )}
     </div>

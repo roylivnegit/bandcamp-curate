@@ -104,6 +104,40 @@ a {
   }
 }
 
+/* ── accessibility utilities ─────────────────────────────────────────────── */
+
+/* Clip-based, not `display: none` — screen readers still announce content
+ * hidden this way, which is the point for a skip link that must exist in the
+ * tab order despite being invisible until focused. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sr-only:focus {
+  position: fixed;
+  top: var(--s-3);
+  left: var(--s-3);
+  z-index: 100;
+  width: auto;
+  height: auto;
+  padding: var(--s-2) var(--s-4);
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--r-sm);
+}
+
 /* ── layout ──────────────────────────────────────────────────────────────── */
 
 .wrap {

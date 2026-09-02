@@ -42,16 +42,25 @@ export default function App() {
 
   return (
     <>
+      {/* First focusable element in the signed-in shell: a keyboard/screen-reader
+       * user landing on any page can skip the header instead of tabbing through
+       * it every load. Targets the `<main>` below — the one shared landmark both
+       * routed pages render into, so this lives here once rather than per page. */}
+      <a className="sr-only" href="#main-content">
+        Skip to content
+      </a>
       <AppHeader />
       <ToastStack />
-      <Suspense fallback={<div className="wrap">{Loading}</div>}>
-        <Routes>
-          <Route path="/scans" element={<ScanListPage />} />
-          <Route path="/scans/:scanId" element={<ScanFeedPage />} />
-          {/* Signed in: /login and /signup have nothing left to offer. */}
-          <Route path="*" element={<Navigate to="/scans" replace />} />
-        </Routes>
-      </Suspense>
+      <main id="main-content">
+        <Suspense fallback={<div className="wrap">{Loading}</div>}>
+          <Routes>
+            <Route path="/scans" element={<ScanListPage />} />
+            <Route path="/scans/:scanId" element={<ScanFeedPage />} />
+            {/* Signed in: /login and /signup have nothing left to offer. */}
+            <Route path="*" element={<Navigate to="/scans" replace />} />
+          </Routes>
+        </Suspense>
+      </main>
     </>
   )
 }
