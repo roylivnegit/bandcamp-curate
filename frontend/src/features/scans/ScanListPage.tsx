@@ -4,7 +4,8 @@ import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { Scan } from '../../api/types'
 import { useAuth } from '../../auth/context'
-import { ago, count, plural } from '../../lib/format'
+import { RelativeTime } from '../../components/RelativeTime'
+import { count, plural } from '../../lib/format'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { NewScanForm } from './NewScanForm'
 import './scans.css'
@@ -223,7 +224,7 @@ function ScanMeta({ scan }: { scan: Scan }) {
       {scan.last_run_at ? (
         <>
           {' '}
-          <span className="sep">·</span> {ago(scan.last_run_at)}
+          <span className="sep">·</span> <RelativeTime iso={scan.last_run_at} />
         </>
       ) : null}
     </>
