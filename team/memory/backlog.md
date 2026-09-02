@@ -606,16 +606,23 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   cadence. 84/84 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
   lands inside the `ScanListPage` chunk, its only importer). PR: see git history.
 
-- [ ] **Pending-state microcopy on like/block.** *(proposed by the hourly routine, 2026-09-02,
-  Architect+QA-approved with one caveat)* `FeedCard`'s like/block buttons go `disabled` while
-  `busy` but keep the same label ("♥ like"), so a click reads as unresponsive for roughly
-  `CARD_EXIT_MS` before the card animates out. Swap to "Liking…" / "Blocking…" while busy.
-  **Caveat from QA**: `busy` is currently a single boolean per card (`busyKeys: Set<string>` in
-  `ScanFeedPage.tsx`), not per-action, so it can't yet distinguish "liking" from "blocking" —
-  needs upgrading to carry which action, mirroring the existing `exiting: Record<string,
-  'like'|'block'>` shape already in that file. Still small, self-contained, and testable purely
-  with RTL role/name assertions (`busy=true` → button reads "Liking…"/"Blocking…" and "♥ like" is
-  gone; `busy=false` → the reverse). Not yet built.
+- [x] **Pending-state microcopy on like/block.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved with one caveat)* `FeedCard`'s like/block buttons went `disabled` while
+  busy but kept the same label ("♥ like"), so a click read as unresponsive for roughly
+  `CARD_EXIT_MS` before the card animated out.
+  Done, addressing QA's caveat first: `ScanFeedPage.tsx`'s `busyKeys: Set<string>` (a single
+  boolean per card) became `busy: Record<string, 'like' | 'block'>`, mirroring the existing
+  `exiting` state's per-key/per-action shape — `markBusy(key, action)` now takes the action
+  (`'like' | 'block' | null`) instead of a boolean, so a card can distinguish which button is
+  in flight. `FeedCard`'s `busy: boolean` prop became `busyAction: 'like' | 'block' | null`;
+  both buttons still disable on any in-flight action (`busy = busyAction !== null`), but only
+  the acting one swaps its label — like button reads "Liking…" only when `busyAction === 'like'`,
+  block reads "Blocking…" only when `busyAction === 'block'`, so a like in flight doesn't also
+  relabel the (still-disabled) block button. Covered by four new tests in
+  `FeedCard.test.tsx`'s "pending-state microcopy" block: plain labels when nothing is busy; only
+  the like button relabels (and the block label is untouched) while a like is in flight, and
+  vice versa; both buttons are disabled while either action is in flight. 88/88 frontend tests
+  pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [ ] **"Back to top" affordance for long feeds.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved)* The feed grows to hundreds of rows via "load more," but there's no fast
