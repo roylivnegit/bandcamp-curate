@@ -1,6 +1,7 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 
 import type { Facet, SortKey } from '../../api/types'
+import { CopyLinkButton } from '../../components/CopyLinkButton'
 import { Dropdown } from '../../components/Dropdown'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
@@ -75,6 +76,7 @@ export function FilterBar({
 
         <div className="spacer" />
 
+        <CopyLinkButton />
         <button
           type="button"
           className={`btn ghost${panel === 'liked' ? ' on' : ''}`}

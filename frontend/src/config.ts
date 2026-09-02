@@ -19,3 +19,6 @@ export const CARD_EXIT_MS = 800
 /** How long the "Undo" affordance stays up after a like/block, in ms. Long
  *  enough to catch a mis-click without becoming visual clutter. */
 export const UNDO_WINDOW_MS = 6000
+
+/** How long the "Copy link" button shows its "Copied" confirmation, in ms. */
+export const COPY_LINK_FEEDBACK_MS = 2000

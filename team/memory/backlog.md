@@ -206,6 +206,37 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   explains what it recommended. Covered by
   `test_seed_tag_provenance_falls_back_to_band_tags`. PR: see git history.
 
+- [x] **"Copy link" for the current filtered feed.** *(proposed by the hourly routine,
+  2026-09-02)* Filters live in the URL now (`useFeedFilters`/`useSearchParams`), so a filtered
+  view is shareable/bookmarkable in principle, but nothing in the UI tells a reader that or
+  gives them an easy way to do it — a polished app surfaces this instead of relying on someone
+  noticing the address bar. Architect+QA: sound, testable by mocking `navigator.clipboard.
+  writeText` and asserting the button's accessible label toggles to "Copied" and back (fake
+  timers), small.
+  Done: new `components/CopyLinkButton.tsx` — reads the current route via `useLocation()`
+  (not `window.location.href`, which a `MemoryRouter`-backed test never updates; the real app's
+  `BrowserRouter` does, but building the URL from `location.pathname`/`location.search` +
+  `window.location.origin` works identically in both and is what makes this testable without a
+  browser) and calls `navigator.clipboard.writeText`. Shows "Copied" for
+  `COPY_LINK_FEEDBACK_MS` (2000ms, new in `config.ts`) on success; on a rejected write (denied
+  permission, insecure context) it silently no-ops rather than claiming a copy that didn't
+  happen. Wired into `FilterBar.tsx` next to the Liked/Blocked buttons. Covered by three new
+  tests in `CopyLinkButton.test.tsx` (standalone RTL render, no api/store mocking needed): the
+  written string is the full URL including the query string; the "Copied" confirmation reverts
+  to "Copy link" after the feedback window (`vi.useFakeTimers({ shouldAdvanceTime: true })` +
+  `advanceTimersByTimeAsync`, the same pattern the Undo-banner tests use); a rejected clipboard
+  write leaves the button reading "Copy link". 55/55 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). PR: see git history.
+
+- [ ] **"?" keyboard-shortcuts help panel.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved, not yet built)* The `l`/`b` like/block shortcuts and the Dropdown
+  arrow-key navigation both shipped but are invisible — nothing tells a user they exist, so
+  almost no one will find them. Pressing `?` toggles a small overlay (`role="dialog"`) listing
+  the shortcuts; `Escape` or clicking outside closes it and returns focus to whatever was
+  focused before it opened. Architect+QA: sound (the shortcuts genuinely exist and are
+  undiscoverable), testable with RTL keydown/focus assertions in the existing vitest setup (no
+  browser/crawl/Docker needed), small — one dialog component plus two tests.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
