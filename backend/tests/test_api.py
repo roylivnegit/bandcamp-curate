@@ -173,6 +173,47 @@ async def test_recompute_unknown_scan_404(client: AsyncClient) -> None:
     assert r.status_code == 404
 
 
+async def test_recompute_no_cooldown_by_default(client: AsyncClient) -> None:
+    # Settings.recompute_cooldown_seconds defaults to 0 (disabled) — two
+    # back-to-back calls both succeed, matching every other recompute test above.
+    r1 = await client.post("/api/recommendations/recompute")
+    r2 = await client.post("/api/recommendations/recompute")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+
+
+async def test_recompute_rate_limited_when_cooldown_enabled(
+    client: AsyncClient, monkeypatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    import app.api.feed as feed_module
+    from app.config import Settings, get_settings
+    from app.main import app
+
+    feed_module._reset_recompute_cooldown_for_tests()
+    app.dependency_overrides[get_settings] = lambda: Settings(recompute_cooldown_seconds=30)
+    try:
+        t0 = datetime(2026, 1, 1, tzinfo=UTC)
+        monkeypatch.setattr(feed_module, "_now", lambda: t0)
+
+        r1 = await client.post("/api/recommendations/recompute")
+        assert r1.status_code == 200
+
+        # Immediately again, same clock reading — still inside the cooldown.
+        r2 = await client.post("/api/recommendations/recompute")
+        assert r2.status_code == 429
+        assert int(r2.headers["Retry-After"]) > 0
+
+        # Advance the clock past the cooldown — the call succeeds again.
+        monkeypatch.setattr(feed_module, "_now", lambda: t0 + timedelta(seconds=31))
+        r3 = await client.post("/api/recommendations/recompute")
+        assert r3.status_code == 200
+    finally:
+        del app.dependency_overrides[get_settings]
+        feed_module._reset_recompute_cooldown_for_tests()
+
+
 async def test_legacy_ui_route_is_not_served(client: AsyncClient) -> None:
     # The old server-rendered feed is unregistered (see app/main.py): its fetch()
     # calls carry no bearer token, so it would render and then silently 401 on

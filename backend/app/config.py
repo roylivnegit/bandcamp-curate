@@ -145,6 +145,14 @@ class Settings(BaseSettings):
     # reorder the feed, never shrink it.
     curation_weighted_co_owners: bool = True
 
+    # API hardening: minimum seconds between one user's calls to
+    # POST /api/recommendations/recompute, which does a full unowned-catalog
+    # scoring pass. 0 = disabled (today's behavior, unchanged) — there is no
+    # manual "Recompute" button in the UI yet (recomputes are automatic,
+    # server-side, after each crawl slice), so this guards scripted/direct
+    # callers rather than a user-facing bug. Enable via env when needed.
+    recompute_cooldown_seconds: int = 0
+
     @property
     def nimble_configured(self) -> bool:
         return bool(self.nimble_api_key)

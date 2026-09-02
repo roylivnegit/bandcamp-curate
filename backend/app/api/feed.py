@@ -2,6 +2,7 @@
 recompute. Read endpoints power the UI; recompute re-runs the curation engine.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -34,6 +35,24 @@ from app.db.session import get_session
 from app.enums import ScanKind
 
 router = APIRouter(prefix="/api", tags=["feed"])
+
+# Per-user cooldown state for POST /recommendations/recompute (see
+# Settings.recompute_cooldown_seconds). In-memory and keyed by user id: this is
+# hardening against a scripted/retry-loop caller, not something that needs to
+# survive a restart or be shared across API processes.
+_last_recompute_at: dict[int, datetime] = {}
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _reset_recompute_cooldown_for_tests() -> None:
+    """Test-only. Module-scope state outlives one test's DB/dependency-override
+    teardown, so a test that enables the cooldown must clear it first —
+    otherwise a leftover timestamp from an earlier test reusing the same
+    (autoincrement-reset) user id would leak in."""
+    _last_recompute_at.clear()
 
 
 async def _resolve_scan_id(
@@ -436,12 +455,27 @@ async def facets(
 @router.post("/recommendations/recompute")
 async def recompute(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
     current_user: User = Depends(get_current_user),
     exclude_seed_tag: list[str] = Query(default=[]),
     scan_id: int | None = Query(None),
 ) -> dict[str, Any]:
     """Recompute one scan's feed (defaults to the collection scan). `exclude_seed_tag`
     drops recs generated from the scan's seeds carrying those genres."""
+    if settings.recompute_cooldown_seconds > 0:
+        now = _now()
+        last = _last_recompute_at.get(current_user.id)
+        if last is not None:
+            remaining = settings.recompute_cooldown_seconds - (now - last).total_seconds()
+            if remaining > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Recompute was called too recently — try again shortly.",
+                    headers={"Retry-After": str(int(remaining) + 1)},
+                )
+        # Recorded before the (potentially slow) curate() call, so two rapid
+        # calls can't both slip past the check while the first is still running.
+        _last_recompute_at[current_user.id] = now
     if scan_id is not None:
         owner = (
             await session.execute(select(Scan.user_id).where(Scan.id == scan_id))

@@ -653,14 +653,33 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   with `If-None-Match` set to that value, assert `304` + empty body; recompute (bumps generation),
   repeat, assert `200` with a new ETag.
 
-- [ ] **Per-user rate limit on `POST /api/recommendations/recompute`.** *(proposed by the hourly
+- [x] **Per-user rate limit on `POST /api/recommendations/recompute`.** *(proposed by the hourly
   routine, 2026-09-02, Architect+QA-approved)* `app/api/feed.py`'s recompute endpoint does a full
   unowned-catalog scoring pass with zero throttling today — confirmed live gap, not speculative.
   No UI button calls it yet (recomputes are automatic, server-side, after each crawl slice), so
-  this guards scripted/direct callers, not a user-facing bug. Track `last_recompute_at` per user;
-  reject a call inside a short cooldown (e.g. 30s) with `429` + `Retry-After`. Verify: `pytest` —
-  call recompute, call again immediately, assert `429` + `Retry-After`; advance a
-  monkeypatched/injected clock past the cooldown, assert the third call returns `200`.
+  this guards scripted/direct callers, not a user-facing bug.
+  Done: new `Settings.recompute_cooldown_seconds` (default `0` = disabled, unchanged behavior —
+  same "off by default, an operator opts in via env" convention as
+  `crawl_max_requests_per_user`/`crawl_max_frontier_size` above). Chose default-off deliberately
+  after finding several existing tests call recompute twice in the same test with no delay between
+  calls (e.g. `test_like_removes_and_excludes_then_unlike`'s like → recompute → unlike → recompute
+  round trip) — a nonzero default would have broken them, and weakening those tests to work around
+  a new feature would be backwards. When enabled, `app/api/feed.py` tracks `_last_recompute_at`
+  per user id (a module-scope in-memory dict — this is scripted-caller hardening, not something
+  that needs to survive a restart) and rejects a call inside the cooldown window with `429` + a
+  `Retry-After` header
+  (seconds remaining, rounded up). The timestamp is recorded *before* `curate()` runs, so two
+  rapid calls can't both slip past the check while the first is still in flight. Time comes from a
+  small `_now()` helper (not an inline `datetime.now(UTC)`) specifically so tests can monkeypatch
+  it. Covered by `test_recompute_no_cooldown_by_default` (two back-to-back calls both succeed,
+  documenting the default) and `test_recompute_rate_limited_when_cooldown_enabled` (overrides
+  `get_settings` to `recompute_cooldown_seconds=30`, monkeypatches `_now`: first call 200, an
+  immediate second call 429 with a positive `Retry-After`, then advancing the mocked clock past
+  the window makes a third call succeed again). A `_reset_recompute_cooldown_for_tests()` helper
+  clears the module-scope dict — needed because pytest's fresh-sqlite-per-test fixture reassigns
+  user id 1 in nearly every test, so a leftover timestamp from an earlier test could otherwise leak
+  into this one, the same class of cross-test leakage the frontend toast primitive hit earlier this
+  cycle. 239/239 backend tests pass (237 + 2 new), ruff clean. PR: see git history.
 
 - [x] **"Copy feed as Markdown" export.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved — confirmed `Recommendation.url` exists end-to-end so no link needs
