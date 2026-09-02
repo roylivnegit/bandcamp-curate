@@ -606,16 +606,23 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   cadence. 84/84 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
   lands inside the `ScanListPage` chunk, its only importer). PR: see git history.
 
-- [ ] **Pending-state microcopy on like/block.** *(proposed by the hourly routine, 2026-09-02,
-  Architect+QA-approved with one caveat)* `FeedCard`'s like/block buttons go `disabled` while
-  `busy` but keep the same label ("♥ like"), so a click reads as unresponsive for roughly
-  `CARD_EXIT_MS` before the card animates out. Swap to "Liking…" / "Blocking…" while busy.
-  **Caveat from QA**: `busy` is currently a single boolean per card (`busyKeys: Set<string>` in
-  `ScanFeedPage.tsx`), not per-action, so it can't yet distinguish "liking" from "blocking" —
-  needs upgrading to carry which action, mirroring the existing `exiting: Record<string,
-  'like'|'block'>` shape already in that file. Still small, self-contained, and testable purely
-  with RTL role/name assertions (`busy=true` → button reads "Liking…"/"Blocking…" and "♥ like" is
-  gone; `busy=false` → the reverse). Not yet built.
+- [x] **Pending-state microcopy on like/block.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved with one caveat)* `FeedCard`'s like/block buttons went `disabled` while
+  busy but kept the same label ("♥ like"), so a click read as unresponsive for roughly
+  `CARD_EXIT_MS` before the card animated out.
+  Done, addressing QA's caveat first: `ScanFeedPage.tsx`'s `busyKeys: Set<string>` (a single
+  boolean per card) became `busy: Record<string, 'like' | 'block'>`, mirroring the existing
+  `exiting` state's per-key/per-action shape — `markBusy(key, action)` now takes the action
+  (`'like' | 'block' | null`) instead of a boolean, so a card can distinguish which button is
+  in flight. `FeedCard`'s `busy: boolean` prop became `busyAction: 'like' | 'block' | null`;
+  both buttons still disable on any in-flight action (`busy = busyAction !== null`), but only
+  the acting one swaps its label — like button reads "Liking…" only when `busyAction === 'like'`,
+  block reads "Blocking…" only when `busyAction === 'block'`, so a like in flight doesn't also
+  relabel the (still-disabled) block button. Covered by four new tests in
+  `FeedCard.test.tsx`'s "pending-state microcopy" block: plain labels when nothing is busy; only
+  the like button relabels (and the block label is untouched) while a like is in flight, and
+  vice versa; both buttons are disabled while either action is in flight. 88/88 frontend tests
+  pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [x] **"Back to top" affordance for long feeds.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved)* The feed grows to hundreds of rows via "load more," but there's no fast
@@ -636,3 +643,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   clicking the button, and asserting both the `scrollTo` call and that the page heading receives
   focus. 85/85 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
   lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **Unlike/unblock from the side panels have no re-entry guard or error handling.**
+  *(found by the hourly routine, 2026-09-02, Option C round 4 — Architect+QA-approved)* Every
+  other mutation in `ScanFeedPage.tsx` (`like`, `block`, `undoRetire`) uses an `inFlight` ref
+  guard and a try/catch → `setError(...)` on failure — this round's pending-state-microcopy item
+  even added visible busy labels for `like`/`block`. `unlike`/`unblock` (called from the
+  Liked/Blocked side panels) were bare `async function`s with neither: a fast double-click could
+  fire the request twice, and a failed request was a silently swallowed unhandled rejection with
+  zero user feedback.
+  Done: `unlike`/`unblock` now follow the exact same shape as `like`/`block` — an `inFlight.
+  current.has(key)` guard, `setError(...)` in a catch block, and a new `panelBusy: Record<string,
+  true>` state (kept separate from `busy`, since a panel row's identity — a liked item's id, a
+  blocked band's id — isn't a feed-card key; new `likedKeyOf`/`blockedKeyOf` module-scope
+  helpers). Per QA's scope-trap warning, the side panels (`SidePanels.tsx`) hold no state of
+  their own — `LikedPanel`/`BlockedPanel` gained a `busy: (item) => boolean` prop that's a pure
+  lookup into `ScanFeedPage`'s single source of truth, so a busy row disables its button and
+  swaps the label to "Unliking…"/"Unblocking…" without inventing a second local busy-tracking
+  mechanism. Covered by three new tests in `feed.test.tsx`'s "unlike/unblock from the side
+  panels" block: the busy label appears and disables the row while an unlike is held behind an
+  unresolved promise, then clears once it resolves; a rejected unblock surfaces a `role="alert"`
+  error and leaves the row usable again (not stuck busy); two rapid clicks on the same row call
+  the API exactly once. 91/91 frontend tests pass, tsc/lint/build clean. PR: see git history.
