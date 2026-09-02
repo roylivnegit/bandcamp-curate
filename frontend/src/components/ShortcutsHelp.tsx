@@ -15,6 +15,11 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
   return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
 }
 
+/** Module scope, not a per-keystroke literal — see `frontend/CLAUDE.md` rule 9. */
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /** A "?"-triggered overlay documenting the feed's keyboard shortcuts (l/b,
  *  Dropdown arrow-key nav), which otherwise ship invisible — nothing else
  *  in the UI tells a reader they exist. */
@@ -46,7 +51,31 @@ export function ShortcutsHelp() {
       if (!panelRef.current?.contains(e.target as Node)) setOpen(false)
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        return
+      }
+      // Focus trap: Tab/Shift+Tab cycle within the panel instead of leaking
+      // out into the page behind it. Queries fresh each press rather than
+      // caching the list once, so it keeps working if the panel's content
+      // ever grows beyond today's single Close button.
+      if (e.key !== 'Tab') return
+      const focusable = panelRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+      if (!focusable || focusable.length === 0) return
+      const list = Array.from(focusable)
+      const first = list[0]
+      const last = list[list.length - 1]
+      const active = document.activeElement
+      const atEdge = !(active instanceof HTMLElement) || !list.includes(active)
+      if (e.shiftKey) {
+        if (atEdge || active === first) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (atEdge || active === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener('mousedown', onDocMouseDown)
     document.addEventListener('keydown', onKeyDown)
