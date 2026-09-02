@@ -14,6 +14,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
-    css: false,
+    // Styling is mocked out everywhere (jsdom doesn't render it, and applying
+    // real CSS to every test is pure overhead) — except `?raw` imports, which
+    // ask for the literal file text on purpose. contrast.test.ts reads
+    // tokens.css this way so it verifies the actual shipped token values,
+    // not a hand-copied duplicate that could drift from them unnoticed.
+    css: { include: [/\.css\?raw$/] },
   },
 })
