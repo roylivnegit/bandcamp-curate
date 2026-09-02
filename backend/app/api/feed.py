@@ -13,7 +13,7 @@ from sqlalchemy.orm import aliased
 from app.auth.security import get_current_user
 from app.config import Settings, get_settings
 from app.crawl.runner import requests_used
-from app.curation.engine import curate
+from app.curation.engine import cold_start_diagnostics, curate
 from app.curation.engine import seed_tags as seed_tag_genres
 from app.db.models import (
     Album,
@@ -91,6 +91,18 @@ class FacetsOut(BaseModel):
     seed_tags: list[Facet]  # genres of your own albums (for the seed-exclusion filter)
 
 
+class ColdStartOut(BaseModel):
+    """Why the feed came back thin or empty for this scan — see
+    `curation.engine.cold_start_diagnostics`."""
+
+    neighbour_count: int
+    candidates: int
+    excluded_owned: int
+    excluded_wishlisted: int
+    excluded_followed: int
+    excluded_blacklisted: int
+
+
 class StatsOut(BaseModel):
     recommendations: int
     fans: int
@@ -103,6 +115,7 @@ class StatsOut(BaseModel):
     liked: int
     requests_used: int
     request_budget: int
+    cold_start: ColdStartOut | None = None
 
 
 async def _count(session: AsyncSession, stmt) -> int:
@@ -225,6 +238,19 @@ async def stats(
         follows = await _count(
             session, select(func.count()).select_from(Follow).where(Follow.fan_id == me)
         )
+    cold_start = None
+    if sid is not None and me is not None:
+        scan = await session.get(Scan, sid)
+        if scan is not None:
+            diag = await cold_start_diagnostics(session, scan, current_user)
+            cold_start = ColdStartOut(
+                neighbour_count=diag.neighbour_count,
+                candidates=diag.candidates,
+                excluded_owned=diag.excluded_by_reason["owned"],
+                excluded_wishlisted=diag.excluded_by_reason["wishlisted"],
+                excluded_followed=diag.excluded_by_reason["followed"],
+                excluded_blacklisted=diag.excluded_by_reason["blacklisted"],
+            )
     return StatsOut(
         recommendations=await _count(
             session,
@@ -242,6 +268,7 @@ async def stats(
         ),
         requests_used=await requests_used(session),
         request_budget=settings.crawl_max_requests,
+        cold_start=cold_start,
     )
 
 

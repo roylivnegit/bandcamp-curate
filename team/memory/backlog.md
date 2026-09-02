@@ -148,20 +148,23 @@ ones.
   before going over 100; do not keep going past the cap on your own judgment. This is the
   ONLY backlog item this key may be used for.
 
-- [ ] **Cold-start feeds give no reason, just emptiness.** *(proposed by the hourly routine,
-  2026-09-02)* A new or niche-taste user finalizes a scan and sees zero or three
-  recommendations with no indication of why — too few neighbours found, vs. everything got
-  excluded by follows/wishlist/blacklist, vs. the crawl just hasn't reached deep enough yet.
-  Add a cheap diagnostic to `/api/stats`: counts of candidates before exclusion,
-  excluded-by-reason (owned/wishlisted/followed/blacklisted), neighbour count — computed
-  during `compute_recommendations`. Architect note: the pre-exclusion count isn't free —
-  today's query applies exclusions in the candidate-selection step itself, so this needs a
-  genuinely separate pre-exclusion count/query, not just instrumentation of existing state;
-  still pytest-only and small. Verify: a fixture with a fan owning 2 albums and 1 neighbour
-  who owns nothing new asserts `neighbour_count=1, candidates=0` rather than a bare empty
-  list; a second fixture where everything gets excluded by follows asserts
-  `excluded_by_reason.followed` is nonzero. Most likely to explain the "is ranking too flat"
-  question the ranking item above is blocked on measuring live.
+- [x] **Cold-start feeds give no reason, just emptiness.** *(proposed by the hourly routine,
+  2026-09-02)* Done: `curation.engine.cold_start_diagnostics(session, scan, user)` is a new,
+  genuinely separate read-only query (not instrumentation of `compute_recommendations`'s
+  existing post-exclusion `candidates` stat) — it recomputes the taste-neighbour set, the
+  distinct pre-exclusion candidate items they own, and tallies why each is excluded
+  (owned/wishlisted/followed/blacklisted; a candidate can count under more than one reason).
+  Wired into `GET /api/stats` as a new `cold_start` object (`neighbour_count`, `candidates`,
+  `excluded_owned`, `excluded_wishlisted`, `excluded_followed`, `excluded_blacklisted`), null
+  when the caller has no scan yet. Covered by
+  `test_cold_start_diagnostics_counts_neighbours_candidates_and_reasons`,
+  `test_cold_start_diagnostics_everything_excluded_by_follows` (asserts
+  `excluded_by_reason.followed` is nonzero and accounts for every candidate),
+  `test_cold_start_diagnostics_no_neighbours`, and an API-level assertion in `test_stats`.
+  235/235 backend tests pass, ruff clean. PR: see git history.
+  **Left open:** no frontend surfacing yet — the data is in `/api/stats` but nothing in
+  `frontend/` reads `cold_start` yet. A follow-up can add the "why is my feed empty" UI on
+  top of this without touching the backend again.
 
 - [ ] **The feed can silently reflow under a user who's mid-scroll.** *(proposed by the hourly
   routine, 2026-09-02)* Because `crawl_curate_each_slice` does wholesale clear+insert while a
