@@ -103,6 +103,16 @@ export function ScanFeedPage() {
    * as state it would force the handlers to depend on it, un-memoizing every card
    * on each click. `busy` above is the render-visible half. */
   const inFlight = useRef<Set<string>>(new Set())
+  /* `retire`'s pending exit-animation timeout ids, keyed by card key — lets a
+   * failed optimistic like/block cancel the animation before it removes the
+   * row, instead of removing-then-reinserting. A ref: purely bookkeeping for
+   * `cancelRetire`, never rendered. */
+  const retireTimers = useRef<Record<string, number>>({})
+  /* The index a card was actually spliced out of `rows` at, recorded once
+   * `retire`'s timeout fires. `cancelRetire` reads this (not `undo` state,
+   * which can be stale in a closure captured before `armUndo` ran) to splice
+   * a failed optimistic retirement back into roughly the same spot. */
+  const retiredIndex = useRef<Record<string, number>>({})
   /* The generation the currently-rendered page was fetched under. A ref, not
    * state: it only feeds the reflow check below, never renders on its own. */
   const prevGeneration = useRef<number | null>(null)
@@ -317,12 +327,15 @@ export function ScanFeedPage() {
   }, [scanId, clearUndoTimer])
 
   /** Animate the card out, then drop it and any sibling by the same band —
-   *  curation excludes the whole band, so the live feed should match. */
+   *  curation excludes the whole band, so the live feed should match. Called
+   *  optimistically, before the like/block request resolves — `cancelRetire`
+   *  below is what undoes this if that request then fails. */
   const retire = useCallback(
     (rec: Recommendation, kind: 'like' | 'block') => {
       const key = keyOf(rec)
       setExiting((prev) => ({ ...prev, [key]: kind }))
-      window.setTimeout(() => {
+      const timerId = window.setTimeout(() => {
+        delete retireTimers.current[key]
         let removedAt = -1
         setRows((prev) => {
           const next: Recommendation[] = []
@@ -336,6 +349,7 @@ export function ScanFeedPage() {
           })
           return next
         })
+        retiredIndex.current[key] = removedAt
         setExiting((prev) => {
           const next = { ...prev }
           delete next[key]
@@ -344,8 +358,53 @@ export function ScanFeedPage() {
         setTotal((t) => (t === null ? t : Math.max(0, t - 1)))
         armUndo(rec, kind, removedAt)
       }, CARD_EXIT_MS)
+      retireTimers.current[key] = timerId
     },
     [armUndo],
+  )
+
+  /** Reverts an optimistic `retire()` whose like/block request then failed.
+   *  If the exit animation hadn't finished yet, this just cancels its timer —
+   *  the row was never actually removed from `rows`. If it had already fired
+   *  (the row is gone and "Undo" may already be armed for it), splice the row
+   *  back in at the index it was removed from and drop that now-meaningless
+   *  undo offer — there's nothing left to undo, the failure already reverted
+   *  it. Deliberately does not touch facets/liked/blocked: those are only
+   *  ever loaded after a *successful* like/block, so there is nothing on
+   *  that side to roll back. */
+  const cancelRetire = useCallback(
+    (rec: Recommendation) => {
+      const key = keyOf(rec)
+      const timerId = retireTimers.current[key]
+      if (timerId !== undefined) {
+        window.clearTimeout(timerId)
+        delete retireTimers.current[key]
+        setExiting((prev) => {
+          if (!(key in prev)) return prev
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+        return
+      }
+      const index = retiredIndex.current[key]
+      delete retiredIndex.current[key]
+      setUndo((prev) => {
+        if (prev && keyOf(prev.rec) === key) {
+          clearUndoTimer()
+          return null
+        }
+        return prev
+      })
+      setRows((prev) => {
+        if (prev.some((r) => keyOf(r) === key)) return prev
+        const next = [...prev]
+        next.splice(index === undefined || index === -1 ? next.length : Math.min(index, next.length), 0, rec)
+        return next
+      })
+      setTotal((t) => (t === null ? t : t + 1))
+    },
+    [clearUndoTimer],
   )
 
   const like = useCallback(
@@ -354,19 +413,22 @@ export function ScanFeedPage() {
       if (inFlight.current.has(key)) return
       inFlight.current.add(key)
       markBusy(key, 'like')
+      // Optimistic: animate the card out right away rather than waiting on
+      // the round trip, and only revert if the request actually fails.
+      retire(rec, 'like')
       try {
         const ref = rec.album_id !== null ? { album_id: rec.album_id } : { track_id: rec.track_id! }
         await api.like(ref)
-        retire(rec, 'like')
         await Promise.all([loadLiked(), loadFacets()])
       } catch (err) {
+        cancelRetire(rec)
         setError(err instanceof Error ? err.message : 'Could not save that like.')
       } finally {
         inFlight.current.delete(key)
         markBusy(key, null)
       }
     },
-    [markBusy, retire, loadLiked, loadFacets],
+    [markBusy, retire, cancelRetire, loadLiked, loadFacets],
   )
 
   const block = useCallback(
@@ -375,18 +437,19 @@ export function ScanFeedPage() {
       if (rec.band_id === null || inFlight.current.has(key)) return
       inFlight.current.add(key)
       markBusy(key, 'block')
+      retire(rec, 'block')
       try {
         await api.block(rec.band_id)
-        retire(rec, 'block')
         await Promise.all([loadBlocked(), loadFacets()])
       } catch (err) {
+        cancelRetire(rec)
         setError(err instanceof Error ? err.message : 'Could not block that artist.')
       } finally {
         inFlight.current.delete(key)
         markBusy(key, null)
       }
     },
-    [markBusy, retire, loadBlocked, loadFacets],
+    [markBusy, retire, cancelRetire, loadBlocked, loadFacets],
   )
 
   const onBandClick = useCallback(
