@@ -228,12 +228,15 @@ function ContainsDropdown({ filters }: { filters: FeedFilters }) {
 }
 
 function ActivePills({ filters }: { filters: FeedFilters }) {
-  const hasAny =
-    Object.keys(filters.tags).length > 0 ||
-    Object.keys(filters.tagContains).length > 0 ||
-    filters.label !== null
+  const tagCount = Object.keys(filters.tags).length
+  const containsCount = Object.keys(filters.tagContains).length
+  // Facets, not individual pills — three genre tags plus an artist is still
+  // two things to clear, not four, so "Clear all" shows up exactly when
+  // there's more than one group a reader would otherwise remove one pill at
+  // a time.
+  const facetCount = (tagCount > 0 ? 1 : 0) + (containsCount > 0 ? 1 : 0) + (filters.label ? 1 : 0)
 
-  if (!hasAny) return null
+  if (facetCount === 0) return null
 
   return (
     <div className="active">
@@ -269,6 +272,11 @@ function ActivePills({ filters }: { filters: FeedFilters }) {
             ×
           </button>
         </span>
+      )}
+      {facetCount >= 2 && (
+        <button type="button" className="clearall" onClick={filters.reset}>
+          Clear all filters
+        </button>
       )}
     </div>
   )
