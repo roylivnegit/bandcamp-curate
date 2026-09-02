@@ -92,6 +92,7 @@ class FakeCollectionClient:
         self._wishlist = wishlist or []
         self.per_page = per_page
         self.pages_fetched = 0  # how many pagination requests this fake served
+        self.scan_ids_seen: list[int | None] = []
 
     def _page(self, source: list[ParsedItem], token: str):  # noqa: ANN202
         start = int(token) if str(token).isdigit() else 0
@@ -103,8 +104,10 @@ class FakeCollectionClient:
     async def fetch_page(
         self, fan_id: int, older_than_token: str, *,
         count: int | None = None, url: str = COLLECTION_ITEMS_URL,
+        scan_id: int | None = None,
     ) -> tuple[list[ParsedItem], str | None, bool]:
         self.pages_fetched += 1
+        self.scan_ids_seen.append(scan_id)
         source = self._wishlist if url == WISHLIST_ITEMS_URL else self._items
         return self._page(source, older_than_token)
 
@@ -122,11 +125,13 @@ class FakeSupportersClient:
 
     def __init__(self, supporters: list[ParsedSupporter] | None = None) -> None:
         self._supporters = supporters or []
+        self.scan_ids_seen: list[int | None] = []
 
     async def iter_supporters(
         self, tralbum_id: int, start_token: str, *, tralbum_type: str = "a",
-        max_pages: int = 100,
+        max_pages: int = 100, scan_id: int | None = None,
     ) -> AsyncIterator[ParsedSupporter]:
+        self.scan_ids_seen.append(scan_id)
         for s in self._supporters:
             yield s
 
@@ -239,6 +244,9 @@ async def test_crawl_fan_collection_ingests_and_enqueues_albums(
     ).scalars().all()
     assert [t.url for t in tracks] == [TRACK_URL]
     assert outcome.enqueued == len(albums) + len(tracks) == 3
+    # The pagination fetch must carry the crawl's scan_id — that's what lets
+    # `provider_usage`/the per-user budget attribute it, same as page renders.
+    assert client.scan_ids_seen == [SCAN]
 
 
 async def test_crawl_fan_collection_propagates_depth_to_owned_items(
@@ -315,6 +323,7 @@ async def test_no_open_transaction_while_fetching_an_album(
 
     assert fetcher.in_tx == [False]  # the page render
     assert supporters.in_tx == [False]  # …and the pagination after it
+    assert supporters.scan_ids_seen == [SCAN]  # attributed like the render
 
 
 async def test_no_open_transaction_while_fetching_a_fan_collection(
@@ -1191,7 +1200,7 @@ async def test_collection_client_routes_through_gateway() -> None:
         "last_token": "t1", "more_available": False,
     })
     client = CollectionApiClient(gateway=gw)
-    items, tok, more = await client.fetch_page(9985893, "t0")
+    items, tok, more = await client.fetch_page(9985893, "t0", scan_id=7)
     assert [i.item_id for i in items] == [1] and tok == "t1"
 
     import json as _json
@@ -1200,6 +1209,9 @@ async def test_collection_client_routes_through_gateway() -> None:
     assert req.url.endswith("/collection_items")
     body = _json.loads(req.extra["body"])
     assert body["fan_id"] == 9985893 and body["older_than_token"] == "t0"
+    # Pagination fetches must carry the scan_id, same as page renders, so
+    # `provider_usage`/the per-user crawl budget can attribute them.
+    assert req.scan_id == 7
 
 
 def test_cache_key_is_body_aware() -> None:
@@ -1271,11 +1283,14 @@ class FakeFollowsClient:
         self._bands = bands or []
         self.per_page = per_page
         self.pages_fetched = 0
+        self.scan_ids_seen: list[int | None] = []
 
     async def fetch_page(
-        self, fan_id: int, older_than_token: str, *, count: int | None = None
+        self, fan_id: int, older_than_token: str, *,
+        count: int | None = None, scan_id: int | None = None,
     ) -> tuple[list[ParsedBand], str | None, bool]:
         self.pages_fetched += 1
+        self.scan_ids_seen.append(scan_id)
         start = int(older_than_token) if str(older_than_token).isdigit() else 0
         chunk = self._bands[start:start + self.per_page]
         nxt = start + self.per_page

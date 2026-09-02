@@ -57,6 +57,7 @@ class SupportersApiClient:
         *,
         tralbum_type: str = "a",
         count: int | None = None,
+        scan_id: int | None = None,
     ) -> tuple[list[ParsedSupporter], str | None, bool]:
         """Fetch one page → (supporters, last_token, more_available)."""
         payload = {
@@ -66,7 +67,9 @@ class SupportersApiClient:
             "count": count or self._count,
         }
         if self._gateway is not None:
-            body = await post_json_via_nimble(self._gateway, THUMBS_URL, payload)
+            body = await post_json_via_nimble(
+                self._gateway, THUMBS_URL, payload, scan_id=scan_id
+            )
         else:
             client = self._client or httpx.AsyncClient(timeout=30.0, headers=_DEFAULT_HEADERS)
             owns_client = self._client is None
@@ -86,6 +89,7 @@ class SupportersApiClient:
         *,
         tralbum_type: str = "a",
         max_pages: int = 100,
+        scan_id: int | None = None,
     ) -> AsyncIterator[ParsedSupporter]:
         """Yield every supporter after `start_token`, following pagination to the end."""
         token: str | None = start_token
@@ -93,7 +97,7 @@ class SupportersApiClient:
             if not token:
                 return
             supporters, last_token, more = await self.fetch_page(
-                tralbum_id, token, tralbum_type=tralbum_type
+                tralbum_id, token, tralbum_type=tralbum_type, scan_id=scan_id
             )
             for s in supporters:
                 yield s
