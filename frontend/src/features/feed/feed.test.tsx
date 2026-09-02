@@ -1166,3 +1166,68 @@ describe('density toggle', () => {
     )
   })
 })
+
+describe('command palette', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const twoScans = [fakeScan, { ...fakeScan, id: 2, name: 'Psy dig', kind: 'custom' as const }]
+
+  // '/api/scans/2' before '/api/scans' — mockFetch matches by substring in
+  // order, and the bare list route would otherwise swallow the scan-2 route.
+  const routes: Array<[string, unknown, number?]> = [
+    ['/api/auth/me', fakeMe],
+    ['/api/scans/2', { ...twoScans[1], seeds: [] }],
+    ['/api/scans', twoScans],
+    ['/api/recommendations/count', { count: 0 }],
+    ['/api/recommendations', []],
+    ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+    ['/api/likes', []],
+    ['/api/blacklist', []],
+  ]
+
+  it('opens on Ctrl+K and lists a jump-to-Scans action plus every scan', async () => {
+    mockFetch(routes)
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Go to Scans' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /My collection/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Psy dig' })).toBeInTheDocument()
+  })
+
+  it('filters by typed text, and Enter on the highlighted row navigates there', async () => {
+    mockFetch(routes)
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    const input = await screen.findByRole('textbox', { name: 'Jump to…' })
+    fireEvent.change(input, { target: { value: 'psy' } })
+
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await screen.findByRole('heading', { name: /Psy dig/ })
+    expect(currentLocation().pathname).toBe('/scans/2')
+  })
+
+  it('a mouse click on a scan option navigates there too', async () => {
+    mockFetch(routes)
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    fireEvent.click(await screen.findByRole('option', { name: 'Psy dig' }))
+
+    await screen.findByRole('heading', { name: /Psy dig/ })
+    expect(currentLocation().pathname).toBe('/scans/2')
+  })
+})

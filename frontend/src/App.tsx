@@ -1,8 +1,11 @@
-import { Suspense, lazy } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Suspense, lazy, useCallback, useState } from 'react'
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 
+import { api } from './api/client'
+import type { Scan } from './api/types'
 import { useAuth } from './auth/context'
 import { AppHeader } from './components/AppHeader'
+import { CommandPalette, type CommandAction } from './components/CommandPalette'
 import { ToastStack } from './components/ToastStack'
 
 /* Split on the auth boundary. The two branches below never render together, so
@@ -22,6 +25,29 @@ const Loading = <p className="empty">Loading…</p>
 
 export default function App() {
   const { me, loading } = useAuth()
+  const navigate = useNavigate()
+  const [scans, setScans] = useState<Scan[]>([])
+
+  // The command palette only ever needs a fresh scan list while it's open —
+  // refetching on every render (or on a poll) would be wasted work the rest
+  // of the time. `[]` deps: this never depends on anything that changes.
+  const loadScansForPalette = useCallback(() => {
+    void api.listScans().then(setScans).catch(() => {})
+  }, [])
+
+  // Built fresh each render (cheap: at most a handful of scans), not memoized
+  // — `run` closures capture `navigate`, which react-router already keeps
+  // referentially stable, so there's no unstable-identity churn to guard
+  // against here the way there is for the per-row feed-card callbacks.
+  const paletteActions: CommandAction[] = [
+    { id: 'nav-scans', label: 'Go to Scans', run: () => navigate('/scans') },
+    ...scans.map((s) => ({
+      id: `nav-scan-${s.id}`,
+      label: s.name,
+      hint: s.kind === 'collection' ? 'your collection' : 'scan',
+      run: () => navigate(`/scans/${s.id}`),
+    })),
+  ]
 
   // Don't flash the login screen while a stored token is still being resolved.
   if (loading) {
@@ -51,6 +77,7 @@ export default function App() {
       </a>
       <AppHeader />
       <ToastStack />
+      <CommandPalette actions={paletteActions} onOpen={loadScansForPalette} />
       <main id="main-content">
         <Suspense fallback={<div className="wrap">{Loading}</div>}>
           <Routes>
