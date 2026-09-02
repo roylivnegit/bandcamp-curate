@@ -549,6 +549,155 @@ describe('undo after like/block', () => {
   })
 })
 
+describe('optimistic like/block', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  it('starts the exit animation immediately, without waiting for the like request to resolve', async () => {
+    let releaseLike = () => {}
+    const likeHeld = new Promise<void>((resolve) => {
+      releaseLike = resolve
+    })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes') && method === 'POST') {
+          await likeHeld
+          return json({})
+        }
+        if (url.includes('/api/likes')) return json([])
+        if (url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+
+    // The exit animation is already running even though the like request is
+    // still in flight — that's the optimistic part. Previously this card
+    // wouldn't even start leaving until the request round-tripped. Asserted
+    // synchronously, not via waitFor: `retire()` sets this class before
+    // `like()`'s first `await`, in the same tick as the click.
+    expect(screen.getByRole('article')).toHaveClass('likeing')
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+
+    await act(async () => {
+      releaseLike()
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  })
+
+  it('reverts the optimistic like and shows an error if the request fails before the exit animation finishes', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', {}, 500],
+      ['/api/blacklist', []],
+    ])
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+
+    // Let the failed request's rejection reach the catch handler well before
+    // CARD_EXIT_MS would have removed the row.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.getByRole('article')).not.toHaveClass('likeing')
+    expect(await screen.findByText('Request failed (500)')).toBeInTheDocument()
+
+    // The animation timer was cancelled, not just outrun — advancing past
+    // CARD_EXIT_MS must not belatedly remove a card the failure already put
+    // back.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+  })
+
+  it('reverts a failed optimistic block after the row was already removed, clearing the Undo it armed', async () => {
+    // A held gate on the POST specifically: a mocked fetch otherwise resolves
+    // fast enough that the failure would routinely beat CARD_EXIT_MS, which
+    // would only ever exercise `cancelRetire`'s "timer still pending" path.
+    // This test is for the other path — the row already gone, Undo armed.
+    let releaseBlock = () => {}
+    const blockHeld = new Promise<void>((resolve) => {
+      releaseBlock = resolve
+    })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes')) return json([])
+        if (url.includes('/api/blacklist') && method === 'POST') {
+          await blockHeld
+          return json({}, 500)
+        }
+        if (url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '⊘ block' }))
+
+    // Let the exit timer fire and remove the row (and arm Undo for it) while
+    // the request is still held.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+    expect(screen.queryByText('Eyes of Infinity')).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Undo' })).toBeInTheDocument()
+
+    await act(async () => {
+      releaseBlock()
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.getByText('Request failed (500)')).toBeInTheDocument()
+    // Nothing left to undo — the failure already restored the card.
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+  })
+})
+
 describe('unlike/unblock from the side panels', () => {
   beforeEach(() => {
     localStorage.clear()

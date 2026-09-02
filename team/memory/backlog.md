@@ -773,3 +773,30 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   unresolved promise, then clears once it resolves; a rejected unblock surfaces a `role="alert"`
   error and leaves the row usable again (not stuck busy); two rapid clicks on the same row call
   the API exactly once. 91/91 frontend tests pass, tsc/lint/build clean. PR: see git history.
+
+- [x] **Optimistic like/block, with rollback on failure.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved with a scoping caveat)* Like/block already awaited the
+  network round trip *before* even starting the card's exit animation (`CARD_EXIT_MS`, 800ms),
+  so every click felt laggy compared to a modern app — the wait was pure dead time, since the
+  card was going to leave either way once the request succeeded.
+  Done, scoped per QA's caveat (row removal/re-insertion only, facets/liked/blocked untouched on
+  failure — those are only ever loaded after a *successful* call, so there's nothing on that side
+  to roll back): `retire(rec, kind)` — previously called only after `await api.like/block()`
+  resolved — is now called immediately on click, before that await, so the exit animation starts
+  in the same tick as the click. `retire`'s exit-timer id is now tracked in a new `retireTimers`
+  ref (keyed by card key), and the index a card was actually spliced out of `rows` at is recorded
+  in a new `retiredIndex` ref once that timer fires (not read from `undo` state, which can be
+  stale in a closure captured before `armUndo` ran). A new `cancelRetire(rec)`, called from
+  `like`/`block`'s catch block, undoes the optimistic `retire()`: if the exit timer hasn't fired
+  yet, it just clears the timer and the `exiting` CSS class — the row was never actually removed
+  from `rows`; if the timer already fired (the row is gone and "Undo" may already be armed for
+  it), it splices the row back in at its recorded index and drops that now-meaningless undo offer
+  — the failure already reverted it, so there's nothing left to undo. Covered by three new tests
+  in `feed.test.tsx`'s "optimistic like/block" block: a held-promise gate on the like request
+  proves the exit animation's CSS class is applied synchronously on click, before the request
+  resolves; a like that fails before `CARD_EXIT_MS` elapses restores the card and shows the
+  error, and advancing past `CARD_EXIT_MS` afterward doesn't belatedly remove it (the timer was
+  cancelled, not outrun); a block whose failure is deliberately held until *after* the exit timer
+  already fired and armed Undo restores the card, shows the error, and clears the now-stale Undo
+  button. 109/109 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
+  history.
