@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pings crate-digger-api's /health every 10 minutes so Render's free plan doesn't spin
+  the service down between visits (see CLAUDE.md's "M6 cloud deploy" section for why the
+  API sleeps after ~15 min idle -- a cold start then takes 30s-3min).
+
+  Install:
+      cp ops/ai.crate-digger.keepalive.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/ai.crate-digger.keepalive.plist
+
+  Uninstall:
+      launchctl unload ~/Library/LaunchAgents/ai.crate-digger.keepalive.plist
+      rm ~/Library/LaunchAgents/ai.crate-digger.keepalive.plist
+
+  This isn't a full fix. If the Mac is asleep (lid closed), the pings stop too, and the
+  API will still be cold on your next visit. It only helps for the "nobody's looked at it
+  in a while, but the Mac was awake" case. If that's not enough, the real fix is Render's
+  paid Starter plan on crate-digger-api, which removes the spin-down entirely.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.crate-digger.keepalive</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/roylivne/crate-digger/ops/render-keepalive.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/roylivne/crate-digger</string>
+
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/roylivne/crate-digger/ops/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/roylivne/crate-digger/ops/logs/launchd.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Do not fight the user for the machine. This is background work. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>
