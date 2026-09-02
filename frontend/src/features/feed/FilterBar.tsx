@@ -1,7 +1,8 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 
-import type { Facet, SortKey } from '../../api/types'
+import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { CopyLinkButton } from '../../components/CopyLinkButton'
+import { CopyMarkdownButton } from '../../components/CopyMarkdownButton'
 import { Dropdown } from '../../components/Dropdown'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
@@ -21,6 +22,7 @@ const TYPES: Array<{ value: '' | 'album' | 'track'; label: string }> = [
 export function FilterBar({
   filters,
   facetTags,
+  rows,
   likedCount,
   blockedCount,
   panel,
@@ -28,6 +30,7 @@ export function FilterBar({
 }: {
   filters: FeedFilters
   facetTags: Facet[]
+  rows: Recommendation[]
   likedCount: number
   blockedCount: number
   panel: 'liked' | 'blocked' | null
@@ -77,6 +80,7 @@ export function FilterBar({
         <div className="spacer" />
 
         <CopyLinkButton />
+        <CopyMarkdownButton rows={rows} />
         <button
           type="button"
           className={`btn ghost${panel === 'liked' ? ' on' : ''}`}
