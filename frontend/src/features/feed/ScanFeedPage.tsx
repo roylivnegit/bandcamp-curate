@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '../../api/types'
+import { BulkActionBar } from '../../components/BulkActionBar'
 import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
@@ -96,6 +97,12 @@ export function ScanFeedPage() {
    *  the input; the query itself never leaves this page. */
   const [quickQuery, setQuickQuery] = useState('')
   const quickFilterRef = useRef<HTMLInputElement>(null)
+  /** Bulk-select mode: a set of card keys (see `keyOf`) chosen for a bulk
+   *  action. Off by default; toggling it off also clears the selection so a
+   *  stale set can't linger for the next time it's turned on. */
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
@@ -363,6 +370,14 @@ export function ScanFeedPage() {
     setQuickQuery('')
   }, [scanId])
 
+  // Same reasoning as the quick-filter reset above: a bulk selection made on
+  // one scan's feed would be meaningless (and reference rows that don't
+  // exist) after navigating to another scan via the same route element.
+  useEffect(() => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }, [scanId])
+
   /** Animate the card out, then drop it and any sibling by the same band —
    *  curation excludes the whole band, so the live feed should match. Called
    *  optimistically, before the like/block request resolves — `cancelRetire`
@@ -499,6 +514,45 @@ export function ScanFeedPage() {
   )
 
   const dismissListUpdated = useCallback(() => setListUpdated(false), [])
+
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode((prev) => {
+      if (prev) setSelected(new Set())
+      return !prev
+    })
+  }, [])
+
+  const toggleSelect = useCallback((rec: Recommendation) => {
+    const key = keyOf(rec)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const cancelSelect = useCallback(() => {
+    setSelected(new Set())
+  }, [])
+
+  /** Calls the existing per-card `block` handler once per selected row —
+   *  same optimistic retire/undo/error handling as a single click, just
+   *  fired in a batch. Clears the selection once every call has settled,
+   *  regardless of outcome; `block` itself already reports any individual
+   *  failure via `setError`. */
+  const bulkBlock = useCallback(async () => {
+    const targets = rows.filter((r) => selected.has(keyOf(r)))
+    if (targets.length === 0) return
+    setBulkBusy(true)
+    try {
+      await Promise.all(targets.map((r) => block(r)))
+    } finally {
+      setBulkBusy(false)
+      setSelected(new Set())
+      setSelectMode(false)
+    }
+  }, [rows, selected, block])
 
   // Purely a view filter over what's already loaded — no re-fetch, and the
   // query never reaches the API. An empty query is the identity filter, so
@@ -667,6 +721,15 @@ export function ScanFeedPage() {
             quickQuery={quickQuery}
             onQuickQueryChange={setQuickQuery}
             quickFilterRef={quickFilterRef}
+            selectMode={selectMode}
+            onToggleSelectMode={toggleSelectMode}
+          />
+
+          <BulkActionBar
+            count={selected.size}
+            busy={bulkBusy}
+            onBlock={() => void bulkBlock()}
+            onCancel={cancelSelect}
           />
 
           {panel === 'liked' && (
@@ -755,10 +818,13 @@ export function ScanFeedPage() {
                       active={i === activeCardIndex}
                       exiting={exiting[key] ?? null}
                       busyAction={busy[key] ?? null}
+                      selectMode={selectMode}
+                      selected={selected.has(key)}
                       onLike={like}
                       onBlock={block}
                       onTagClick={includeTag}
                       onBandClick={onBandClick}
+                      onToggleSelect={toggleSelect}
                     />
                   )
                 })}

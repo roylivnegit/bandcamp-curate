@@ -18,10 +18,13 @@ export const FeedCard = memo(function FeedCard({
   active,
   exiting,
   busyAction,
+  selectMode,
+  selected,
   onLike,
   onBlock,
   onTagClick,
   onBandClick,
+  onToggleSelect,
 }: {
   rec: Recommendation
   /** DOM id, so the roving-tabindex handler in `ScanFeedPage` can focus this
@@ -36,10 +39,15 @@ export const FeedCard = memo(function FeedCard({
    *  acting one's label to "Liking…"/"Blocking…" — not just a bare disabled,
    *  which read as unresponsive for the gap before the card animates out. */
   busyAction: 'like' | 'block' | null
+  /** Bulk-select mode, toggled from the filter bar. Only cards with a band
+   *  can be selected — bulk-block, the only bulk action today, needs one. */
+  selectMode: boolean
+  selected: boolean
   onLike: (rec: Recommendation) => void
   onBlock: (rec: Recommendation) => void
   onTagClick: (tag: string) => void
   onBandClick: (rec: Recommendation) => void
+  onToggleSelect: (rec: Recommendation) => void
 }) {
   const busy = busyAction !== null
   const co = rec.reasons.co_owners ?? 0
@@ -72,6 +80,16 @@ export const FeedCard = memo(function FeedCard({
       tabIndex={active ? 0 : -1}
       onKeyDown={onCardKeyDown}
     >
+      {selectMode && rec.band_id !== null && (
+        <input
+          type="checkbox"
+          className="card-select"
+          aria-label={`Select ${rec.title || 'this recommendation'}`}
+          checked={selected}
+          onChange={() => onToggleSelect(rec)}
+        />
+      )}
+
       <div className="score" title="Recommendation score">
         <b className="num">{rec.score.toFixed(1)}</b>
         <span>score</span>

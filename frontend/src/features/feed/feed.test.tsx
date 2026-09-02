@@ -419,6 +419,80 @@ describe('scan feed', () => {
 
     expect(document.activeElement).toBe(screen.getByPlaceholderText('Filter loaded cards (/)'))
   })
+
+  const bulkRecs = [
+    fakeRec({ album_id: 1, band_id: 101, title: 'First album', band_name: 'Band One' }),
+    fakeRec({ album_id: 2, band_id: 102, title: 'Second album', band_name: 'Band Two' }),
+    fakeRec({ album_id: 3, band_id: 103, title: 'Third album', band_name: 'Band Three' }),
+  ]
+
+  it('offers no checkboxes or bulk bar until select mode is turned on', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+  })
+
+  it('selecting two cards and clicking "Block selected" blocks exactly those two bands, then clears the selection', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes).toHaveLength(3)
+
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    expect(await screen.findByText('2')).toBeInTheDocument()
+    expect(screen.getByText('selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Block selected' }))
+
+    await waitFor(() => {
+      const blockCalls = fetchMock.mock.calls.filter(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      })
+      expect(blockCalls).toHaveLength(2)
+      const blockedIds = blockCalls
+        .map(([, init]) => JSON.parse(String(init?.body)).band_id)
+        .sort((a: number, b: number) => a - b)
+      expect(blockedIds).toEqual([101, 102])
+    })
+
+    // Selection clears and select mode exits once the batch settles.
+    await waitFor(() => {
+      expect(screen.queryByText('selected')).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    })
+  })
+
+  it('"Cancel" in the bulk bar clears the selection without blocking anything', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    await user.click(screen.getAllByRole('checkbox')[0])
+    expect(await screen.findByText('1')).toBeInTheDocument()
+    expect(screen.getByText('selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      }),
+    ).toBe(false)
+  })
 })
 
 describe('focus on route change', () => {

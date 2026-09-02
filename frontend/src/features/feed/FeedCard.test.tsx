@@ -5,13 +5,19 @@ import { fakeRec } from '../../test/renderApp'
 import { FeedCard } from './FeedCard'
 
 function renderCard(
-  over: { busyAction?: 'like' | 'block' | null; bandId?: number | null } = {},
+  over: {
+    busyAction?: 'like' | 'block' | null
+    bandId?: number | null
+    selectMode?: boolean
+    selected?: boolean
+  } = {},
 ) {
   const rec = fakeRec(over.bandId === undefined ? {} : { band_id: over.bandId })
   const onLike = vi.fn()
   const onBlock = vi.fn()
   const onTagClick = vi.fn()
   const onBandClick = vi.fn()
+  const onToggleSelect = vi.fn()
   render(
     <FeedCard
       rec={rec}
@@ -19,13 +25,16 @@ function renderCard(
       active
       exiting={null}
       busyAction={over.busyAction ?? null}
+      selectMode={over.selectMode ?? false}
+      selected={over.selected ?? false}
       onLike={onLike}
       onBlock={onBlock}
       onTagClick={onTagClick}
       onBandClick={onBandClick}
+      onToggleSelect={onToggleSelect}
     />,
   )
-  return { rec, onLike, onBlock, onTagClick, onBandClick }
+  return { rec, onLike, onBlock, onTagClick, onBandClick, onToggleSelect }
 }
 
 describe('FeedCard keyboard shortcuts', () => {
@@ -110,5 +119,33 @@ describe('FeedCard pending-state microcopy', () => {
 
     expect(screen.getByRole('button', { name: 'Liking…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '⊘ block' })).toBeDisabled()
+  })
+})
+
+describe('FeedCard bulk select', () => {
+  it('shows no checkbox outside select mode', () => {
+    renderCard()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+  })
+
+  it('shows an unchecked checkbox in select mode for a card with a band', () => {
+    renderCard({ selectMode: true })
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+  })
+
+  it('offers no checkbox in select mode for a card with no band', () => {
+    renderCard({ selectMode: true, bandId: null })
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+  })
+
+  it('reflects the selected prop and calls onToggleSelect when clicked', () => {
+    const { onToggleSelect, rec } = renderCard({ selectMode: true, selected: true })
+    const box = screen.getByRole('checkbox')
+    expect(box).toBeChecked()
+
+    fireEvent.click(box)
+
+    expect(onToggleSelect).toHaveBeenCalledTimes(1)
+    expect(onToggleSelect).toHaveBeenCalledWith(rec)
   })
 })

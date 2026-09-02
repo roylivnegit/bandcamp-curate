@@ -35,6 +35,8 @@ export function FilterBar({
   quickQuery,
   onQuickQueryChange,
   quickFilterRef,
+  selectMode,
+  onToggleSelectMode,
 }: {
   filters: FeedFilters
   facetTags: Facet[]
@@ -48,6 +50,8 @@ export function FilterBar({
   quickQuery: string
   onQuickQueryChange: (q: string) => void
   quickFilterRef: RefObject<HTMLInputElement | null>
+  selectMode: boolean
+  onToggleSelectMode: () => void
 }) {
   return (
     <div className="filterbar">
@@ -108,6 +112,14 @@ export function FilterBar({
           onClick={onToggleDensity}
         >
           {density === 'compact' ? '☰ Compact' : '☰ Comfortable'}
+        </button>
+        <button
+          type="button"
+          className={`btn ghost${selectMode ? ' on' : ''}`}
+          aria-pressed={selectMode}
+          onClick={onToggleSelectMode}
+        >
+          {selectMode ? '✕ Cancel select' : '☑ Select'}
         </button>
         <CopyLinkButton />
         <CopyMarkdownButton rows={rows} />
