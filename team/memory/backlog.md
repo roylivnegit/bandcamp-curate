@@ -359,3 +359,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   the list heading gets focus again) — a real `MemoryRouter` navigation each way, not just two
   independent mounts. 35/35 frontend tests pass, tsc/lint/build clean (chunk split intact). PR:
   see git history.
+
+- [x] **Keyboard shortcuts for like/block on a focused card.** *(proposed by the hourly routine,
+  2026-09-02)* Triaging recommendations is mouse-only right now, which is slow and doesn't match
+  the "focus moves to heading" accessibility work already landed.
+  Done: `FeedCard.tsx` gets a single `onKeyDown` listener on the `<article>` — any focused element
+  inside the card (a tag chip, the band button, the action buttons themselves) already bubbles
+  its keydown up there, so no extra `tabIndex`/focus wiring was needed. `l` likes, `b` blocks
+  (only when `rec.band_id !== null`, matching the block button's own existence check); a held
+  modifier key (ctrl/meta/alt) is left alone so OS/browser shortcuts aren't hijacked, and `busy`
+  gates it the same way it already disables the click handlers. `aria-keyshortcuts="l"`/`"b"` on
+  the two action buttons for discoverability. Covered by five new tests in the new
+  `FeedCard.test.tsx` (a standalone RTL render, no full-app/API mocking needed since `FeedCard`
+  has no router/api dependency of its own): `l` calls `onLike` with the card's rec regardless of
+  which element inside the card has focus; same for `b`/`onBlock`; busy suppresses it; a held
+  modifier key suppresses it; a card with no band offers no block shortcut and swallows `b`.
+  43/43 frontend tests pass, tsc/lint/build clean (chunk split intact).
+  Two other Product proposals from this round were cut before building: a "guard double-submit on
+  Recompute" idea (there's no manual Recompute button in the UI to guard — recomputes are
+  automatic, server-side, after each crawl slice) and an "explicit empty state for zero-match
+  filters" idea (already implemented verbatim in `ScanFeedPage.tsx`'s `<p className="empty">`
+  block). PR: see git history.

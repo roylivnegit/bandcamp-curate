@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import type { KeyboardEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
 import { bandcampHandle, plural } from '../../lib/format'
@@ -33,8 +34,26 @@ export const FeedCard = memo(function FeedCard({
   const tags = rec.reasons.matched_tags ?? []
   const seedTags = rec.reasons.seed_tags ?? []
 
+  /** Triaging a long feed is mouse-only otherwise. Scoped to the card via a
+   *  single listener on the article — any focused element inside it (a chip,
+   *  the band button, the action buttons themselves) already bubbles keydown
+   *  up here, so no extra tabIndex/focus wiring is needed. A modifier held
+   *  down means the key is doing something else (a browser/OS shortcut),
+   *  and `busy` mirrors the action buttons' own `disabled` state. */
+  const onCardKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (busy || e.ctrlKey || e.metaKey || e.altKey) return
+    const key = e.key.toLowerCase()
+    if (key === 'l') {
+      e.preventDefault()
+      onLike(rec)
+    } else if (key === 'b' && rec.band_id !== null) {
+      e.preventDefault()
+      onBlock(rec)
+    }
+  }
+
   return (
-    <article className={`card${exiting ? ` ${exiting}ing` : ''}`}>
+    <article className={`card${exiting ? ` ${exiting}ing` : ''}`} onKeyDown={onCardKeyDown}>
       <div className="score" title="Recommendation score">
         <b className="num">{rec.score.toFixed(1)}</b>
         <span>score</span>
@@ -76,11 +95,23 @@ export const FeedCard = memo(function FeedCard({
         )}
 
         <div className="card-actions">
-          <button type="button" className="act like" disabled={busy} onClick={() => onLike(rec)}>
+          <button
+            type="button"
+            className="act like"
+            disabled={busy}
+            aria-keyshortcuts="l"
+            onClick={() => onLike(rec)}
+          >
             ♥ like
           </button>
           {rec.band_id !== null && (
-            <button type="button" className="act block" disabled={busy} onClick={() => onBlock(rec)}>
+            <button
+              type="button"
+              className="act block"
+              disabled={busy}
+              aria-keyshortcuts="b"
+              onClick={() => onBlock(rec)}
+            >
               ⊘ block
             </button>
           )}
