@@ -165,6 +165,22 @@
   color: var(--text);
 }
 
+.active .clearall {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: var(--r-pill);
+  padding: 2px var(--s-3);
+  font: inherit;
+  font-size: var(--fs-tiny);
+  cursor: pointer;
+}
+
+.active .clearall:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
 /* ── count line ──────────────────────────────────────────────────────────── */
 
 .countline {

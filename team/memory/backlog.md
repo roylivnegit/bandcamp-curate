@@ -107,9 +107,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   (the "browser-back still finds it" case) rather than clobbering it. 27/27 frontend tests pass,
   tsc/lint/build clean. PR: see git history.
 
-- [ ] **Verify contrast on hint text.** `--faint: #667085` on `--surface: #141823` is the
+- [x] **Verify contrast on hint text.** `--faint: #667085` on `--surface: #141823` is the
   likeliest AA failure in the palette and nobody has measured it. Compute the real ratio; if it
   fails, adjust the token once, everywhere. Same source.
+  Done: it failed. `--faint` on `--surface`/`--surface-2` (the two backgrounds it renders text
+  against — `.via`, `.field-hint`, `.score span`, `.eyebrow`/`.label`, input placeholders, all
+  9-13px so none qualify for WCAG's "large text" 3:1 exception) measured 3.56:1 / 3.23:1, below
+  the 4.5:1 AA minimum for normal text. Retuned the token to `#7e889c` (same hue, lightened) —
+  now 4.97:1 / 4.51:1 against those two, 5.49:1 against `--bg`, and still clearly darker than
+  `--muted` so the two-tier hierarchy holds. Added `lib/contrast.ts` (a small WCAG relative-
+  luminance/contrast-ratio helper — no new dependency) and `lib/contrast.test.ts`, which reads
+  `tokens.css` itself via a Vite `?raw` import rather than a hand-copied hex, so the test fails
+  the moment the token drifts back below 4.5:1 rather than only catching a value computed once by
+  hand. Required a narrow `vite.config.ts` tweak: `test.css` was `false` (mocks out all CSS
+  content in tests, for speed), changed to `{ include: [/\.css\?raw$/] }` so an explicit `?raw`
+  import still gets the real file text while ordinary side-effect CSS imports stay mocked
+  everywhere else. 28/28 frontend tests pass, tsc/lint/build clean. PR: see git history.
 
 - [~] **Make the order mean something, not the length.** Roy wants a long list kept — do not
   cut the feed down. The actual problem is ranking, not volume: work out whether the ranking
@@ -276,3 +289,42 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `run_scan` (the per-user path) are untouched — only the two entry points that seed
   from the global `BANDCAMP_FAN_URL` are gated. Documented in `.env.example`. PR: see
   git history.
+
+- [x] **"Clear all filters" when several are stacked.** *(proposed by the hourly routine,
+  2026-09-02)* `useFeedFilters.reset()` already exists and clears every filter, but nothing in
+  the UI calls it — `ActivePills` (`FilterBar.tsx`) only offers removing genre/contains/artist
+  pills one at a time, so backing out of a few stacked filters means clicking several `×`
+  buttons. Add a "Clear all" button in `ActivePills`, shown once 2+ filter facets are active,
+  wired to the existing `filters.reset()`. Verify: a component test with tags + contains + a
+  label all set clicks "Clear all" and asserts the URL/filter state comes back empty — no
+  visual check needed. Architect/QA: sound, testable, smallest of the three — do this one
+  first.
+  Done same run: `ActivePills` counts *facets* (a genre-tag group, a contains group, the artist
+  filter), not individual pills, so three tags plus an artist is 2 facets, not 4 — the button
+  shows once that count reaches 2. Calls the existing `filters.reset()` directly, so it also
+  clears item type/sort along with the pills — that's `reset()`'s documented job, not a new
+  behavior. Covered by a new test: tags + contains + a label all set, "Clear all filters"
+  clicked, asserts every pill is gone and the item-type segment reads "All" again. PR: see git
+  history.
+
+- [ ] **Undo affordance after like/block.** *(proposed by the hourly routine, 2026-09-02)*
+  Like/block are one click and instant, and the feed is dense (`content-visibility: auto`
+  cards), so a mis-click means digging into the Liked/Blocked panel to reverse it rather than
+  just undoing. `ScanFeedPage.tsx` already has `unlike`/`unblock` fully implemented for the
+  side panels — after `retire()` fires, show a ~6s inline "Undo" affordance that calls them.
+  Architect/QA caveat: scope the reappearance to restoring the card in local state, not calling
+  `loadFirstPage()` — refetching page 1 to bring back one card would reset pagination/scroll for
+  everything else, and the review flagged that as the one scoping fix needed before this is
+  actually a one-sitting task. Verify: click block on a card, assert the undo control appears,
+  click it, assert `api.unblock` was called with the right `band_id` and the card is restored
+  without a network refetch; a fake-timer test asserts it auto-dismisses after the window.
+
+- [ ] **Focus moves to the page heading on route change.** *(proposed by the hourly routine,
+  2026-09-02)* `frontend/CLAUDE.md` already flags this gap ("Absent... revisit if nav grows") and
+  nav has grown since (auth → scans list → feed → in-page panels) — a keyboard/screen-reader user
+  navigating between them keeps focus wherever it was, often on an element that's no longer in
+  the DOM. Give each page's `h1` (`.scantitle` in `ScanFeedPage`, the scans-list heading)
+  `tabIndex={-1}` plus a `useEffect` that focuses it on route/scanId change. Verify: an RTL test
+  navigates between routes via `MemoryRouter` and asserts `document.activeElement` is the `h1`
+  once the route settles — purely behavioral, no browser needed. Architect/QA: sound, testable,
+  small.
