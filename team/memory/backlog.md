@@ -333,12 +333,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   click it, assert `api.unblock` was called with the right `band_id` and the card is restored
   without a network refetch; a fake-timer test asserts it auto-dismisses after the window.
 
-- [ ] **Focus moves to the page heading on route change.** *(proposed by the hourly routine,
+- [x] **Focus moves to the page heading on route change.** *(proposed by the hourly routine,
   2026-09-02)* `frontend/CLAUDE.md` already flags this gap ("Absent... revisit if nav grows") and
   nav has grown since (auth → scans list → feed → in-page panels) — a keyboard/screen-reader user
   navigating between them keeps focus wherever it was, often on an element that's no longer in
-  the DOM. Give each page's `h1` (`.scantitle` in `ScanFeedPage`, the scans-list heading)
-  `tabIndex={-1}` plus a `useEffect` that focuses it on route/scanId change. Verify: an RTL test
-  navigates between routes via `MemoryRouter` and asserts `document.activeElement` is the `h1`
-  once the route settles — purely behavioral, no browser needed. Architect/QA: sound, testable,
-  small.
+  the DOM.
+  Done: both page headings (`ScanListPage`'s `.eyebrow` "Your scans" and `ScanFeedPage`'s
+  `.scantitle`) got `tabIndex={-1}` plus a ref, and a `useEffect` that calls `.focus()` on it —
+  mount-only for the list page (it's the same component instance for the whole route), keyed on
+  `scanId` for the feed page since `/scans/:scanId` is one route element that React Router does
+  NOT remount when navigating between two different scans' feeds. `:focus-visible` (not `:focus`)
+  is the only outline rule in `base.css`, so the programmatic focus stays invisible for a
+  mouse-driven route change and visible for a keyboard one — no new CSS needed. Covered by a new
+  `focus on route change` test in `feed.test.tsx`: lands on `/scans`, asserts the list heading has
+  focus, clicks into a scan (asserts the feed heading gets focus), clicks "← Scans" back (asserts
+  the list heading gets focus again) — a real `MemoryRouter` navigation each way, not just two
+  independent mounts. 35/35 frontend tests pass, tsc/lint/build clean (chunk split intact). PR:
+  see git history.

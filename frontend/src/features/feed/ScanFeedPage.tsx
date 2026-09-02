@@ -50,6 +50,7 @@ export function ScanFeedPage() {
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
   const [listUpdated, setListUpdated] = useState(false)
+  const headingRef = useRef<HTMLHeadingElement>(null)
 
   /* Bumped by every first-page load. A response whose ticket no longer matches is
    * stale — the filters moved on while it was in flight — so it must not land.
@@ -91,6 +92,14 @@ export function ScanFeedPage() {
   useEffect(() => {
     void loadScan()
   }, [loadScan])
+
+  // Same route element serves every /scans/:scanId, so navigating between two
+  // scans' feeds (Link, not a full reload) never unmounts this component — a
+  // mount-only effect wouldn't refire. Keying on scanId re-focuses the
+  // heading each time the reader actually lands on a different scan.
+  useEffect(() => {
+    headingRef.current?.focus()
+  }, [scanId])
 
   useEffect(() => {
     if (!scan || scan.status === 'done' || scan.status === 'error') return
@@ -300,7 +309,7 @@ export function ScanFeedPage() {
         <Link to="/scans" className="back">
           ← Scans
         </Link>
-        <h1 className="scantitle">
+        <h1 className="scantitle" ref={headingRef} tabIndex={-1}>
           {scan?.name ?? 'Loading…'}
           {scan && <span className="ktag">{scan.kind}</span>}
         </h1>
