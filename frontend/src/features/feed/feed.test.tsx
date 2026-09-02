@@ -679,3 +679,59 @@ describe('feed reflow notice', () => {
     expect(screen.queryByText(/list updated/i)).not.toBeInTheDocument()
   })
 })
+
+describe('resume scroll position', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const feedRoutes = (recs = [fakeRec()]) =>
+    [
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: recs.length }],
+      ['/api/recommendations', recs],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ] as Array<[string, unknown, number?]>
+
+  it('restores the saved scroll offset when returning to the same filtered view', async () => {
+    mockFetch(feedRoutes())
+    const first = renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 400, configurable: true })
+    fireEvent.scroll(window)
+    // Leaving the page (a real app would navigate away; unmounting here is
+    // the JSDOM stand-in for "the component goes away and comes back").
+    first.unmount()
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 400)
+  })
+
+  it('does not restore a scroll offset saved under a different filter', async () => {
+    mockFetch(feedRoutes())
+    const first = renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 400, configurable: true })
+    fireEvent.scroll(window)
+    first.unmount()
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+})

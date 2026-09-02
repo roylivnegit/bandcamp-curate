@@ -274,18 +274,29 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   required props. 68/68 frontend tests pass, tsc/lint/build clean (chunk split intact). PR:
   see git history.
 
-- [ ] **Resume feed scroll position across route changes.** *(proposed by the hourly routine,
-  2026-09-02)* Clicking away from the feed (or navigating between scans) and back drops the
-  reader at the top of a long list, losing their place. Store the last-seen scroll offset (or
-  top-visible card id) in `sessionStorage`, keyed by the current filter query string, and
-  restore it when the feed remounts with matching filters; clear/ignore it when the filters
-  differ. Architect+QA: sound, testable in JSDOM (mount, scroll/record, unmount, remount,
-  assert restore; a second case with different filters confirms no stale restore), small.
+- [x] **Resume feed scroll position across route changes.** *(proposed by the hourly routine,
+  2026-09-02)* Clicking away from the feed (or navigating between scans) and back dropped the
+  reader at the top of a long list, losing their place.
   Two other Product proposals from this round were cut before reaching Architect+QA — both
   turned out to already be implemented: an in-flight guard against duplicate rapid like/block
   calls (`ScanFeedPage.tsx`'s `inFlight` ref already does this) and a pluralization util for
   feed counts (`lib/format.ts`'s `plural()` already does this, already used everywhere counts
   render).
+  Done: new `useResumeScroll(storageKey, ready)` hook (`features/feed/useResumeScroll.ts`).
+  `storageKey` is `crate-digger.feedScroll:<scanId><location.search>` — the filter query
+  string is already the live filter state (`useFeedFilters`/`useSearchParams`), so a different
+  filter set is simply a different `sessionStorage` key; nothing has to detect "filters
+  changed" and explicitly clear anything. A passive `scroll` listener writes
+  `window.scrollY` under that key on every scroll; a separate effect, gated on `ready`
+  (`showFeed && rows.length > 0`, not just `showFeed`, so it never fires against an empty
+  page) and guarded by a `restoredFor` ref so it applies at most once per key, reads the
+  stored value back and calls `window.scrollTo(0, y)`. Wired into `ScanFeedPage` via one
+  `useLocation()` call and one hook call. Covered by two new tests in `feed.test.tsx`:
+  scrolling, unmounting (JSDOM's stand-in for "the page goes away and comes back"), and
+  remounting the same `/scans/1` route calls `scrollTo(0, 400)`; scrolling under
+  `/scans/1?tag=psybient` and then remounting plain `/scans/1` does NOT restore — a different
+  filter key finds nothing under it, confirming no stale cross-filter restore. 70/70 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
