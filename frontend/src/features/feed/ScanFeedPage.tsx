@@ -5,13 +5,14 @@ import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail } from '../../api/types'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS } from '../../config'
 import { count, plural } from '../../lib/format'
-import { FeedCard } from './FeedCard'
+import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
 import { BlockedPanel, LikedPanel } from './SidePanels'
 import { useFeedFilters } from './useFeedFilters'
 import './feed.css'
 
 const LIMIT = FEED_PAGE_SIZE
+const SKELETON_KEYS = ['sk-0', 'sk-1', 'sk-2', 'sk-3', 'sk-4']
 
 /** Module scope, not a closure over render state — the like/block handlers stay
  *  referentially stable only if nothing they call is re-created per render. */
@@ -359,6 +360,18 @@ export function ScanFeedPage() {
                   ✕
                 </button>
               </p>
+            )}
+
+            {/* First page only (`rows.length === 0`) — `loadMore`'s `loading` shares
+                this flag but has real rows already on screen, so it must not
+                re-trigger the skeleton. Shaped like real cards so nothing shifts
+                when they land. */}
+            {loading && rows.length === 0 && !error && (
+              <div role="status" aria-label="Loading recommendations…">
+                {SKELETON_KEYS.map((k) => (
+                  <FeedCardSkeleton key={k} />
+                ))}
+              </div>
             )}
 
             {/* Every prop here is either the row itself, a per-row primitive, or a

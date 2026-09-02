@@ -94,3 +94,22 @@ export const FeedCard = memo(function FeedCard({
     </article>
   )
 })
+
+/** Shaped like a real `FeedCard` so the first page doesn't cause a layout
+ *  shift when the real rows land. Purely decorative — `aria-hidden` on each
+ *  card, with the announcement carried by the `role="status"` wrapper in
+ *  `ScanFeedPage`. */
+export function FeedCardSkeleton() {
+  return (
+    <article className="card skeleton" aria-hidden="true">
+      <div className="sk sk-score" />
+      <div className="card-body">
+        <div className="sk sk-title" />
+        <div className="sk sk-band" />
+        <div className="card-meta">
+          <div className="sk sk-chip" />
+        </div>
+      </div>
+    </article>
+  )
+}
