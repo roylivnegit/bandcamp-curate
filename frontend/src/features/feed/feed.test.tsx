@@ -491,6 +491,64 @@ describe('feed while the scan is still running', () => {
 
     expect(await screen.findByText(/queued/i)).toBeInTheDocument()
   })
+
+  it('explains a genuinely empty feed with the cold-start diagnostics', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 0 }],
+      ['/api/recommendations', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+      [
+        '/api/stats',
+        {
+          recommendations: 0,
+          fans: 20,
+          neighbours: 12,
+          albums: 500,
+          tracks: 900,
+          my_owned: 300,
+          my_wishlist: 10,
+          follows: 15,
+          liked: 0,
+          requests_used: 40,
+          request_budget: 100,
+          cold_start: {
+            neighbour_count: 12,
+            candidates: 340,
+            excluded_owned: 210,
+            excluded_wishlisted: 40,
+            excluded_followed: 55,
+            excluded_blacklisted: 3,
+          },
+          recompute_generation: 1,
+        },
+      ],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByText('No recommendations in this scan yet.')).toBeInTheDocument()
+    expect(await screen.findByText('340')).toBeInTheDocument()
+    expect(screen.getByText(/candidates/)).toBeInTheDocument()
+  })
+
+  it('does not fetch stats, or show cold-start diagnostics, while the feed has rows', async () => {
+    const fetchMock = mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/stats'))).toBe(false)
+  })
 })
 
 describe('feed reflow notice', () => {
