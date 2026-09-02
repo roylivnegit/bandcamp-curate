@@ -325,6 +325,41 @@ describe('scan feed', () => {
   })
 })
 
+describe('focus on route change', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  // '/api/scans/1' must be listed before '/api/scans' — mockFetch matches by
+  // substring in order, and the list route would otherwise swallow it too.
+  const combinedRoutes: Array<[string, unknown, number?]> = [
+    ['/api/auth/me', fakeMe],
+    ['/api/scans/1', { ...fakeScan, seeds: [] }],
+    ['/api/scans', [fakeScan]],
+    ['/api/recommendations/count', { count: 1 }],
+    ['/api/recommendations', [fakeRec()]],
+    ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+    ['/api/likes', []],
+    ['/api/blacklist', []],
+  ]
+
+  it('moves focus to the page heading on landing, and again after navigating to another page', async () => {
+    mockFetch(combinedRoutes)
+    const user = userEvent.setup()
+    renderApp('/scans')
+
+    expect(await screen.findByRole('heading', { name: 'Your scans' })).toHaveFocus()
+
+    await user.click(await screen.findByRole('link', { name: /My collection/ }))
+    expect(await screen.findByRole('heading', { name: /My collection/ })).toHaveFocus()
+
+    await user.click(screen.getByRole('link', { name: /Scans/ }))
+    expect(await screen.findByRole('heading', { name: 'Your scans' })).toHaveFocus()
+  })
+})
+
 describe('feed while the scan is still running', () => {
   beforeEach(() => {
     localStorage.clear()

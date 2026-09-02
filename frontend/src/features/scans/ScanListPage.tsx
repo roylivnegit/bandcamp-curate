@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api } from '../../api/client'
@@ -17,6 +17,14 @@ export function ScanListPage() {
   const [scans, setScans] = useState<Scan[] | null>(null)
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
+  const headingRef = useRef<HTMLHeadingElement>(null)
+
+  // A keyboard/screen-reader user landing here from another route should land
+  // on the page's own heading, not wherever focus happened to be (often an
+  // element no longer in the DOM).
+  useEffect(() => {
+    headingRef.current?.focus()
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -67,7 +75,9 @@ export function ScanListPage() {
         {/* h1, not h2: this is the page's own top-level heading and the header's
             wordmark isn't one, so an h2 here skipped a level. `.eyebrow` carries
             all the styling, so the look is unchanged. */}
-        <h1 className="eyebrow">Your scans</h1>
+        <h1 className="eyebrow" ref={headingRef} tabIndex={-1}>
+          Your scans
+        </h1>
         {!creating && (
           <button type="button" className="btn" onClick={() => setCreating(true)}>
             ＋ New scan
