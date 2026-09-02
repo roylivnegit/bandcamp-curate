@@ -800,3 +800,38 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   already fired and armed Undo restores the card, shows the error, and clears the now-stale Undo
   button. 109/109 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
+
+- [x] **Focus trap for the shortcuts-help panel.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `ShortcutsHelp.tsx` is a real `role="dialog" aria-modal` overlay that
+  already restores focus to its trigger on close, but nothing stopped Tab/Shift+Tab from leaving
+  the open dialog and landing on the page behind it — a keyboard user could tab straight out of a
+  modal that's supposed to own focus while open.
+  Done: the panel's existing `keydown` effect (already handling Escape) now also traps `Tab` —
+  queries `panelRef`'s focusable descendants fresh on every press (a `FOCUSABLE_SELECTOR` constant,
+  hoisted to module scope per rule 9) rather than caching the list once, per QA's note that the
+  panel has exactly one focusable element today (the Close button) but a hardcoded version would
+  silently stop working if a future row added a link or button. Tab from the last element (or from
+  outside the tracked list, which covers the initial state where the panel div itself holds focus)
+  wraps to the first; Shift+Tab from the first wraps to the last — today's single-button case
+  degenerates to "Tab keeps focus on Close," which is the correct trap behavior for that case, not
+  a bug. Covered by two new tests in `ShortcutsHelp.test.tsx`: Tab from the initially-focused panel
+  lands on the Close button and a second Tab keeps it there; Shift+Tab does the same in reverse.
+  111/111 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [ ] **Skip-to-content link.** *(proposed by the hourly routine, 2026-09-02, Architect+QA-approved,
+  queued rather than built this task — one task per run)* A keyboard/screen-reader user landing on
+  any page has to tab through the whole header/nav before reaching the actual content, every single
+  page load. `frontend/CLAUDE.md`'s "Known conflicts and deferred items" already flags this as an
+  acknowledged, deliberately-deferred gap ("revisit if nav grows") — the nav has grown since
+  (shortcuts panel, roving tabindex, several keyboard-only affordances), so it's worth picking up.
+  QA's scoping notes for whoever builds this: there's one shared signed-in shell (`App.tsx`,
+  wrapping `AppHeader` + the routed pages), so the skip link belongs there once, not per-page.
+  Neither page currently renders a `<main>` that's always present — `ScanListPage` uses a bare
+  `<div className="wrap">`, and `ScanFeedPage`'s `<main>` only mounts inside `{showFeed && …}`. Put
+  `<main id="main-content">` around `<Suspense><Routes>…</Routes></Suspense>` in `App.tsx` instead,
+  and rename `ScanFeedPage`'s inner `<main>` to a `<div>` (two nested `<main>` landmarks is invalid
+  and confuses assistive tech). No `visually-hidden`/`sr-only` utility class exists in
+  `base.css`/`tokens.css` yet — add one (clip-based, revealing on `:focus`) alongside the link.
+  Verify: RTL test mounting the real shell (mocked `useAuth`, `await findBy*` since routes are
+  `lazy()`) — the link is present, precedes the nav in the DOM, has `href="#main-content"`, and an
+  element with `id="main-content"` exists in the tree.
