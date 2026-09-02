@@ -5,6 +5,7 @@ import { api } from '../../api/client'
 import type { Scan } from '../../api/types'
 import { useAuth } from '../../auth/context'
 import { ago, count, plural } from '../../lib/format'
+import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { NewScanForm } from './NewScanForm'
 import './scans.css'
 
@@ -13,6 +14,7 @@ import { SCAN_POLL_MS } from '../../config'
 const SKELETON_KEYS = ['sk-0', 'sk-1', 'sk-2']
 
 export function ScanListPage() {
+  useDocumentTitle('Scans')
   const { me, refresh } = useAuth()
   const [scans, setScans] = useState<Scan[] | null>(null)
   const [error, setError] = useState('')

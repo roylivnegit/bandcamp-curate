@@ -3,6 +3,10 @@
  * particular was duplicated across the scan list and the feed, which is exactly
  * how two pollers end up drifting out of step. */
 
+/** Matches the `<title>` in index.html — the suffix `useDocumentTitle` appends
+ *  to every per-page title. */
+export const APP_NAME = 'crate digger'
+
 /** Recommendations fetched per page (the API caps this at 200). */
 export const FEED_PAGE_SIZE = 50
 

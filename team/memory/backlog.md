@@ -522,3 +522,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   and clears an earlier error; an invalid URL submitted via Enter (not the Add button) is
   rejected too. 52/52 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
+
+- [x] **`useDocumentTitle` hook.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `document.title` is hardcoded to "crate digger" in `index.html` and
+  never updated, so every route/scan looks identical in the tab bar and browser history.
+  Done: new `lib/useDocumentTitle.ts` — a single effect that sets `document.title` to
+  `<title> · crate digger` (new `APP_NAME` constant in `config.ts`) whenever its `title` argument
+  is truthy, and leaves the previous title alone while it's `null`/`undefined` (a page's real
+  title, like a scan's name, is often only known after a fetch resolves — this avoids a flash of
+  bare "crate digger" in between). Wired into `ScanListPage` (`useDocumentTitle('Scans')`) and
+  `ScanFeedPage` (`useDocumentTitle(scan?.name)`). Covered by three standalone hook tests in
+  `useDocumentTitle.test.ts` (`renderHook`: sets the suffixed title; updates on a changed
+  argument; holds the previous title while the argument is null) and one integration test in
+  `feed.test.tsx` ("document title" describe block, mirroring the existing "focus on route
+  change" test's `combinedRoutes`/navigation shape): landing on `/scans` shows "Scans · crate
+  digger", clicking into a scan shows "My collection · crate digger", navigating back updates it
+  again. 74/74 frontend tests pass, tsc/lint/build clean (chunk split intact — the hook lands in
+  its own small shared chunk between the two lazy routes). PR: see git history.
