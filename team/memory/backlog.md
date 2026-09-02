@@ -1013,7 +1013,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   149/149 frontend tests pass (141 + 8 new), tsc/lint/build clean, chunk split intact. PR: see git
   history.
 
-- [ ] **Bulk select + bulk block.** *(proposed by the hourly routine, 2026-09-02,
+- [x] **Bulk select + bulk block.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved)* Clearing a run of obviously-irrelevant recs (a whole genre you don't want)
   means clicking "block" one card at a time, which feels tedious for something that's conceptually
   one action. Add a per-card checkbox (shown once "select mode" is toggled from the filter bar) and
@@ -1023,6 +1023,37 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   selected", assert the block handler/mock API was called exactly twice with the right ids and
   selection state clears after; a second test asserts the bulk bar renders nothing when the
   selection set is empty.
+  Done: `FilterBar.tsx` gets a "☑ Select" / "✕ Cancel select" toggle (`selectMode`, same
+  `aria-pressed` shape as the density toggle) next to it. `ScanFeedPage.tsx` owns `selected: Set<
+  string>` (card keys, same namespace as `keyOf`) and `bulkBusy`; `FeedCard.tsx` renders a checkbox
+  (only for a row with a band — mirrors the existing per-card block button's own band-id gate)
+  when `selectMode` is on, controlled by a new `selected`/`onToggleSelect` prop pair. New
+  `components/BulkActionBar.tsx` — a pure `{count, busy, onBlock, onCancel}` presentational
+  component, renders nothing at `count === 0` — shows "N selected", "Cancel", "Block selected".
+  `bulkBlock()` calls the exact existing `block(rec)` handler once per selected row (`Promise.all`)
+  — same optimistic retire/undo/error handling as a single click — then clears the selection and
+  exits select mode once every call has settled, regardless of individual outcome (`block` itself
+  already reports a failure via `setError`). Selection resets on `scanId` change, same reasoning as
+  the quick-filter query and undo banner.
+  **Test-infra fix along the way:** `test/renderApp.tsx`'s `mockFetch` helper's inner `vi.fn` only
+  declared an `input` param, so TypeScript inferred `fetchMock.mock.calls` as 1-tuples — any test
+  needing to assert on a POST's method/body (this one needed to confirm exactly two distinct
+  `band_id`s were blocked) had to cast. Added an unused `_init?: RequestInit` second param so the
+  inferred call-tuple type is a real 2-tuple everywhere `mockFetch` is used, no cast needed.
+  **RTL gotcha hit and worked around:** `getByText` matches an element's own direct text-node
+  children only, not nested elements' text — so `<span><b>{count}</b> selected</span>` can't be
+  matched by the combined string `"N selected"` (the `<b>`'s text is invisible to the span's own
+  node-text). Assertions query the count and the literal word "selected" as two separate exact
+  matches instead.
+  Covered by 3 new tests in `BulkActionBar.test.tsx` (renders nothing at zero; shows the count and
+  wires `onBlock`/`onCancel` to their buttons; busy disables both buttons and relabels Block), 4 new
+  in `FeedCard.test.tsx`'s "bulk select" block (no checkbox outside select mode; an unchecked box in
+  select mode for a card with a band; no box for a card with no band; the `selected` prop and
+  `onToggleSelect` call), and 3 new integration tests in `feed.test.tsx` (no checkboxes/bar before
+  select mode is on; selecting two of three cards and clicking "Block selected" posts exactly two
+  `/api/blacklist` calls with the two selected `band_id`s and clears the selection/select mode after;
+  "Cancel" clears the selection and confirms no block request was ever sent). 159/159 frontend tests
+  pass (149 + 10 new), tsc/lint/build clean, chunk split intact. PR: see git history.
 
 - [ ] **"Seen" marker for opened Bandcamp links.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved)* Scrolling back through a long feed, you can't tell which recs you already

@@ -232,6 +232,37 @@
   padding: 6px 14px;
 }
 
+/* ── bulk-select action bar ──────────────────────────────────────────────── */
+
+.bulkbar {
+  position: sticky;
+  top: 106px; /* below the filter bar */
+  z-index: 19;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-3);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.bulkbar .num {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.bulkbar .btn {
+  margin-left: auto;
+}
+
+.bulkbar .btn + .btn {
+  margin-left: 0;
+}
+
 /* ── feed card ───────────────────────────────────────────────────────────── */
 
 .card {
@@ -262,6 +293,15 @@
   border-color: var(--line-strong);
   transform: translateY(-1px);
   box-shadow: var(--shadow-card);
+}
+
+.card-select {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* ── density toggle ──────────────────────────────────────────────────────── */
