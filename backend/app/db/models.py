@@ -86,6 +86,11 @@ class Track(Base, TimestampMixin):
     # See Album.art_id — a standalone track (or single) can carry its own art,
     # separate from any parent album's.
     art_id: Mapped[int | None] = mapped_column(BigInteger)
+    # Position within its album's tracklist and length in seconds. Only ever
+    # populated from an album page's trackinfo[] (ingest_album) — a standalone
+    # track page carries neither field.
+    track_num: Mapped[int | None] = mapped_column(Integer)
+    duration: Mapped[float | None] = mapped_column(Float)
 
     album: Mapped["Album | None"] = relationship(back_populates="tracks")
     band: Mapped["Band | None"] = relationship(back_populates="tracks")

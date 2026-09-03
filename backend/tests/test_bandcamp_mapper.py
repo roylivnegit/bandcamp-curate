@@ -169,6 +169,10 @@ async def test_ingest_album_populates_graph(session: AsyncSession) -> None:
     assert album.band_id is not None
     assert album.art_id == 435129856
 
+    track = (await session.execute(select(Track))).scalar_one()
+    assert track.track_num == 1
+    assert track.duration == 486.761
+
 
 async def test_ingest_album_tags_band_and_tracks(session: AsyncSession) -> None:
     pa = parse_album_page(ALBUM_FIXTURE.read_text())  # 4 tags, 1 track
