@@ -1,4 +1,4 @@
-import { useState, type ClipboardEvent as ReactClipboardEvent } from 'react'
+import { useEffect, useState, type ClipboardEvent as ReactClipboardEvent } from 'react'
 
 import { api } from '../../api/client'
 import { RemoveButton } from '../../components/RemoveButton'
@@ -22,6 +22,24 @@ export function NewScanForm({
   const [seeds, setSeeds] = useState<string[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const hasDraft = seeds.length > 0
+
+  // Warns before an accidental reload/close drops an unsaved seed list — a
+  // successful `create()` unmounts this component (`onCreated()` flips
+  // `ScanListPage`'s `creating` flag), so the listener's own cleanup already
+  // covers that case with no extra "just submitted" flag needed. Keyed on
+  // the derived boolean, not the `seeds` array reference, so adding/removing
+  // seeds doesn't tear down and re-add the listener on every keystroke.
+  useEffect(() => {
+    if (!hasDraft) return
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [hasDraft])
 
   function addSeed() {
     const u = seedUrl.trim()

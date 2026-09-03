@@ -1910,19 +1910,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   "Retry" button render; click it; assert the API was called again and on success the error
   clears and content renders. Do this for both pages' failure paths separately.
 
-- [ ] **Warn before losing an in-progress scan draft.** *(proposed by the hourly routine,
+- [x] **Warn before losing an in-progress scan draft.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved with two corrections)* A user can paste several seed URLs
   into `NewScanForm`, then accidentally reload or close the tab, losing the whole unsaved list
   with no warning — unlike almost every other data-entry flow in the app.
-  **QA corrections, read before building:** (1) set both `event.preventDefault()` **and**
-  `event.returnValue = ''` — some engines still key off `returnValue` alone, and the two are
-  cheap to pair. (2) Don't add a separate "just submitted" flag to gate listener removal —
-  `NewScanForm` already unmounts synchronously on a successful create (`onCreated()` →
-  `ScanListPage`'s `setCreating(false)`), so a plain effect cleanup already handles it. Implement
-  as one `useEffect` keyed on the derived boolean `seeds.length > 0` (not the `seeds` array
-  reference, to avoid tearing down/re-adding the listener on every add/remove).
-  Verify: jsdom test dispatches a synthetic `beforeunload` `Event` on `window` (jsdom doesn't
-  fire it natively, but a manually-dispatched event with a `preventDefault` spy is the standard,
-  correct way to test this — matches how this codebase already tests other window-level
-  listeners like `ShortcutsHelp`'s `?` key) while mounted with `seeds.length > 0`, asserts
-  `preventDefault` was called; a second test with an empty seed list asserts it was not.
+  Done, both QA corrections applied: a single `useEffect` in `NewScanForm.tsx` keyed on the
+  derived boolean `hasDraft = seeds.length > 0` (not the `seeds` array reference, so
+  adding/removing seeds doesn't tear the listener down and back up) adds a `beforeunload`
+  listener that calls both `event.preventDefault()` and sets `event.returnValue = ''` — pairing
+  both since some engines key off `returnValue` alone. No separate "just submitted" flag: a
+  successful `create()` calls `onCreated()`, which unmounts this component synchronously
+  (`ScanListPage`'s `setCreating(false)`), so the effect's own cleanup (`removeEventListener`)
+  already covers that case for free.
+  Covered by three new tests in `NewScanForm.test.tsx`'s "draft-loss warning" block, each
+  dispatching a synthetic `beforeunload` `Event` on `window` with a `preventDefault` spy (jsdom
+  doesn't fire the event natively, but a manually-dispatched event is the standard way to test
+  this, matching how this codebase already tests other window-level listeners): warns once a
+  seed has been added (`preventDefault` called, `returnValue` falsy — asserted as falsy rather
+  than the exact empty string, since jsdom's `Event.returnValue` coerces any assigned value to a
+  boolean where real browsers keep the assigned string); does not warn with an empty seed list;
+  stops warning once the last seed is removed. 276/276 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). PR: see git history.
