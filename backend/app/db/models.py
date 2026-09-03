@@ -63,6 +63,10 @@ class Album(Base, TimestampMixin):
     url: Mapped[str | None] = mapped_column(String(512), index=True)
     title: Mapped[str | None] = mapped_column(String(512))
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)
+    # Bandcamp's opaque art asset id (`art_id` in the page JSON) — combine with a
+    # size code to build an image URL, e.g. f"https://f4.bcbits.com/img/a{art_id}_10.jpg".
+    # Not a URL itself: Bandcamp's own asset host can change, the id doesn't.
+    art_id: Mapped[int | None] = mapped_column(BigInteger)
 
     band: Mapped["Band | None"] = relationship(back_populates="albums")
     tracks: Mapped[list["Track"]] = relationship(back_populates="album")
@@ -79,6 +83,9 @@ class Track(Base, TimestampMixin):
     title: Mapped[str | None] = mapped_column(String(512))
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)
+    # See Album.art_id — a standalone track (or single) can carry its own art,
+    # separate from any parent album's.
+    art_id: Mapped[int | None] = mapped_column(BigInteger)
 
     album: Mapped["Album | None"] = relationship(back_populates="tracks")
     band: Mapped["Band | None"] = relationship(back_populates="tracks")

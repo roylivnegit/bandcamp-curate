@@ -1723,3 +1723,54 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `fireEvent`'s init dict) shows the warning wired via `aria-describedby`, and a `keyup` with it
   stubbed `false` hides it again. 259/259 frontend tests pass, tsc/lint/build clean (chunk split
   intact). PR: see git history.
+
+- [x] **Persist `art_id` onto `albums`/`tracks`.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound and testable ... genuinely just wiring existing parsed data
+  through the mapper/column/API rather than new parsing logic ... small enough for one sitting")*
+  Found via direct code audit, prompted by an earlier round's rejected "album art placeholder"
+  proposal (see `tried-and-failed.md`): `app/bandcamp/parse.py` already extracts Bandcamp's art
+  asset id for albums (`ParsedAlbum.art_id`, from `tralbum.art_id`) and fan-collection items
+  (`ParsedItem.art_id`, from `item_art_id`), but nothing downstream stored it — `Album`/`Track`
+  had no art column and `mapper.py` never read `art_id` at all. Deliberately backend-only: no
+  `<img>`, no `art_url` construction, no frontend change — a bounded slice for a future
+  frontend-facing follow-up.
+  Done: `art_id: int | None` (BigInteger) added to `Album` and `Track` in `app/db/models.py`;
+  migration `0014_art_id.py` (guarded like 0002-0013 — no-ops on a fresh DB built from ORM
+  metadata). `get_or_create_album`/`get_or_create_track` (`mapper.py`) take an optional `art_id`
+  kwarg, set on create and set-if-null on the existing-row branch, same pattern as `url`/`title`.
+  Threaded from all three real sources: `ingest_item` (fan-collection ingestion, both the album
+  and track branches — `item.art_id` is the item's own art, not a parent album's), `ingest_album`
+  (`pa.art_id`), and `ingest_track_page` (added `art_id` to `ParsedTrackPage` itself, populated
+  from the same `tralbum.get("art_id")` `parse_album_page` already reads, since a standalone
+  track/single page embeds the identical tralbum shape). `ParsedTrack` (an entry inside an
+  album's own `trackinfo[]`) carries no `art_id` in Bandcamp's JSON at that level, so a track
+  ingested via `ingest_album` only gets its art from a later fan-collection or track-page visit —
+  not a gap this task invented, just the real shape of the source data.
+  `GET /api/recommendations`'s `RecommendationOut` gained `art_id: int | None`, selected via
+  `func.coalesce(Album.art_id, Track.art_id)` alongside the existing `url`/`title` coalesce.
+  Verified against the real fixtures, not invented values: `tests/fixtures/album_page.html`'s
+  `art_id` is `435129856` (also reachable via `fan_page.html`'s `item_art_id` for the same
+  "Panchito" item), `track_page.html`'s is `3864705594`. Extended
+  `test_ingest_album_populates_graph`, `test_ingest_track_page_populates_graph`, and
+  `test_ingest_populates_graph` (fan collection — asserts the item's own art_id lands on its row,
+  not a parent's) with `art_id` assertions against those real values; added
+  `top["art_id"] == 99` to `test_recommendations_feed` (API-level, `test_api.py`'s existing `_seed`
+  fixture, one Album given `art_id=99`). 248/248 backend tests pass, ruff clean; `alembic upgrade
+  head` / `downgrade -1` / `upgrade head` round-trips clean against a fresh sqlite DB. PR: see git
+  history.
+
+- [ ] **Cross-tenant guard test for `follows` scoping.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved — "pure pytest over shared Band/Album rows plus two
+  Users/Fans, no live crawl/Docker/browser required ... small — one new test file, a handful of
+  assertions")* CLAUDE.md notes `follows` used to leak across tenants until it got per-fan scoping
+  (composite unique on `fan_id`+`band_id`), and `build_exclusions` was fixed to query
+  `blacklist`/`likes` per-user — but there's no regression test pinning that two users'
+  `follows`/`blacklist`/`likes` rows stay isolated in curation, so a future edit could silently
+  reintroduce the leak with no red test to catch it. Add
+  `backend/tests/test_curation_tenant_isolation.py`: two `User`+`Fan` rows sharing the same global
+  `Band`/`Album` catalog rows (per the "graph stays global" model), give user A a `follows` row
+  and a `blacklist` row on a band, run `curation.build_exclusions`/`compute_recommendations` for
+  user B, and assert user B's exclusions/recs are unaffected by A's follow/blacklist/like — plus
+  the inverse (A's own exclusions do apply to A). Verify: a new passing `pytest` test that fails
+  (red) if `fan_id`/`user_id` scoping is removed from `build_exclusions` — no visual check needed.
+  Queued — not built this run (task cap / picked the required art_id proposal instead).

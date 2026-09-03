@@ -100,6 +100,7 @@ class ParsedTrackPage:
     band: ParsedBand
     title: str | None = None
     url: str | None = None
+    art_id: int | None = None
     tags: list[str] = field(default_factory=list)
     # The parent album, if this track belongs to one (absent for standalone
     # singles) — a stub reference only; the album page itself isn't crawled here.
@@ -371,6 +372,7 @@ def parse_track_page(page_html: str) -> ParsedTrackPage:
         band=band,
         title=current.get("title") or tralbum.get("artist"),
         url=url,
+        art_id=tralbum.get("art_id"),
         tags=_parse_tags(page_html),
         album_id=album_bandcamp_id,
         album_url=album_url,

@@ -95,6 +95,10 @@ class RecommendationOut(BaseModel):
     band_id: int | None
     band_name: str | None
     url: str | None
+    # Bandcamp's opaque art asset id (Album.art_id / Track.art_id) — not a URL.
+    # No frontend rendering wired up yet; this just stops exposing it from
+    # being blocked on a second migration once someone builds that.
+    art_id: int | None
     reasons: Reasons
     # The scan's `recompute_generation` at fetch time — see migration 0013.
     # Every row in one response carries the same value: `store_recommendations`
@@ -366,6 +370,7 @@ async def recommendations(
             band_id_col.label("band_id"),
             func.coalesce(ab.name, tb.name).label("band_name"),
             func.coalesce(Album.url, Track.url).label("url"),
+            func.coalesce(Album.art_id, Track.art_id).label("art_id"),
         )
         .select_from(Recommendation)
         .outerjoin(Album, Album.id == Recommendation.album_id)
@@ -397,6 +402,7 @@ async def recommendations(
             band_id=r.band_id,
             band_name=r.band_name,
             url=r.url,
+            art_id=r.art_id,
             reasons=Reasons(**(r.reasons or {})),
             recompute_generation=generation,
         )

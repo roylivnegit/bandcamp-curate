@@ -131,6 +131,7 @@ async def get_or_create_album(
     url: str | None = None,
     title: str | None = None,
     band: Band | None = None,
+    art_id: int | None = None,
 ) -> Album:
     stmt = select(Album).where(Album.bandcamp_id == bandcamp_id)
     album = (await session.execute(stmt)).scalar_one_or_none()
@@ -139,7 +140,7 @@ async def get_or_create_album(
             session, stmt,
             lambda: Album(
                 bandcamp_id=bandcamp_id, url=url, title=title,
-                band_id=band.id if band else None,
+                band_id=band.id if band else None, art_id=art_id,
             ),
         )
     if url and not album.url:
@@ -148,6 +149,8 @@ async def get_or_create_album(
         album.title = title
     if band and not album.band_id:
         album.band_id = band.id
+    if art_id and not album.art_id:
+        album.art_id = art_id
     return album
 
 
@@ -159,6 +162,7 @@ async def get_or_create_track(
     title: str | None = None,
     band: Band | None = None,
     album: Album | None = None,
+    art_id: int | None = None,
 ) -> Track:
     stmt = select(Track).where(Track.bandcamp_id == bandcamp_id)
     track = (await session.execute(stmt)).scalar_one_or_none()
@@ -169,6 +173,7 @@ async def get_or_create_track(
                 bandcamp_id=bandcamp_id, url=url, title=title,
                 band_id=band.id if band else None,
                 album_id=album.id if album else None,
+                art_id=art_id,
             ),
         )
     if url and not track.url:
@@ -179,6 +184,8 @@ async def get_or_create_track(
         track.band_id = band.id
     if album and not track.album_id:
         track.album_id = album.id
+    if art_id and not track.art_id:
+        track.art_id = art_id
     return track
 
 
@@ -231,7 +238,8 @@ async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
     band = await get_or_create_band(session, item.band)
     if item.item_type == "album":
         album = await get_or_create_album(
-            session, bandcamp_id=item.item_id, url=item.url, title=item.title, band=band
+            session, bandcamp_id=item.item_id, url=item.url, title=item.title, band=band,
+            art_id=item.art_id,
         )
         if await _add_fan_item(session, fan, ItemType.ALBUM, album=album,
                                is_wishlist=is_wishlist):
@@ -244,7 +252,7 @@ async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
             )
         track = await get_or_create_track(
             session, bandcamp_id=item.item_id, url=item.url, title=item.title,
-            band=band, album=album,
+            band=band, album=album, art_id=item.art_id,
         )
         if await _add_fan_item(session, fan, ItemType.TRACK, track=track,
                                is_wishlist=is_wishlist):
@@ -378,7 +386,8 @@ async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCou
     counts = AlbumIngestCounts()
     band = await get_or_create_band(session, pa.band)
     album = await get_or_create_album(
-        session, bandcamp_id=pa.album_id, url=pa.url, title=pa.title, band=band
+        session, bandcamp_id=pa.album_id, url=pa.url, title=pa.title, band=band,
+        art_id=pa.art_id,
     )
 
     tracks: list[Track] = []
@@ -425,7 +434,8 @@ async def ingest_track_page(session: AsyncSession, pt: ParsedTrackPage) -> Track
             session, bandcamp_id=pt.album_id, url=pt.album_url, band=band
         )
     track = await get_or_create_track(
-        session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title, band=band, album=album
+        session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title, band=band, album=album,
+        art_id=pt.art_id,
     )
 
     for name in pt.tags:
