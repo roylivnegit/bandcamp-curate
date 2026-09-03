@@ -1327,3 +1327,17 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `expires in Nh` on the temporary row's `<li>` and nothing matching `/expires in/` on the
   permanent one's. 212/212 frontend tests pass (206 + 6 new), tsc/lint/build clean (chunk split
   intact). PR: see git history.
+
+- [x] **Blocked panel shows a band's URL as inert text, not a link.** *(found by the hourly
+  routine, 2026-09-03, via direct code audit, same pass as the expiry item above)* `BlockedPanel`
+  rendered `band_url` as a plain `<span>` — no way to actually open the blocked artist's page —
+  while its sibling `LikedPanel`, right above it in the same file, already links its item's `url`
+  via an icon-only "↗" anchor with a proper `aria-label`. Same data shape, inconsistent treatment.
+  Done: `BlockedPanel` now renders `band_url` with the exact same icon-only-link pattern
+  `LikedPanel` already uses (`.listen.sm`, `target="_blank" rel="noopener noreferrer"`,
+  `aria-label="Open {band} on Bandcamp"`, decorative `↗` marked `aria-hidden`) instead of a text
+  span — no new CSS, reuses the class `LikedPanel` already relies on. Covered by 1 new test in
+  `feed.test.tsx`: a blocked band with a `band_url` gets a `role="link"` with the expected
+  accessible name and `href`; one with `band_url: null` has no link at all inside its row.
+  213/213 frontend tests pass (212 + 1 new), tsc/lint/build clean (chunk split intact). PR: see
+  git history.

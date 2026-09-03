@@ -92,13 +92,26 @@ export function BlockedPanel({
             {items.map((b) => {
               const rowBusy = busy(b.band_id)
               const expiry = expiresLabel(b.expires_at)
+              const bandLabel = b.band_name || `band ${b.band_id}`
               return (
                 <li className="row" key={b.id}>
                   <span className="row-main">
-                    <b>{b.band_name || `band ${b.band_id}`}</b>
-                    {b.band_url && <span className="hint"> {b.band_url}</span>}
+                    <b>{bandLabel}</b>
                     {expiry && <span className="hint"> · {expiry}</span>}
                   </span>
+                  {b.band_url && (
+                    // Icon-only link, same pattern as LikedPanel's — the glyph is
+                    // decorative, so the accessible name comes from aria-label.
+                    <a
+                      className="listen sm"
+                      href={b.band_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Open ${bandLabel} on Bandcamp`}
+                    >
+                      <span aria-hidden="true">↗</span>
+                    </a>
+                  )}
                   <button
                     type="button"
                     className="act"
