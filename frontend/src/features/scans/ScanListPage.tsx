@@ -100,7 +100,10 @@ export function ScanListPage() {
 
       {error && (
         <p className="err" role="alert">
-          {error}
+          {error}{' '}
+          <button type="button" className="btn ghost" onClick={() => void load()}>
+            Retry
+          </button>
         </p>
       )}
 

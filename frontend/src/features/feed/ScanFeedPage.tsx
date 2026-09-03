@@ -118,6 +118,12 @@ export function ScanFeedPage() {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
+  // Separate from `error` above: that state (and its render, nested inside
+  // `showFeed`) never surfaces if the *initial* loadScan() call fails, since
+  // `showFeed` itself requires `scan !== null` — a failed first load leaves
+  // `scan` permanently null and the page silently stuck on "Loading…" with no
+  // feedback and no way to recover short of a manual browser reload.
+  const [scanError, setScanError] = useState('')
   const [listUpdated, setListUpdated] = useState(false)
   const headingRef = useRef<HTMLHeadingElement>(null)
   /** The most recently retired card, restorable with "Undo". `index` is where
@@ -185,8 +191,9 @@ export function ScanFeedPage() {
     if (scanId === null) return
     try {
       setScan(await api.getScan(scanId))
+      setScanError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load this scan.')
+      setScanError(err instanceof Error ? err.message : 'Could not load this scan.')
     }
   }, [scanId])
 
@@ -812,6 +819,15 @@ export function ScanFeedPage() {
         </h1>
         {scan && <DeleteScanButton scanId={scan.id} scanName={scan.name} kind={scan.kind} />}
       </nav>
+
+      {scanError && (
+        <p className="err" role="alert">
+          {scanError}{' '}
+          <button type="button" className="btn ghost" onClick={() => void loadScan()}>
+            Retry
+          </button>
+        </p>
+      )}
 
       {scan && scan.status !== 'done' && (
         <div className={`banner ${scan.status}`}>
