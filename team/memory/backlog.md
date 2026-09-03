@@ -1969,3 +1969,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   call is unaffected. 269/269 frontend tests pass (stable across repeated runs — one transient,
   unrelated command-palette flake in a single mixed run did not reproduce on rerun or in
   isolation), tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [~] **Cap the Liked/Blocked side-panel lists.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* `LikedPanel`/`BlockedPanel` (`SidePanels.tsx`) render every liked/
+  blocked item with no cap — likes/blocks are per-user and accumulate forever (blocks even
+  longer since most have no expiry), so the panel just keeps growing.
+  **PR #127 open, auto-merge enabled — update to `[x]` once CI confirms the merge.**
+  A first proposal from the same round — a dedicated "not found" page for a bad/deleted scan
+  link — was self-caught as already covered before spending an Architect+QA call:
+  `ScanFeedPage.tsx`'s `scanError` state already renders a `role="alert"` message with a Retry
+  button whenever `api.getScan` fails, alongside the existing "← Scans" link back.
+  Done: new `SIDEPANEL_PAGE_SIZE` (20) in `config.ts`. Both panels keep a local `visibleCount`
+  `useState`, slice their (for `BlockedPanel`, already-sorted) items array to it, and show a
+  "Show more" `btn ghost` button that grows the count by another page — plain client-side
+  slicing, no new API call, no change to either panel's existing props. Covered by five new
+  tests in the new `SidePanels.test.tsx` (standalone RTL render, no router/api mocking needed —
+  neither panel has any dependency of its own): each panel with 30 fake items renders exactly
+  20 rows plus a "Show more" button; clicking it reveals all 30 and removes the button; a list
+  of 5 items (under one page) never shows the button at all. 274/274 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.

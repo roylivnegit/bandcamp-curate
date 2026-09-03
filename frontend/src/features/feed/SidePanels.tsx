@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import type { Blocked, Liked } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
-import { BLOCK_DURATIONS, RENEW_WINDOW_MS } from '../../config'
+import { BLOCK_DURATIONS, RENEW_WINDOW_MS, SIDEPANEL_PAGE_SIZE } from '../../config'
 import { expiresLabel } from '../../lib/format'
 
 /** Ascending by expiry — soonest-to-lapse first, permanent blocks (no
@@ -27,6 +28,8 @@ export function LikedPanel({
    *  truth, the same shape `like`/`block` already use for feed cards. */
   busy: (item: Liked) => boolean
 }) {
+  const [visibleCount, setVisibleCount] = useState(SIDEPANEL_PAGE_SIZE)
+  const visible = items.slice(0, visibleCount)
   return (
     <div className="panel sidepanel">
       {items.length === 0 ? (
@@ -41,7 +44,7 @@ export function LikedPanel({
             wishlist/purchase/follow.
           </p>
           <ul className="rows">
-            {items.map((r) => {
+            {visible.map((r) => {
               const rowBusy = busy(r)
               return (
                 <li className="row" key={r.id}>
@@ -74,6 +77,15 @@ export function LikedPanel({
               )
             })}
           </ul>
+          {visibleCount < items.length && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setVisibleCount((n) => n + SIDEPANEL_PAGE_SIZE)}
+            >
+              Show more
+            </button>
+          )}
         </>
       )}
     </div>
@@ -94,7 +106,9 @@ export function BlockedPanel({
   /** Whether this band's unblock is in flight — see `LikedPanel`'s `busy`. */
   busy: (bandId: number) => boolean
 }) {
+  const [visibleCount, setVisibleCount] = useState(SIDEPANEL_PAGE_SIZE)
   const sorted = [...items].sort(byExpirySoonestFirst)
+  const visible = sorted.slice(0, visibleCount)
   return (
     <div className="panel sidepanel">
       {items.length === 0 ? (
@@ -105,7 +119,7 @@ export function BlockedPanel({
         <>
           <p className="hint">Blocked artists and labels — never appear in any of your scans.</p>
           <ul className="rows">
-            {sorted.map((b) => {
+            {visible.map((b) => {
               const rowBusy = busy(b.band_id)
               const expiry = expiresLabel(b.expires_at)
               const bandLabel = b.band_name || `band ${b.band_id}`
@@ -165,6 +179,15 @@ export function BlockedPanel({
               )
             })}
           </ul>
+          {visibleCount < sorted.length && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setVisibleCount((n) => n + SIDEPANEL_PAGE_SIZE)}
+            >
+              Show more
+            </button>
+          )}
         </>
       )}
     </div>
