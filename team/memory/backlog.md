@@ -1609,13 +1609,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   old ordering (`429`) before the fix. 249/249 backend tests pass, ruff clean, both bugs from this
   round.
 
-- [ ] **Announce the updated match count after "Load more."** *(proposed by the hourly routine,
+- [x] **Announce the updated match count after "Load more."** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved: "sound, testable, small. Ship it.")* `ScanFeedPage.tsx`'s
   `.countline` paragraph ("N recs match your filters") updates visibly when "Load more" resolves,
   but it's a plain `<p>` with no `aria-live`, so a screen-reader user gets no confirmation that
   more rows actually loaded. Add `role="status" aria-live="polite"` to it. Verify: RTL test
   asserting the countline has `role="status"` and its text reflects the new count after
   `loadMore` resolves — no visual check needed.
+  Done: added `role="status" aria-live="polite"` to the countline. In practice `total` (what the
+  countline shows) doesn't change on "Load more" itself — it's the server-side match count, not a
+  loaded-so-far tally — so the announceable case is really any `total` change (a like/block
+  decrementing it, a filter narrowing it, etc.), which this covers identically. Also fixed three
+  existing "auto-prune stale tag filters" tests that used a bare `*ByRole('status')` to detect a
+  toast — now ambiguous since the countline shares that role — by scoping to the toast's own
+  `.toast` class instead. Covered by a new test in `feed.test.tsx`: the countline has
+  `role="status"` and its text updates from "1 results" to "0 results" after a like resolves.
+  250/250 frontend tests pass, tsc/lint/build clean. PR: see git history.
 
 - [x] **"Select all loaded" for bulk-select.** *(proposed by the hourly routine, 2026-09-03,
   Architect+QA-approved — "testable if confined to a pure state-derivation function; must read
