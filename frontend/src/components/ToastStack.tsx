@@ -13,6 +13,18 @@ export function ToastStack() {
       {toasts.map((t) => (
         <div key={t.id} role={t.variant} className={`toast ${t.variant}`}>
           <span>{t.message}</span>
+          {t.action && (
+            <button
+              type="button"
+              className="toast-action"
+              onClick={() => {
+                t.action?.onClick()
+                dismissToast(t.id)
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
           <button
             type="button"
             className="toast-dismiss"

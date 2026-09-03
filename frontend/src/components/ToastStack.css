@@ -28,6 +28,22 @@
   color: var(--danger);
 }
 
+.toast-action {
+  margin-left: auto;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: var(--r-pill);
+  padding: 2px var(--s-3);
+  cursor: pointer;
+  color: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.toast-action:hover {
+  background: var(--line);
+}
+
 .toast-dismiss {
   margin-left: auto;
   background: none;
@@ -39,6 +55,13 @@
   font-size: var(--fs-sm);
   line-height: 1.4;
   opacity: 0.7;
+}
+
+/* The action button (when present) already pushed itself flush right via its
+ * own auto margin — the dismiss button that follows it should sit snug next
+ * to it, not add a second gap. */
+.toast-action + .toast-dismiss {
+  margin-left: 0;
 }
 
 .toast-dismiss:hover {

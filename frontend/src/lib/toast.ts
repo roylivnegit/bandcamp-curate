@@ -9,6 +9,9 @@ export interface Toast {
    *  renders it in — `'alert'` for a failure worth interrupting for,
    *  `'status'` for routine confirmation. */
   variant: 'status' | 'alert'
+  /** An optional inline action button (e.g. "Retry" on a failed mutation).
+   *  `<ToastStack>` dismisses the toast itself once `onClick` runs. */
+  action?: { label: string; onClick: () => void }
 }
 
 /* Module-scope, not component state: a toast can be raised from any event
@@ -36,9 +39,14 @@ function getSnapshot() {
 
 /** Queues a toast; it removes itself after `durationMs`. Call this directly
  *  from anywhere — it needs no hook and no component context. */
-export function showToast(message: string, variant: Toast['variant'] = 'status', durationMs = TOAST_DURATION_MS) {
+export function showToast(
+  message: string,
+  variant: Toast['variant'] = 'status',
+  durationMs = TOAST_DURATION_MS,
+  action?: Toast['action'],
+) {
   const id = nextId++
-  toasts = [...toasts, { id, message, variant }]
+  toasts = [...toasts, { id, message, variant, action }]
   emitChange()
   window.setTimeout(() => dismissToast(id), durationMs)
 }

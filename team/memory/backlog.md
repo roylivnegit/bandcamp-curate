@@ -1101,20 +1101,39 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   164/164 frontend tests pass (159 + 5 new), tsc/lint/build clean (chunk split intact — the button
   bundles into the existing `ScanFeedPage` chunk, its only importer). PR: see git history.
 
-- [ ] **Route like/block/undo failures through a toast with Retry, not a sticky inline error.**
+- [x] **Route like/block/undo failures through a toast with Retry, not a sticky inline error.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved with one correction)* When
   `like`/`block`/`undoRetire` fail, `ScanFeedPage.tsx` drops a permanent `<p class="err">` at the
   top of the feed that only clears on a fresh fetch — inconsistent with copy-link/delete-scan,
-  which already use the transient toast primitive (`lib/toast.ts`/`ToastStack.tsx`). Add an
-  optional `action?: { label, onClick }` to the `Toast` type, render it as a button in
-  `ToastStack`, and swap those three call sites' `setError(...)` for
-  `showToast(msg, 'alert', { action: { label: 'Retry', onClick: () => like(rec) } })`.
-  **QA correction:** `error`/`setError` is NOT dead code — `loadFirstPage`/`loadMore` still use it
-  and JSX gates on `!error` — only the like/block/undoRetire call sites move to toasts, the rest of
-  `error` state stays. Verify: mock `api.like` to reject, call `like()`, assert `showToast` was
-  invoked with `variant: 'alert'` and an `action`; a second test clicks the rendered toast's Retry
-  button (RTL) and asserts `api.like` was called again; `tsc -b` passes with `action` typed through
-  `ToastStack`.
+  which already use the transient toast primitive (`lib/toast.ts`/`ToastStack.tsx`).
+  Done, per QA's correction: `error`/`setError` is untouched everywhere else (`loadFirstPage`/
+  `loadMore`/`unlike`/`unblock` all still use it) — only the `like`/`block`/`undoRetire` call sites
+  moved to toasts. `Toast` gains an optional `action?: { label, onClick }`; `showToast` takes it as
+  a 4th positional param (after `durationMs`, so every existing call site is untouched);
+  `ToastStack` renders an inline button for it and dismisses the toast once `onClick` runs — CSS
+  moves `.toast-dismiss`'s `margin-left: auto` onto the new `.toast-action` when present (`.toast-
+  action + .toast-dismiss` zeroes it) so the pair sits flush right together instead of doubling the
+  push. `undoRetire` (a plain function, not a `useCallback`) took the one real design wrinkle: by
+  the time its catch block runs, `setUndo(null)` has already cleared `undo` state, so a naive
+  `() => void undoRetire()` retry would immediately no-op against a stale `undo` read. Fixed by
+  giving it an explicit `entry: typeof undo = undo` parameter — the normal call site still reads
+  current state, but the failure's Retry action closes over the *same* `{rec, kind, index}` it was
+  first called with and passes it straight back in, bypassing the state race entirely.
+  `like`/`block` retry more simply — `onClick: () => void like(rec)` / `() => void block(rec)` —
+  since both are stable `useCallback`s that already guard their own re-entry via `inFlight`.
+  **Cross-test leak found and fixed along the way:** the toast queue is module-scope by design (the
+  backlog's own toast-primitive entry above already documents this), and `feed.test.tsx` had never
+  needed a `resetToastsForTests()` reset before — no test in that file raised one until now. Added
+  a file-level `beforeEach(() => resetToastsForTests())`, the same fix `ToastStack.test.tsx`/
+  `CopyLinkButton.test.tsx` already apply per-file.
+  Covered by 2 new tests in `ToastStack.test.tsx` (an action button renders, runs its `onClick`,
+  and dismisses the toast on click; no button renders when no action is given) and 1 new
+  integration test in `feed.test.tsx`'s "optimistic like/block" block (a like that 500s once shows
+  a Retry button; clicking it re-sends the like, which this time succeeds, and the card completes
+  its optimistic retire) — the two pre-existing failure tests in that block needed no changes,
+  since `findByText`/`getByText` matching the error message don't care whether it renders in the
+  old inline paragraph or the new toast. 178/178 frontend tests pass (177 + 1 feed.test.tsx case +
+  2 ToastStack.test.tsx cases), tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [x] **Toast the user when a 401 mid-session logs them out.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved)* `AuthContext.tsx`'s `setUnauthorizedHandler` callback calls
