@@ -1892,23 +1892,29 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   persists the current generation so a same-session reload doesn't repeat it. 272/272 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
-- [ ] **Retry button on initial page-load failures.** *(proposed by the hourly routine,
+- [x] **Retry button on initial page-load failures.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved with a scope correction)* If the first fetch on
-  `ScanListPage` or `ScanFeedPage` fails (network blip, transient 500), the page shows static
+  `ScanListPage` or `ScanFeedPage` fails (network blip, transient 500), the page showed static
   red error text with no way to recover except a full browser reload — worse than the
   like/block/undo mutations, which already have a toast "Retry" action.
-  **QA correction, read before building:** `ScanListPage.tsx`'s existing `<p className="err"
-  role="alert">` (~line 101) matches the ticket as originally written — wire a `Retry` button
-  there to re-call the existing `load()` `useCallback`. But `ScanFeedPage.tsx`'s equivalent
-  paragraph (~line 887) is nested inside `{showFeed && (...)}`, which requires `scan !== null`
-  — if the *initial* `loadScan()` call fails, `scan` stays `null` forever and that paragraph
-  never renders at all (the page just sits on `Loading…`), and the retry-poll effect also bails
-  early on `!scan`. Don't copy-paste the ScanListPage fix onto ScanFeedPage: add a separate
-  top-level `{scanError && <p role="alert">…<button>Retry</button></p>}` gated on `scan ===
-  null`, distinct from the existing in-feed `error` state.
-  Verify: RTL test mocks the API to reject once then resolve; asserts the error paragraph + a
-  "Retry" button render; click it; assert the API was called again and on success the error
-  clears and content renders. Do this for both pages' failure paths separately.
+  Done, both pages per QA's scope correction: `ScanListPage.tsx`'s existing `<p className="err"
+  role="alert">` got a `Retry` button re-calling the existing `load()` `useCallback` — the
+  straightforward case, matching the ticket as first written. `ScanFeedPage.tsx` needed the
+  separate fix QA flagged: its in-feed `error` state (and paragraph) only renders inside
+  `{showFeed && (...)}`, which requires `scan !== null` — a failed *initial* `loadScan()` left
+  `scan` permanently `null`, so that paragraph never rendered at all and the page sat silently
+  on "Loading…" forever, with the retry-poll effect also bailing early on `!scan`. Added a new,
+  separate `scanError` state (distinct from the existing `error`, which stays scoped to
+  in-feed mutation failures — undo/renew/load-more) set only by `loadScan`'s own catch block,
+  rendered as its own top-level `<p role="alert">…<button>Retry</button></p>` right under the
+  page's nav, unconditional on `scan`'s value so a later poll failure surfaces too, not only
+  the very first one.
+  Covered by two new tests in `feed.test.tsx`'s "initial page-load failure" block: a failed
+  `/api/scans` list load shows the alert + Retry button, and clicking it re-fetches and renders
+  the real list once the mock is swapped to succeed; a failed `/api/scans/1` load on the feed
+  page shows the same affordance while the heading is still stuck on "Loading…", and clicking
+  Retry clears the alert and renders the scan once it succeeds. 275/275 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [ ] **Warn before losing an in-progress scan draft.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved with two corrections)* A user can paste several seed URLs

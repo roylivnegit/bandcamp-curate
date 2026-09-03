@@ -644,6 +644,78 @@ describe('scan feed', () => {
   })
 })
 
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+describe('initial page-load failure', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('offers a Retry button when the scan list fails to load, which re-fetches on click', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans')) return jsonResponse({ detail: 'boom' }, 500)
+      throw new Error(`no mock route for ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans')
+    const retry = await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans')) return jsonResponse([fakeScan])
+      throw new Error(`no mock route for ${url}`)
+    })
+    fireEvent.click(retry)
+
+    expect(await screen.findByText('My collection')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('offers a Retry button when the scan itself fails to load, which re-fetches on click', async () => {
+    // Distinct from the scan-list case: ScanFeedPage's in-feed `error` state
+    // only renders inside `showFeed`, which requires `scan !== null` — so a
+    // failed *initial* loadScan() left the page silently stuck on "Loading…"
+    // before this fix. This pins the separate `scanError` surface instead.
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans/1')) return jsonResponse({ detail: 'boom' }, 500)
+      throw new Error(`no mock route for ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans/1')
+    const retry = await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans/1')) return jsonResponse({ ...fakeScan, seeds: [] })
+      if (url.includes('/api/recommendations/count')) return jsonResponse({ count: 0 })
+      if (url.includes('/api/recommendations')) return jsonResponse([])
+      if (url.includes('/api/facets')) return jsonResponse({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/likes')) return jsonResponse([])
+      if (url.includes('/api/blacklist')) return jsonResponse([])
+      throw new Error(`no mock route for ${url}`)
+    })
+    fireEvent.click(retry)
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.getByText('My collection')).toBeInTheDocument()
+  })
+})
+
 describe('delete scan', () => {
   beforeEach(() => {
     localStorage.clear()
