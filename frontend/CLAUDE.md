@@ -193,17 +193,19 @@ dark is a stated choice, not a missing light mode.
   render inconsistently across platforms, which is the real cost. Adopting an icon set means a new
   dependency (against the `bundle-` rules above), a visual pass over every component, and losing the
   terminal-ish character. **Left as-is; a design call, not a bug.**
-- **`state-preservation` / `deep-linking` — a real gap, not yet built.** Feed filters live in
-  `useState`, so they're absent from the URL: a filtered view can't be shared or bookmarked, and
-  browser-back drops it. Fixing it means moving `useFeedFilters` onto `useSearchParams`. Worth doing;
-  it's a feature, so it needs its own change.
-- **`progressive-loading`.** Text `Loading…` rather than skeletons. Skeletons would also fix the
-  layout shift when the first page lands. Cosmetic, unclaimed.
-- **`skip-links`, `focus-on-route-change`.** Absent. Low value at two screens and a three-item
-  header; revisit if the nav grows.
-- **Contrast is unverified.** `--faint: #667085` on `--surface: #141823` is used for hint text and is
-  the likeliest AA failure. Nobody has run numbers on the palette — worth measuring before claiming
-  WCAG compliance anywhere.
+- **`state-preservation` / `deep-linking` — resolved.** `useFeedFilters` (`features/feed/
+  useFeedFilters.ts`) is built on `useSearchParams`, not `useState`: a filtered view is shareable/
+  bookmarkable and browser-back restores it.
+- **`progressive-loading` — resolved.** `FeedCard.tsx`/`ScanListPage.tsx` render `FeedCardSkeleton`/
+  `ScanCardSkeleton` (shimmer via a shared `.sk` class in `base.css`) while the first page loads,
+  instead of text `Loading…`.
+- **`skip-links`, `focus-on-route-change` — resolved.** `App.tsx` has a `<a href="#main-content">
+  Skip to content</a>` ahead of `AppHeader`, landing on `<main id="main-content">`. Both page
+  headings (`ScanListPage`, `ScanFeedPage`) move focus to themselves on route change.
+- **Contrast — measured, and the one failure fixed.** `--faint` on `--surface`/`--surface-2` was
+  below the 4.5:1 AA minimum (3.56:1 / 3.23:1); retuned to `#7e889c` (4.97:1 / 4.51:1). See
+  `lib/contrast.ts`/`lib/contrast.test.ts`, which reads `tokens.css` directly so a regression back
+  below 4.5:1 fails the test rather than needing another manual measurement.
 
 ## Where the two skills overlap
 

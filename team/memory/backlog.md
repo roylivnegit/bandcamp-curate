@@ -1427,3 +1427,40 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `RelativeTime.test.tsx`: renders a `title` attribute equal to the raw ISO string alongside the
   relative text; a `null` iso still renders nothing (title has nothing to attach to). PR: see git
   history.
+
+- [~] **Surface soon-to-expire blocks in the Blocked side panel, with a renew action.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved, then found blocked on
+  build)* A sibling proposal from the same Product/Architect+QA round — warn before a session's
+  JWT silently expires — was built separately (see its own backlog entry / PR). This one: sort the
+  Blocked panel by `expires_at` ascending (soonest-expiring first, permanent last) and add a
+  "renew" action on rows expiring within 24h that re-POSTs the same `band_id` with a fresh
+  `expires_at`. Architect+QA confirmed `POST /api/blacklist` (`backend/app/api/blacklist.py`)
+  already upserts by `user_id`+`band_id` — no backend change needed, renew is mechanically just
+  re-posting.
+  **Not built — a real gap the QA pass didn't check:** nothing in the frontend ever sends
+  `expires_at` when blocking. `api.block()` (`api/client.ts`) takes only a `bandId`, and its one
+  caller, `ScanFeedPage.tsx`'s `block()`, calls it with no expiry — same for `BulkActionBar`'s
+  path. So today a temporary block can only exist if someone posts to `/api/blacklist` directly;
+  through the app itself every block is permanent, and this "renew" feature would have no real
+  rows to act on. Worse, "renew for how long" has no established convention anywhere in the
+  codebase to reuse (no default-duration constant, no duration picker) — picking one here would
+  be inventing UI/UX unilaterally, not the "mechanical, no design call" change QA sanity-checked.
+  **Left open, rescoped:** the real prerequisite is a duration picker on the block action itself
+  (already flagged as its own, bigger-scope item by the earlier "Blocked panel never shows a
+  temporary block's expiry" entry above) — build that first, which also gives "renew" an obvious
+  answer to "how long" (repeat the same duration). Do not build "renew" alone before that lands.
+
+- [x] **`frontend/CLAUDE.md`'s "Known conflicts and deferred items" section was stale.**
+  *(found by the hourly routine, 2026-09-03, via direct code audit)* Four of its five listed gaps
+  had already been fixed by earlier rounds — deep-linking, skeleton loading, skip-links/focus-on-
+  route-change, and the contrast measurement — but the doc still described them as open. Stale
+  status here risks the same waste `tried-and-failed.md` already flags for summary-only Product
+  rounds: a future proposal reading this section rather than the real code could re-propose (or
+  re-investigate) something already shipped.
+  Done: updated all four resolved bullets to say what actually landed and point at the file(s) that
+  did it (`useFeedFilters.ts`, `FeedCardSkeleton`/`ScanCardSkeleton`, `App.tsx`'s skip link, `lib/
+  contrast.ts`), verified against the actual source (not the backlog's prose) before writing each
+  one. The one deliberately-unresolved item — icon glyphs vs. SVG icons — is untouched, per the
+  standing instruction not to resolve that call unilaterally. Docs-only change; no tests apply, but
+  `npm test`/`tsc`/`lint`/`build` were re-run to confirm nothing else was touched. PR: see git
+  history.
