@@ -83,8 +83,8 @@ export function FilterBar({
         <input
           ref={quickFilterRef}
           className="input quickfilter"
-          aria-label="Filter loaded cards"
-          placeholder="Filter loaded cards (/)"
+          aria-label="Search"
+          placeholder="Search (/)"
           value={quickQuery}
           onChange={(e) => onQuickQueryChange(e.target.value)}
         />

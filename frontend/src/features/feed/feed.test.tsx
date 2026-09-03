@@ -248,7 +248,7 @@ describe('scan feed', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     // Always-visible controls are direct children of `.controls`, not gated.
     expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('Filter loaded cards (/)')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Search (/)')).toBeInTheDocument()
     // Gated behind the toggle: present in the DOM (desktop shows them via
     // `display: contents`, unaffected by this state) but the wrapper isn't
     // marked open yet.
@@ -498,7 +498,7 @@ describe('scan feed', () => {
     expect(screen.getAllByRole('article')).toHaveLength(3)
 
     const user = userEvent.setup()
-    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'second')
+    await user.type(screen.getByPlaceholderText('Search (/)'), 'second')
 
     expect(screen.getAllByRole('article')).toHaveLength(1)
     expect(screen.getByText('Second album')).toBeInTheDocument()
@@ -510,7 +510,7 @@ describe('scan feed', () => {
     await screen.findByText('First album')
 
     const user = userEvent.setup()
-    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'nonexistent-xyz')
+    await user.type(screen.getByPlaceholderText('Search (/)'), 'nonexistent-xyz')
 
     expect(await screen.findByText('No loaded cards match “nonexistent-xyz”.')).toBeInTheDocument()
     expect(screen.queryByText('No recommendations in this scan yet.')).not.toBeInTheDocument()
@@ -523,7 +523,7 @@ describe('scan feed', () => {
 
     fireEvent.keyDown(document, { key: '/' })
 
-    expect(document.activeElement).toBe(screen.getByPlaceholderText('Filter loaded cards (/)'))
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Search (/)'))
   })
 
   const bulkRecs = [
@@ -632,7 +632,7 @@ describe('scan feed', () => {
     await screen.findByText('First album')
     const user = userEvent.setup()
 
-    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'Second')
+    await user.type(screen.getByPlaceholderText('Search (/)'), 'Second')
     await screen.findByText('Second album')
     expect(screen.queryByText('First album')).not.toBeInTheDocument()
 
