@@ -840,6 +840,7 @@ export function ScanFeedPage() {
             selectedCount={selected.size}
             selectableCount={selectableKeys.length}
             onSelectAll={selectAllLoaded}
+            exportRows={visibleRows}
           />
 
           <BulkActionBar

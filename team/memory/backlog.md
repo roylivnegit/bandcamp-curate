@@ -1828,3 +1828,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   track is `track_num=1`, `duration=486.761`. Extended `test_ingest_album_populates_graph` with
   both assertions. 252/252 backend tests pass, ruff clean; `alembic upgrade head` / `downgrade -1`
   / `upgrade head` round-trips clean. PR: see git history.
+
+- [x] **Export the current feed to CSV.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "pure function, no external deps or fixtures needed, tested entirely
+  with unit tests via round-trip through a CSV parser")* A companion "sort order" proposal from
+  the same round was rejected before reaching QA: `useFeedFilters`/`FilterBar` already have a Sort
+  dropdown (`score` / `neighbours` / `affinity`, `SortKey` in `api/types.ts`) — re-checked against
+  the actual source, not a summary, precisely to avoid the duplicate-proposal failure mode logged
+  twice already today in `tried-and-failed.md`. CSV export had no existing equivalent (checked via
+  `grep -i 'csv|createObjectURL|download='`, zero hits) and was the one proposal that survived.
+  Done: `lib/export.ts` — `formatRecommendationsAsCsv(recs): string`, a pure RFC-4180 formatter
+  (rank/type/title/artist/score/co-owners/genre-match/url columns, CRLF rows, quote+comma+newline
+  escaping) with no DOM or fetch dependency, plus a thin `downloadCsv(filename, csv)` DOM wrapper
+  (Blob → object URL → temporary anchor click → revoke). Wired into `FilterBar.tsx` as an "⇩ Export
+  CSV" button next to Liked/Blocked, disabled when there's nothing loaded. Exports `exportRows`
+  (`ScanFeedPage`'s `visibleRows`) — deliberately the currently-loaded, currently-filtered page(s)
+  already on screen, not a fresh full-result-set fetch, so it needed no new API surface. Covered by
+  6 new tests in `export.test.ts` (a test-only RFC-4180 parser round-trips a comma, a quote, and an
+  embedded newline back to the original string; header row; column count; null-field fallback;
+  empty-list header-only output) and 2 new integration tests in `feed.test.tsx` (disabled with zero
+  rows loaded; a click with one row calls `URL.createObjectURL` once with a `text/csv` Blob whose
+  text contains the row, clicks the anchor, and revokes the URL). 255/255 frontend tests pass,
+  tsc/lint/build clean (route chunk split intact). PR: see git history.
