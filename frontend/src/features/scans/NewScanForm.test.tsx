@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NewScanForm } from './NewScanForm'
 
@@ -114,5 +114,31 @@ describe('NewScanForm multi-URL paste', () => {
     pasteInto('https://a.bandcamp.com/album/one')
 
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
+  })
+})
+
+describe('NewScanForm submission', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('trims leading/trailing whitespace from the name before submitting', async () => {
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(JSON.stringify({ id: 1 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderForm()
+    fireEvent.change(screen.getByLabelText('Scan name'), { target: { value: '  My Scan  ' } })
+    addViaButton('https://artist.bandcamp.com/album/some-release')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create & queue' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body.name).toBe('My Scan')
   })
 })

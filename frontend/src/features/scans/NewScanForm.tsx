@@ -68,7 +68,7 @@ export function NewScanForm({
     setBusy(true)
     setError('')
     try {
-      await api.createScan({ name, seeds })
+      await api.createScan({ name: name.trim(), seeds })
       onCreated()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the scan.')

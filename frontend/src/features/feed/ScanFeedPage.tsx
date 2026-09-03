@@ -9,7 +9,7 @@ import { DeleteScanButton } from '../../components/DeleteScanButton'
 import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, TOAST_DURATION_MS, UNDO_WINDOW_MS } from '../../config'
-import { count, plural } from '../../lib/format'
+import { count } from '../../lib/format'
 import { matchesQuery } from '../../lib/quickFilter'
 import { showToast } from '../../lib/toast'
 import { useDensity } from '../../lib/useDensity'
@@ -913,7 +913,7 @@ export function ScanFeedPage() {
 
             {!done && rows.length > 0 && (
               <button type="button" className="btn ghost more" onClick={loadMore} disabled={loading}>
-                {loading ? 'Loading…' : `Load ${plural(LIMIT, 'more')}`}
+                {loading ? 'Loading…' : 'Load more'}
               </button>
             )}
           </div>
