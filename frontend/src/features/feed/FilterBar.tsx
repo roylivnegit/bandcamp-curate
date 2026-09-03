@@ -1,4 +1,5 @@
 import { useDeferredValue, useMemo, useState } from 'react'
+import type { RefObject } from 'react'
 
 import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { CopyLinkButton } from '../../components/CopyLinkButton'
@@ -31,6 +32,11 @@ export function FilterBar({
   onTogglePanel,
   density,
   onToggleDensity,
+  quickQuery,
+  onQuickQueryChange,
+  quickFilterRef,
+  selectMode,
+  onToggleSelectMode,
 }: {
   filters: FeedFilters
   facetTags: Facet[]
@@ -41,6 +47,11 @@ export function FilterBar({
   onTogglePanel: (p: 'liked' | 'blocked') => void
   density: Density
   onToggleDensity: () => void
+  quickQuery: string
+  onQuickQueryChange: (q: string) => void
+  quickFilterRef: RefObject<HTMLInputElement | null>
+  selectMode: boolean
+  onToggleSelectMode: () => void
 }) {
   return (
     <div className="filterbar">
@@ -58,6 +69,15 @@ export function FilterBar({
             </button>
           ))}
         </div>
+
+        <input
+          ref={quickFilterRef}
+          className="input quickfilter"
+          aria-label="Filter loaded cards"
+          placeholder="Filter loaded cards (/)"
+          value={quickQuery}
+          onChange={(e) => onQuickQueryChange(e.target.value)}
+        />
 
         <Dropdown label={`Sort · ${SORTS[filters.sort]} ▾`} width={210}>
           {(close) => (
@@ -92,6 +112,14 @@ export function FilterBar({
           onClick={onToggleDensity}
         >
           {density === 'compact' ? '☰ Compact' : '☰ Comfortable'}
+        </button>
+        <button
+          type="button"
+          className={`btn ghost${selectMode ? ' on' : ''}`}
+          aria-pressed={selectMode}
+          onClick={onToggleSelectMode}
+        >
+          {selectMode ? '✕ Cancel select' : '☑ Select'}
         </button>
         <CopyLinkButton />
         <CopyMarkdownButton rows={rows} />

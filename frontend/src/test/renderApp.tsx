@@ -76,9 +76,12 @@ export function fakeRec(over: Partial<Recommendation> = {}): Recommendation {
 }
 
 /** Routes fetch by URL substring. Unmatched paths fail loudly rather than
- *  silently returning undefined and producing a confusing render. */
+ *  silently returning undefined and producing a confusing render. The unused
+ *  `init` param exists so `fetchMock.mock.calls` types as a real 2-tuple —
+ *  callers that need to assert on method/body (e.g. a POST's request init)
+ *  can read `calls[n][1]` without a cast. */
 export function mockFetch(routes: Array<[string, unknown, number?]>) {
-  const fn = vi.fn(async (input: string | URL | Request) => {
+  const fn = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     for (const [needle, body, status] of routes) {
       if (url.includes(needle)) {

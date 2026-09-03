@@ -384,6 +384,218 @@ describe('scan feed', () => {
     fireEvent.keyDown(cards[2], { key: 'Home' })
     expect(document.activeElement).toBe(cards[0])
   })
+
+  it('narrows the rendered cards to a title/band match, with no new fetch', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    expect(screen.getAllByRole('article')).toHaveLength(3)
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'second')
+
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+    expect(screen.getByText('Second album')).toBeInTheDocument()
+  })
+
+  it('shows a distinct empty message when the quick filter matches nothing, not the real empty state', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'nonexistent-xyz')
+
+    expect(await screen.findByText('No loaded cards match “nonexistent-xyz”.')).toBeInTheDocument()
+    expect(screen.queryByText('No recommendations in this scan yet.')).not.toBeInTheDocument()
+  })
+
+  it('"/" focuses the quick filter input from anywhere on the page', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    fireEvent.keyDown(document, { key: '/' })
+
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Filter loaded cards (/)'))
+  })
+
+  const bulkRecs = [
+    fakeRec({ album_id: 1, band_id: 101, title: 'First album', band_name: 'Band One' }),
+    fakeRec({ album_id: 2, band_id: 102, title: 'Second album', band_name: 'Band Two' }),
+    fakeRec({ album_id: 3, band_id: 103, title: 'Third album', band_name: 'Band Three' }),
+  ]
+
+  it('offers no checkboxes or bulk bar until select mode is turned on', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+  })
+
+  it('selecting two cards and clicking "Block selected" blocks exactly those two bands, then clears the selection', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes).toHaveLength(3)
+
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    expect(await screen.findByText('2')).toBeInTheDocument()
+    expect(screen.getByText('selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Block selected' }))
+
+    await waitFor(() => {
+      const blockCalls = fetchMock.mock.calls.filter(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      })
+      expect(blockCalls).toHaveLength(2)
+      const blockedIds = blockCalls
+        .map(([, init]) => JSON.parse(String(init?.body)).band_id)
+        .sort((a: number, b: number) => a - b)
+      expect(blockedIds).toEqual([101, 102])
+    })
+
+    // Selection clears and select mode exits once the batch settles.
+    await waitFor(() => {
+      expect(screen.queryByText('selected')).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    })
+  })
+
+  it('"Cancel" in the bulk bar clears the selection without blocking anything', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    await user.click(screen.getAllByRole('checkbox')[0])
+    expect(await screen.findByText('1')).toBeInTheDocument()
+    expect(screen.getByText('selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('delete scan', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  /** `deleteOk: false` fails the DELETE call (a 400, mirroring the backend's
+   *  real "the collection scan can't be deleted" response shape) so a test
+   *  can exercise the error path without touching the collection-scan guard,
+   *  which is rendered client-side instead (see the "collection scans" test
+   *  below). */
+  function mockCustomScan({ deleteOk = true } = {}) {
+    return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1') && init?.method === 'DELETE') {
+        return deleteOk ? json({ deleted: 1 }) : json({ detail: 'nope' }, 400)
+      }
+      if (url.includes('/api/scans/1')) return json({ ...fakeScan, id: 1, kind: 'custom', seeds: [] })
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('does not render for the collection scan', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }], // fakeScan defaults to kind: 'collection'
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    await screen.findByText('Eyes of Infinity')
+    expect(screen.queryByRole('button', { name: /Delete scan/ })).not.toBeInTheDocument()
+  })
+
+  it('requires a second click, and reverts if the second click never comes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal('fetch', mockCustomScan())
+
+    renderApp('/scans/1')
+    const deleteBtn = await screen.findByRole('button', { name: 'Delete scan "My collection"' })
+
+    fireEvent.click(deleteBtn)
+    expect(await screen.findByRole('button', { name: 'Confirm delete?' })).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    expect(screen.queryByRole('button', { name: 'Confirm delete?' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+  })
+
+  it('"Cancel" reverts immediately without ever calling the API', async () => {
+    const fetchMock = mockCustomScan()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
+  })
+
+  it('confirming deletes the scan and returns to the scans list', async () => {
+    vi.stubGlobal('fetch', mockCustomScan())
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete?' }))
+
+    await waitFor(() => expect(currentLocation().pathname).toBe('/scans'))
+  })
+
+  it('a failed delete shows an error and leaves the scan in place', async () => {
+    vi.stubGlobal('fetch', mockCustomScan({ deleteOk: false }))
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete?' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('nope')
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+    expect(currentLocation().pathname).toBe('/scans/1')
+  })
 })
 
 describe('focus on route change', () => {

@@ -978,9 +978,86 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   component lands in its own small chunk (used by both lazy routes), route chunk split intact. PR:
   see git history.
 
+- [x] **Quick filter over loaded cards.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Once you've paged in a few hundred recs, there's no way to jump straight
+  to "that one album" — genre/contains filters narrow by tag, not by name, so finding a specific
+  title or artist means scrolling. Add a text input to `FilterBar` that narrows the already-fetched
+  `rows` client-side (title/`band_name` substring match, case-insensitive) — no API call, purely a
+  view filter — with `/` focusing it, matching the existing `l`/`b`/Ctrl+K shortcut pattern. Verify:
+  unit-test the pure `matchesQuery(rec, query)` helper (title match, band match, empty-query
+  passthrough, case-insensitivity); RTL test that typing reduces the rendered `.card` count and that
+  `/` moves `document.activeElement` to the input.
+  Done same run (Option C step 5, built immediately after proposing): new `lib/quickFilter.ts` —
+  pure `matchesQuery(rec, query)`, case-insensitive substring match against `title`/`band_name`, an
+  empty/whitespace query matching everything. `ScanFeedPage.tsx` derives `visibleRows =
+  useMemo(() => quickQuery.trim() ? rows.filter(...) : rows, [rows, quickQuery])` and renders that
+  instead of `rows` for the card list — the roving-tabindex handler (ArrowUp/Down/Home/End) and
+  `activeCardIndex` clamp now move over `visibleRows` too, since that's what's actually on screen;
+  `rows` itself (and `total`, pagination, "Load more") is untouched, so the quick filter never
+  touches the server-side result set. The input lives in `FilterBar.tsx` (`quickQuery`/
+  `onQuickQueryChange`/`quickFilterRef` props, same "controlled value + parent-owned state" shape as
+  `density`), with a new `.quickfilter` sizing rule in `feed.css` (the shared `.input` class is
+  `width:100%`, so a fixed width was needed inside the flex `.controls` row). A document-level `/`
+  listener in `ScanFeedPage` (mirroring `ShortcutsHelp`'s always-listening + `isTextEntryTarget`
+  guard, duplicated locally per the codebase's existing convention — `CommandPalette`/
+  `ShortcutsHelp` each already carry their own copy rather than a shared helper) focuses the input;
+  `ShortcutsHelp`'s own list gained a `/` row. Query resets to empty on every `scanId` change, same
+  as the `undo` banner, so it can't silently carry over to a different scan's feed. A distinct empty
+  message (`No loaded cards match "…"`) covers the filtered-to-zero case, kept separate from the
+  real "no recommendations"/"nothing matches these filters" states, which are about the server-side
+  result set. Covered by 5 new tests in `quickFilter.test.ts` (title match, band match, no match,
+  empty/whitespace query passthrough, null title/band tolerance) and 3 new integration tests in
+  `feed.test.tsx`'s roving-tabindex block (reusing its existing three-card fixture): typing narrows
+  the rendered `.card`/`article` count and shows the matching card; a query matching nothing shows
+  the distinct empty message, not the real one; `/` moves `document.activeElement` to the input.
+  149/149 frontend tests pass (141 + 8 new), tsc/lint/build clean, chunk split intact. PR: see git
+  history.
+
+- [x] **Bulk select + bulk block.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Clearing a run of obviously-irrelevant recs (a whole genre you don't want)
+  means clicking "block" one card at a time, which feels tedious for something that's conceptually
+  one action. Add a per-card checkbox (shown once "select mode" is toggled from the filter bar) and
+  a floating bar — "N selected — Block / Cancel" — that calls the existing block handler once per
+  selected key, reusing current optimistic-update/undo plumbing. QA confirmed the real `block(rec)`
+  handler exists at `ScanFeedPage.tsx:710`. Verify: RTL test — check two cards, click "Block
+  selected", assert the block handler/mock API was called exactly twice with the right ids and
+  selection state clears after; a second test asserts the bulk bar renders nothing when the
+  selection set is empty.
+  Done: `FilterBar.tsx` gets a "☑ Select" / "✕ Cancel select" toggle (`selectMode`, same
+  `aria-pressed` shape as the density toggle) next to it. `ScanFeedPage.tsx` owns `selected: Set<
+  string>` (card keys, same namespace as `keyOf`) and `bulkBusy`; `FeedCard.tsx` renders a checkbox
+  (only for a row with a band — mirrors the existing per-card block button's own band-id gate)
+  when `selectMode` is on, controlled by a new `selected`/`onToggleSelect` prop pair. New
+  `components/BulkActionBar.tsx` — a pure `{count, busy, onBlock, onCancel}` presentational
+  component, renders nothing at `count === 0` — shows "N selected", "Cancel", "Block selected".
+  `bulkBlock()` calls the exact existing `block(rec)` handler once per selected row (`Promise.all`)
+  — same optimistic retire/undo/error handling as a single click — then clears the selection and
+  exits select mode once every call has settled, regardless of individual outcome (`block` itself
+  already reports a failure via `setError`). Selection resets on `scanId` change, same reasoning as
+  the quick-filter query and undo banner.
+  **Test-infra fix along the way:** `test/renderApp.tsx`'s `mockFetch` helper's inner `vi.fn` only
+  declared an `input` param, so TypeScript inferred `fetchMock.mock.calls` as 1-tuples — any test
+  needing to assert on a POST's method/body (this one needed to confirm exactly two distinct
+  `band_id`s were blocked) had to cast. Added an unused `_init?: RequestInit` second param so the
+  inferred call-tuple type is a real 2-tuple everywhere `mockFetch` is used, no cast needed.
+  **RTL gotcha hit and worked around:** `getByText` matches an element's own direct text-node
+  children only, not nested elements' text — so `<span><b>{count}</b> selected</span>` can't be
+  matched by the combined string `"N selected"` (the `<b>`'s text is invisible to the span's own
+  node-text). Assertions query the count and the literal word "selected" as two separate exact
+  matches instead.
+  Covered by 3 new tests in `BulkActionBar.test.tsx` (renders nothing at zero; shows the count and
+  wires `onBlock`/`onCancel` to their buttons; busy disables both buttons and relabels Block), 4 new
+  in `FeedCard.test.tsx`'s "bulk select" block (no checkbox outside select mode; an unchecked box in
+  select mode for a card with a band; no box for a card with no band; the `selected` prop and
+  `onToggleSelect` call), and 3 new integration tests in `feed.test.tsx` (no checkboxes/bar before
+  select mode is on; selecting two of three cards and clicking "Block selected" posts exactly two
+  `/api/blacklist` calls with the two selected `band_id`s and clears the selection/select mode after;
+  "Cancel" clears the selection and confirms no block request was ever sent). 159/159 frontend tests
+  pass (149 + 10 new), tsc/lint/build clean, chunk split intact. PR: see git history.
+
 - [x] **"Seen" marker for opened Bandcamp links.** *(proposed by the hourly routine, 2026-09-02,
   Architect+QA-approved — same Product/Architect+QA round as the quick-filter and bulk-select
-  proposals below)* Scrolling back through a long feed, you can't tell which recs you already
+  proposals above)* Scrolling back through a long feed, you can't tell which recs you already
   clicked through to Bandcamp to check out, so you re-open ones you've already mentally dismissed.
   Record the card's key in `localStorage` (capped set, same try/catch pattern as the existing token
   storage in `api/client.ts`) when "Bandcamp ↗" is clicked; `FeedCard` reads that set and renders
@@ -1003,5 +1080,23 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `visited.test.ts` (mark then read back; unrelated keys unaffected; marking twice doesn't
   duplicate; cap eviction drops the oldest; a corrupted stored value falls back to "not visited";
   both functions degrade silently rather than throwing when `localStorage` itself throws — 2 tests).
-  152/152 frontend tests pass (141 + 4 + 7), tsc/lint/build clean, chunk split intact. PR: see git
+  Rebased onto main after the quick-filter/bulk-select/delete-scan items landed ahead of it; test
+  counts below are against that base, not the original 152/152 noted when this was first built.
+  Frontend suite passes in full post-rebase, tsc/lint/build clean, chunk split intact. PR: see git
   history.
+
+- [x] **No way to delete a scan from the UI.** *(found by the hourly routine, 2026-09-02, via direct
+  code audit — `api.deleteScan`/`DELETE /api/scans/{id}` already existed and worked, but nothing in
+  the frontend ever called it: a mis-seeded or abandoned custom scan could only be removed by hand
+  against the database)* Added `DeleteScanButton` (`components/DeleteScanButton.tsx`), wired into the
+  feed page's nav bar next to the scan title. Renders nothing for the `collection` scan (the backend
+  itself refuses to delete that one — this mirrors the rule instead of duplicating it). Two clicks,
+  not a native `confirm()` (this app doesn't use those anywhere else): the first arms a "Confirm
+  delete?" state that auto-reverts after 4s if never followed up; the second calls the API, toasts
+  success, and navigates back to `/scans`; a failed delete toasts the server's error and leaves the
+  scan in place. Verify: 5 new RTL tests in `feed.test.tsx`'s new "delete scan" block — no button on
+  the collection scan; first click arms confirm and it reverts on its own after the window closes;
+  "Cancel" reverts immediately and never calls the API; confirming calls `DELETE` and lands on
+  `/scans`; a failed `DELETE` shows the error via `role="alert"` and leaves the scan/route in place.
+  164/164 frontend tests pass (159 + 5 new), tsc/lint/build clean (chunk split intact — the button
+  bundles into the existing `ScanFeedPage` chunk, its only importer). PR: see git history.
