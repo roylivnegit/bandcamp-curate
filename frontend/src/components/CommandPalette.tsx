@@ -61,6 +61,15 @@ export function CommandPalette({
   // to stay in range rather than pointing past the end of a shorter list.
   const activeRow = activeIndex >= 0 && activeIndex < filtered.length ? filtered[activeIndex] : null
 
+  // Arrow-key nav moves `activeIndex` (and the `.active` class/aria-activedescendant
+  // that follow it) but does nothing to the scroll position on its own — on a
+  // filtered list longer than the visible `.cmdk-list`, arrowing past the
+  // visible rows would otherwise highlight an option the user can't see.
+  useEffect(() => {
+    if (!open || !activeRow) return
+    document.getElementById(`cmdk-opt-${activeRow.id}`)?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, activeRow])
+
   useEffect(() => {
     if (!open) return
     previouslyFocused.current = document.activeElement as HTMLElement | null

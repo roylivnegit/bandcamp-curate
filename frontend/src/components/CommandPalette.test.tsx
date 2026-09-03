@@ -115,6 +115,21 @@ describe('CommandPalette', () => {
     expect(runBanana).toHaveBeenCalledTimes(1)
   })
 
+  it('scrolls the highlighted row into view as ArrowDown moves it', () => {
+    // jsdom doesn't implement scrollIntoView at all.
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    const { list } = actions()
+    renderWithControls(list)
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    scrollIntoView.mockClear() // drop the initial-open call for row 0
+
+    const input = screen.getByRole('textbox', { name: 'Jump to…' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+  })
+
   it('a mouse click on a row runs its action and closes the palette', () => {
     const { list, runAlpha } = actions()
     renderWithControls(list)

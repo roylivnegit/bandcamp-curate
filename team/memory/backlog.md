@@ -2012,3 +2012,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   eagerly-loaded shared chunk via `App.tsx`, not a lazy route chunk, as expected for a boundary
   that must exist before either route renders). Merged same run (PR #128, after a merge conflict
   with #127 in this same file — resolved by keeping both entries). PR: see git history.
+
+- [ ] **Duplicate seed URL gives no feedback.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* `features/scans/NewScanForm.tsx`'s `addSeed()` (line 44-54) calls
+  `setError('')` and `setSeedUrl('')` unconditionally even when `seeds.includes(u)` is already
+  true — re-adding a URL already in the list silently no-ops, so it looks like the Add click
+  didn't register. Fix: when the URL is already in the list, `setError('Already in your seed
+  list.')` and skip clearing `seedUrl` so the offending text stays visible. Test: add a seed via
+  the Add button, add the identical URL again, assert `role="alert"` shows the message and the
+  seed list is still length 1. **In flight on a separate branch/PR this same run — see PR #129.**
+
+- [x] **Command palette arrow-key nav doesn't scroll the active row into view.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)*
+  `components/CommandPalette.tsx`'s `onInputKeyDown` (line 117-128) moved `activeIndex` but
+  nothing called `scrollIntoView` on the newly active row — on a longer filtered list, arrowing
+  down past the visible rows highlighted an option the user couldn't see.
+  Done: a new effect right after `activeRow`'s definition, keyed on `[open, activeRow]`, looks
+  up the active row by `cmdk-opt-${activeRow.id}` (the id every row already carries for
+  `aria-activedescendant`) and calls `.scrollIntoView({ block: 'nearest' })`. Both the element
+  lookup and the method call use optional chaining (`?.scrollIntoView?.(...)`) since jsdom
+  doesn't implement `scrollIntoView` at all — a real DOM element always has the method, so this
+  is a no-op difference outside tests, not a defensive hedge against real browsers lacking it.
+  Covered by a new test in `CommandPalette.test.tsx`: stubs `Element.prototype.scrollIntoView`
+  with `vi.fn()`, opens the palette (clearing the initial mount call for row 0), presses
+  ArrowDown, and asserts the mock was called with `{ block: 'nearest' }`. 277/277 frontend tests
+  pass, tsc/lint/build clean (chunk split intact). PR: see git history.
