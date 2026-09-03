@@ -5,11 +5,14 @@
  * instead of showing them an empty feed with no explanation.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { ApiError, api, getToken, setToken, setUnauthorizedHandler } from '../api/client'
 import type { Me } from '../api/types'
+import { showToast } from '../lib/toast'
 import { AuthContext } from './context'
+
+const SESSION_EXPIRED_MESSAGE = 'Your session expired — please log in again.'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
@@ -21,9 +24,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMe(null)
   }, [])
 
-  // A 401 from any request drops the session, wherever it happened.
+  // Read synchronously from the handler below without re-registering it on
+  // every `me` change (rule 3, frontend/CLAUDE.md: a ref for a value only
+  // read imperatively, not one that drives a render).
+  const meRef = useRef<Me | null>(null)
   useEffect(() => {
-    setUnauthorizedHandler(() => setMe(null))
+    meRef.current = me
+  }, [me])
+
+  // A 401 from any request drops the session, wherever it happened. Only
+  // toast about it when it actually ended a real session — the initial
+  // stale-token-on-load 401 (below) and an explicit logout() both leave
+  // `meRef.current` null/unset already, so neither should say "expired".
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      if (meRef.current !== null) showToast(SESSION_EXPIRED_MESSAGE, 'alert')
+      setMe(null)
+    })
     return () => setUnauthorizedHandler(null)
   }, [])
 
