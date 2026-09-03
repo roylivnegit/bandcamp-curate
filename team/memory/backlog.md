@@ -1970,10 +1970,11 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   unrelated command-palette flake in a single mixed run did not reproduce on rerun or in
   isolation), tsc/lint/build clean (chunk split intact). PR: see git history.
 
-- [x] **Cap the Liked/Blocked side-panel lists.** *(proposed by the hourly routine, 2026-09-03,
+- [~] **Cap the Liked/Blocked side-panel lists.** *(proposed by the hourly routine, 2026-09-03,
   Architect+QA-approved)* `LikedPanel`/`BlockedPanel` (`SidePanels.tsx`) render every liked/
   blocked item with no cap — likes/blocks are per-user and accumulate forever (blocks even
   longer since most have no expiry), so the panel just keeps growing.
+  **PR #127 open, auto-merge enabled — update to `[x]` once CI confirms the merge.**
   A first proposal from the same round — a dedicated "not found" page for a bad/deleted scan
   link — was self-caught as already covered before spending an Architect+QA call:
   `ScanFeedPage.tsx`'s `scanError` state already renders a `role="alert"` message with a Retry
