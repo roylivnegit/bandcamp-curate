@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1099,6 +1099,35 @@ describe('unlike/unblock from the side panels', () => {
     const permanentRow = screen.getByText('Forever Blocked').closest('li')
     expect(permanentRow).not.toBeNull()
     expect(permanentRow).not.toHaveTextContent(/expires in/)
+  })
+
+  it('links a blocked band to Bandcamp when it has a URL, and shows nothing when it does not', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/blacklist',
+        [
+          { ...fakeBlocked, band_url: 'https://someartist.bandcamp.com' },
+          { ...fakeBlocked, id: 2, band_id: 6, band_name: 'No Link Band', band_url: null },
+        ],
+      ],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+
+    const link = await screen.findByRole('link', { name: 'Open Blocked Band on Bandcamp' })
+    expect(link).toHaveAttribute('href', 'https://someartist.bandcamp.com')
+
+    const noLinkRow = screen.getByText('No Link Band').closest('li')
+    expect(noLinkRow).not.toBeNull()
+    expect(within(noLinkRow as HTMLElement).queryByRole('link')).not.toBeInTheDocument()
   })
 
   it('ignores a second click on the same row while the first unlike is still in flight', async () => {
