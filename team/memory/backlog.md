@@ -1524,6 +1524,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   standing instruction not to resolve that call unilaterally. Docs-only change; no tests apply, but
   `npm test`/`tsc`/`lint`/`build` were re-run to confirm nothing else was touched. PR: see git
   history.
+- [x] **The "Load more" button literally reads "Load mores".** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved, found via direct code audit rather than guessing)*
+  `ScanFeedPage.tsx` built the label as `` `Load ${plural(LIMIT, 'more')}` ``, and `plural(n, one,
+  many=one+'s')` only returns `one` when `n===1` — `LIMIT` is the fixed page size (50), never 1, so
+  the button has read "Load mores" unconditionally since it shipped. "more" here is a fixed adverb,
+  not a count being pluralized, so `plural()` was never the right tool for this call site (its other
+  callers — `ScanListPage.tsx`, `ColdStartPanel.tsx`, `FeedCard.tsx` — all pluralize genuinely
+  variable counts and are unaffected).
+  Done: replaced the `plural()` call with the fixed string `'Load more'`. Covered by a new test in
+  `feed.test.tsx` asserting the button's accessible name is exactly `'Load more'` when more pages
+  remain — fails against the old code, passes now.
+
+- [x] **A scan name can be created with baked-in leading/trailing whitespace.** *(proposed by the
+  hourly routine, 2026-09-03, Architect+QA-approved, found via direct code audit)* `NewScanForm.tsx`
+  gates the Create button on `!name.trim()` but `create()` posts `api.createScan({ name, seeds })`
+  with the raw, untrimmed state — a name typed as `"  My Scan  "` (or with a stray trailing space
+  from autocomplete/paste) passes the enabled check and is persisted with the whitespace intact
+  everywhere the scan's name is displayed.
+  Done: trim at the point of submission (`api.createScan({ name: name.trim(), seeds })`) — the
+  `disabled` check and the input's own `onChange` are untouched. Covered by a new test asserting
+  `api.createScan` is called with the trimmed name when the field holds leading/trailing whitespace.
+
 - [x] **`expiresLabel` rounds across its own bucket boundary.** *(proposed by the hourly routine,
   2026-09-03, found via direct code audit — a repeat of the same "read the actual files, don't
   brainstorm features" approach that found the two bugs above)* `lib/format.ts` chose the

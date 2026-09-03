@@ -114,6 +114,26 @@ describe('scan feed', () => {
     expect(screen.getByText(/2 neighbours own this/)).toBeInTheDocument()
   })
 
+  it('labels the pagination button "Load more", not a pluralized page size', async () => {
+    // A full page (LIMIT=50 items) with more available server-side (count >
+    // page length) is what puts the button on screen at all (`done` is
+    // `page.length < LIMIT`) — regression coverage for a label bug, not the
+    // pagination mechanics themselves.
+    const fullPage = Array.from({ length: 50 }, (_, i) => fakeRec({ album_id: i + 1, title: `Album ${i + 1}` }))
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 60 }],
+      ['/api/recommendations', fullPage],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByRole('button', { name: 'Load more' })).toBeInTheDocument()
+  })
+
   it('shows skeleton recommendation cards while the first page loads', async () => {
     let releaseRecs = () => {}
     const recsHeld = new Promise<void>((resolve) => {
