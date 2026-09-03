@@ -134,6 +134,27 @@ describe('scan feed', () => {
     expect(await screen.findByRole('button', { name: 'Load more' })).toBeInTheDocument()
   })
 
+  it('announces the match count to screen readers, and it updates as the count changes', async () => {
+    // The countline text visibly changes whenever `total` does (e.g. a
+    // like/block decrementing it) but was a plain <p> with no aria-live, so a
+    // screen-reader user got no confirmation anything happened.
+    mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    const countline = screen.getByRole('status')
+    expect(countline).toHaveTextContent('1 results')
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    expect(countline).toHaveTextContent('0 results')
+  })
+
   it('shows skeleton recommendation cards while the first page loads', async () => {
     let releaseRecs = () => {}
     const recsHeld = new Promise<void>((resolve) => {
@@ -532,6 +553,48 @@ describe('scan feed', () => {
     ).toBe(false)
   })
 
+  it('"Select all loaded" checks every visible card, and a second click clears them all', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    expect(screen.queryByRole('button', { name: /select all loaded/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /select all loaded/i }))
+
+    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    expect(checkboxes).toHaveLength(3)
+    expect(checkboxes.every((cb) => cb.checked)).toBe(true)
+    // The feed's own countline also reads "3" here (unfiltered total), so
+    // scope the count assertion to the bulk bar rather than a bare
+    // `findByText('3')`, which would ambiguously match both.
+    const bulkBar = await screen.findByText('selected')
+    expect(within(bulkBar.closest('.bulkbar')!).getByText('3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /deselect all/i }))
+
+    expect(screen.getAllByRole('checkbox').every((cb) => !(cb as HTMLInputElement).checked)).toBe(true)
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+  })
+
+  it('"Select all loaded" only offers what quick-filter narrowed to', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'Second')
+    await screen.findByText('Second album')
+    expect(screen.queryByText('First album')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    await user.click(screen.getByRole('button', { name: /select all loaded/i }))
+
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1)
+    expect(await screen.findByText('1')).toBeInTheDocument()
+  })
 })
 
 describe('delete scan', () => {
@@ -1489,6 +1552,12 @@ describe('auto-prune stale tag filters', () => {
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 
+  // The feed's countline (`.countline`) also carries `role="status"` now (see
+  // the "announces the match count" test above), so a bare `*ByRole('status')`
+  // no longer uniquely identifies the prune toast — narrow to the toast's own
+  // class, same as `ToastStack.tsx` renders it.
+  const toastStatus = () => screen.queryAllByRole('status').find((el) => el.classList.contains('toast'))
+
   /** A running scan whose recommendation count and facets tags are both
    *  controlled by the two out-of-band flags, so a test can change what the
    *  *next* poll turns up (mimicking a recompute that dropped a genre from
@@ -1531,7 +1600,8 @@ describe('auto-prune stale tag filters', () => {
     })
 
     await waitFor(() => expect(currentLocation().search).not.toContain('tag=psybient'))
-    expect(await screen.findByRole('status')).toHaveTextContent(/psybient/)
+    await waitFor(() => expect(toastStatus()).toBeTruthy())
+    expect(toastStatus()).toHaveTextContent(/psybient/)
   })
 
   it('leaves an exclude-mode tag filter alone even once it is absent from facets', async () => {
@@ -1552,7 +1622,7 @@ describe('auto-prune stale tag filters', () => {
     // An excluded value that's already absent is a no-op, not a stuck filter —
     // nothing to auto-clear, so the param and no toast should appear.
     expect(currentLocation().search).toContain('exclude_tag=psybient')
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(toastStatus()).toBeUndefined()
   })
 
   it('keeps a still-valid tag filter untouched across a recompute', async () => {
@@ -1570,7 +1640,7 @@ describe('auto-prune stale tag filters', () => {
 
     await waitFor(() => expect(screen.getByText(fakeRec().title!)).toBeInTheDocument())
     expect(currentLocation().search).toContain('tag=psybient')
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(toastStatus()).toBeUndefined()
   })
 })
 

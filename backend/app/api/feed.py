@@ -13,7 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.auth.security import get_current_user
 from app.config import Settings, get_settings
-from app.crawl.runner import requests_used
+from app.crawl.runner import requests_used_by_scan
 from app.curation.engine import cold_start_diagnostics, curate
 from app.curation.engine import seed_tags as seed_tag_genres
 from app.db.models import (
@@ -317,8 +317,8 @@ async def stats(
         liked=await _count(
             session, select(func.count()).select_from(Like).where(Like.user_id == current_user.id)
         ),
-        requests_used=await requests_used(session),
-        request_budget=settings.crawl_max_requests,
+        requests_used=await requests_used_by_scan(session, sid) if sid is not None else 0,
+        request_budget=settings.crawl_max_requests_per_scan,
         cold_start=cold_start,
         recompute_generation=recompute_generation,
     )
