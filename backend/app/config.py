@@ -53,24 +53,23 @@ class Settings(BaseSettings):
     pagination_via_nimble: bool = True
 
     # Crawl fan-out bound: max distance from the seed to keep crawling
-    # (seed=0 → my albums=1 → their supporters=2 → those supporters' albums=3 …).
-    crawl_max_depth: int = 3
+    # (seed=0 → my albums=1 → their supporters=2). Deliberately stops at 2 —
+    # level 3 (a neighbour's own albums, visited only for tag/supporter
+    # enrichment) is dropped; the budget it used to spend goes into reading
+    # more of each neighbour's own collection instead (see
+    # `crawl_max_requests_per_scan` below). Raise back to 3 to re-enable it.
+    crawl_max_depth: int = 2
 
-    # Safety budget: stop crawling once this many provider (Nimble) page fetches
-    # have been logged. Cumulative across runs; a coarse cost cap. Tune later.
-    crawl_max_requests: int = 5000
-
-    # Per-user safety budget, on top of `crawl_max_requests`: stop a scan once
-    # its OWNER has spent this many provider fetches across all their scans
-    # (attributed via `provider_usage.scan_id` → `Scan.user_id`). None =
-    # unbounded (today's behavior). Without this, `crawl_max_requests` is the
-    # only cap, and it's global and cumulative — one user's deep scan can spend
-    # it all and leave every other user's scan permanently unable to run. See
-    # CLAUDE.md "Immediate next steps". Only fetches issued through
-    # `crawl.service`'s page-render FetchRequest helpers carry a scan_id today
-    # (pagination-via-Nimble attribution is a follow-up), so this under-counts
-    # collection-heavy scans until that's threaded too.
-    crawl_max_requests_per_user: int | None = None
+    # Safety budget: stop a SCAN once it has personally logged this many
+    # successful provider (Nimble) page fetches. Scoped to one scan only —
+    # resets to zero on every new scan, never accumulated across scans or
+    # users, never shared. This is deliberately NOT a global or per-user
+    # lifetime counter (that model caused one user's old scan to permanently
+    # block everyone else's, and required raising a number nobody could reason
+    # about). At the default (1000) and `PAGES_PER_VISIT=10`, a scan with N
+    # neighbours gets roughly 1000/(10*N) rounds of paging through each of
+    # them before the budget runs out — e.g. 5 neighbours → ~20 rounds each.
+    crawl_max_requests_per_scan: int = 1000
 
     # Secondary fan-out bound, independent of `crawl_max_depth`: total frontier
     # rows (any status) ONE scan may ever queue. Depth 3 on a single popular album

@@ -390,6 +390,12 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   and `crawl_fan_collection`'s collection/wishlist/follows pagination plus `crawl_album`/
   `crawl_track`'s supporters pagination now pass their `scan_id`. The cap no longer undercounts
   collection-heavy scans. See `CLAUDE.md` "Immediate next steps" #2. PR: see git history.
+  **Superseded (2026-09-02, Roy's own request):** both this per-user cap and the original global
+  `crawl_max_requests` are gone, replaced by a single per-scan budget
+  (`crawl_max_requests_per_scan`, default 1000) — simpler, and it's what Roy actually wanted:
+  every scan starts at zero and never inherits spend from another scan or user. Also dropped
+  level-3 crawling (`crawl_max_depth` default 3→2) in the same change, spending the freed budget
+  on more rounds of level-2 paging instead. See `CLAUDE.md`'s crawl depth/budget bullet.
 
 - [x] **A secondary budget cap** — max total frontier size, or max fetches per run, on top of
   the depth bound. Depth 3 on a popular album still fans out very wide. Same source.

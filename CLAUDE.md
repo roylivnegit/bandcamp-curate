@@ -153,20 +153,34 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     `run_scan`'s own-collection branch is NOT frontier-backed, so it drains visits in a loop
     (`MAX_COLLECTION_VISITS`) — your wishlist/follows must be complete or curation under-excludes.
 - **Fan-out is bounded by depth** (`crawl_frontier.depth`, seed=0; `crawl_max_depth` config,
-  default 3) **and by a request budget** (`crawl_max_requests`, default 5000 = cumulative successful
-  provider fetches, all-time, global across every user and scan; enforced in
-  `runner.run_until_empty` + the ARQ `crawl_next` chain). A **per-user** cap now also exists
-  (`crawl_max_requests_per_user`) but defaults to `None` (unbounded) — see "Immediate next steps"
-  below for how to turn it on. Ingest still happens at the boundary, only outward enqueue stops.
+  **default 2, changed 2026-09-02**) **and by a per-scan request budget**
+  (`crawl_max_requests_per_scan`, default 1000). Both replaced an earlier design: depth used to
+  default to 3 and the budget used to be a single lifetime counter shared across every user and
+  scan (`crawl_max_requests`) — one user's old scan could permanently block everyone else's, and
+  raising it meant reasoning about a number nobody could picture. Now the budget is scoped to
+  `provider_usage.scan_id` (`runner.requests_used_by_scan`/`scan_budget_exhausted`): every scan
+  starts at zero, spends only against itself, and never inherits anything from another scan or
+  user. Ingest still happens at the boundary, only outward enqueue stops.
   - **What each depth means, in plain terms:** depth 0 is your own collection. Depth 1 is an album
     or track *you* own — `crawl_album`/`crawl_track` fetch its page (ingesting its tags) and enqueue
     its supporters' collections at depth 2. Depth 2 is a taste-neighbour's collection —
-    `crawl_fan_collection` enqueues *their* owned albums at depth 3. Depth 3 is one of those
-    albums — `crawl_album` runs again, ingesting **its** tags and full supporter list, but with
-    `max_depth=3` the `depth < max_depth` check (`_within_depth`) is false, so it does **not**
-    enqueue depth-3's supporters onward. Fan-out stops there by construction: depth 3 is tag/
-    supporter *enrichment* of a neighbour's collection, not a further hop into the social graph.
+    `crawl_fan_collection` would enqueue *their* owned albums at depth 3, but with the default
+    `max_depth=2` the `depth < max_depth` check (`_within_depth`) is false at depth 2, so it does
+    **not**. **Level 3 (visiting a neighbour's own albums for tag/supporter enrichment) is
+    deliberately dropped** — the budget it used to spend goes instead into reading more of each
+    neighbour's own collection at depth 2 (see the rounds note below). Raise `CRAWL_MAX_DEPTH` back
+    to 3 to re-enable it; the mechanism (`crawl_album` re-ingesting tags+supporters, then stopping
+    fan-out one level deeper) still works exactly as before, unchanged.
     (Track supporters and standalone-track fan-out follow the identical shape via `crawl_track`.)
+  - **Level-2 paging happens in rounds, self-funded by the per-scan budget.** A single visit to a
+    neighbour's collection reads at most `PAGES_PER_VISIT=10` pages (~400 items) before parking
+    with a resume cursor (see the pagination bullet below); `claim_next`'s fairness ordering
+    (`attempts ASC`) then gives every OTHER pending neighbour their own first visit before anyone
+    gets a second — so "round 1" is every neighbour's first 10 pages, "round 2" is everyone's next
+    10, and so on. No separate rounds counter exists or is needed: this keeps happening for as long
+    as the scan's own budget allows and a neighbour still has unread pages. With the defaults, N
+    neighbours get roughly `1000 / (10*N)` rounds each before the scan's budget runs out — e.g. 5
+    neighbours → ~20 rounds (all 50 pages/round) each.
   - **The seed fan is skipped as their own supporter** (`seed_fan_id`/`seed_url` params on
     `crawl_album`/`crawl_track`, plus the replay path in `replay.py`; `CrawlOutcome.skipped_self`).
     You are a real supporter of every album/track you own, so you'd otherwise show up in that
@@ -345,18 +359,16 @@ stop postgresql@16 redis` — still installed but off, so it won't fight compose
 1. ~~Consider a secondary budget cap...~~ **Done.** `Settings.crawl_max_frontier_size` (default
    `None` = unbounded) caps each scan's total frontier rows in `frontier.enqueue` — the one choke
    point every fan-out path already goes through, so no other call site needed to change.
-2. ~~Per-user crawl budgets...~~ **Done.** `provider_usage.scan_id` (migration
-   `0011`) attributes each page-render fetch to the scan it was spent on; `runner.
-   user_requests_used`/`user_budget_exhausted` sum a user's spend across their own scans via
-   `Scan.user_id`, and `Settings.crawl_max_requests_per_user` (default `None` = unbounded)
-   enforces it in `run_until_empty` alongside the existing global `crawl_max_requests`. Threaded
-   through `advance_scan`/`run_scan`/the ARQ worker via `ScanPlan.user_id`. **Gap closed
-   (2026-09-02):** `nimble_transport.post_json_via_nimble` now takes a `scan_id` kwarg and folds
-   it into the `FetchRequest`, and `CollectionApiClient`/`FollowsApiClient`/`SupportersApiClient`
-   thread it from `fetch_page`/`iter_supporters` down to the transport. `crawl_fan_collection`'s
-   collection/wishlist/follows pagination and `crawl_album`/`crawl_track`'s supporters pagination
-   now pass their `scan_id` through, so the per-user budget counts collection-heavy scans (the
-   majority of a scan's real cost) correctly instead of undercounting them.
+2. ~~Per-user crawl budgets...~~ **Done, then superseded (2026-09-02).** Built as a per-user
+   cumulative cap (`crawl_max_requests_per_user`) alongside the original global one
+   (`crawl_max_requests`) — both are now gone, replaced by a single simpler model: the budget is
+   **per-scan only** (`crawl_max_requests_per_scan`, via `runner.requests_used_by_scan`/
+   `scan_budget_exhausted`, scoped by `provider_usage.scan_id`). Every scan starts at zero and
+   spends only against itself; nothing accumulates across scans or users, so there's no longer a
+   "whose budget is this" question to answer. `provider_usage.scan_id` (migration `0011`)
+   attributing each fetch to the scan that spent it is what makes this possible — the
+   `nimble_transport`/pagination-client threading that closed the under-counting gap on this same
+   date is what it was originally built for, and still applies unchanged.
 3. ~~Retire or relabel the legacy `seed_crawl`/`crawl_next` ARQ chain...~~ **Done.** New
    `Settings.enable_operator_crawl` (default `False`); `app.worker.seed_crawl` raises and
    `scripts/crawl.py`'s `seed`/`run` commands refuse (exit 2) unless it's set, so the chain that

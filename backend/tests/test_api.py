@@ -102,7 +102,7 @@ async def test_stats(client: AsyncClient) -> None:
     from app.config import get_settings
 
     assert s["neighbours"] == 1 and s["my_owned"] == 1 and s["follows"] == 1
-    assert s["request_budget"] == get_settings().crawl_max_requests
+    assert s["request_budget"] == get_settings().crawl_max_requests_per_scan
     assert s["recommendations"] >= 1
 
     # cold_start diagnostics: f2 is the one neighbour; its candidates are
