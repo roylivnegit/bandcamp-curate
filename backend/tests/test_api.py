@@ -316,6 +316,28 @@ async def test_block_prunes_and_lists_then_unblock(client: AsyncClient) -> None:
     assert band_id in {x["band_id"] for x in (await client.get("/api/recommendations")).json()}
 
 
+async def test_block_and_unblock_bump_recompute_generation_immediately(
+    client: AsyncClient,
+) -> None:
+    """Block/unblock prune (or would re-surface) rows directly, without going
+    through curate() — so they must ALSO bump the scan's own
+    recompute_generation, or another already-open session's cached ETag for
+    this scan never invalidates and keeps serving pre-block results
+    indefinitely, not just until the next real recompute."""
+    rows = (await client.get("/api/recommendations")).json()
+    band_id = next(r for r in rows if r["title"] == "Recommend Me")["band_id"]
+    gen = (await client.get("/api/stats")).json()["recompute_generation"]
+
+    r = await client.post("/api/blacklist", json={"band_id": band_id})
+    assert r.status_code == 200
+    gen_after_block = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_block == gen + 1
+
+    assert (await client.post(f"/api/blacklist/{band_id}/unblock")).status_code == 200
+    gen_after_unblock = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_unblock == gen_after_block + 1
+
+
 async def test_block_unknown_band_404(client: AsyncClient) -> None:
     assert (await client.post("/api/blacklist", json={"band_id": 999999})).status_code == 404
 
@@ -570,6 +592,26 @@ async def test_like_removes_and_excludes_then_unlike(client: AsyncClient) -> Non
     await client.post("/api/recommendations/recompute")
     recs = (await client.get("/api/recommendations")).json()
     assert album_id in {x["album_id"] for x in recs}
+
+
+async def test_like_and_unlike_bump_recompute_generation_immediately(
+    client: AsyncClient,
+) -> None:
+    """Same reasoning as blacklist's equivalent test: like/unlike prune (or
+    would re-surface) rows directly, so they must bump recompute_generation
+    themselves for another session's cached ETag to ever notice."""
+    rows = (await client.get("/api/recommendations")).json()
+    album_id = next(r for r in rows if r["title"] == "Recommend Me")["album_id"]
+    gen = (await client.get("/api/stats")).json()["recompute_generation"]
+
+    r = await client.post("/api/likes", json={"album_id": album_id})
+    assert r.status_code == 200
+    gen_after_like = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_like == gen + 1
+
+    assert (await client.post("/api/likes/unlike", json={"album_id": album_id})).status_code == 200
+    gen_after_unlike = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_unlike == gen_after_like + 1
 
 
 async def test_like_requires_exactly_one_id(client: AsyncClient) -> None:

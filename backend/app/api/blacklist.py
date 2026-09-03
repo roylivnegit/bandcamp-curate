@@ -11,6 +11,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import get_current_user
+from app.curation.generation import bump_generations
 from app.db.models import Album, Band, Blacklist, Recommendation, Scan, Track, User
 from app.db.session import get_session
 from app.enums import BandKind, TargetType
@@ -122,6 +123,10 @@ async def block(
             Recommendation.album_id.in_(album_ids) | Recommendation.track_id.in_(track_ids),
         )
     )
+    # Without this, another already-open session (a different device, a
+    # second tab) keeps its cached ETag for these scans indefinitely — the
+    # rows changed but nothing told its cache so.
+    await bump_generations(session, user_scan_ids)
     await session.flush()
     await session.commit()
     return BlacklistOut(
@@ -148,5 +153,11 @@ async def unblock(
     if entry is None:
         raise HTTPException(status_code=404, detail="band is not blocked")
     entry.active = False
+    # No rows change here (curation just won't exclude this band next time it
+    # actually re-curates), but bump anyway: a cached ETag from before the
+    # unblock could otherwise mask the Blocked panel/feed going stale in the
+    # other direction on some other device.
+    user_scan_ids = select(Scan.id).where(Scan.user_id == current_user.id)
+    await bump_generations(session, user_scan_ids)
     await session.commit()
     return {"unblocked": band_id}
