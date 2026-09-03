@@ -1055,14 +1055,35 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   "Cancel" clears the selection and confirms no block request was ever sent). 159/159 frontend tests
   pass (149 + 10 new), tsc/lint/build clean, chunk split intact. PR: see git history.
 
-- [ ] **"Seen" marker for opened Bandcamp links.** *(proposed by the hourly routine, 2026-09-02,
-  Architect+QA-approved)* Scrolling back through a long feed, you can't tell which recs you already
+- [x] **"Seen" marker for opened Bandcamp links.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved — same Product/Architect+QA round as the quick-filter and bulk-select
+  proposals above)* Scrolling back through a long feed, you can't tell which recs you already
   clicked through to Bandcamp to check out, so you re-open ones you've already mentally dismissed.
   Record the card's key in `localStorage` (capped set, same try/catch pattern as the existing token
   storage in `api/client.ts`) when "Bandcamp ↗" is clicked; `FeedCard` reads that set and renders
-  `data-visited="true"` + a small "seen" label when present. Verify: unit-test the storage helper
-  (add/has/cap eviction) directly; RTL test that clicking the link then re-rendering the card yields
-  `getByText('seen')` / `toHaveAttribute('data-visited', 'true')`.
+  `data-visited="true"` + a small "seen" label when present.
+  Done: new `lib/visited.ts` — `isVisited(key)`/`markVisited(key)` against a
+  `crate-digger.visited` JSON array, `try`-wrapped the same way `lib/density.ts` is (private mode /
+  storage-disabled browsers just see "nothing is seen" rather than throwing). Capped at a new
+  `VISITED_CAP` (500, in `config.ts`) — the oldest key is evicted first once exceeded, so a
+  long-lived account's entry can't grow without bound. `FeedCard.tsx` uses its existing `cardId`
+  prop (already a stable per-item key, see `ScanFeedPage`'s `cardIdOf`) as the storage key directly
+  — nothing extra to compute. A local `useState(() => isVisited(cardId))` (not a prop — only this
+  one card's own click changes what it knows) drives both `data-visited` on the `<article>` and a
+  new `.seen-tag` span next to the "Bandcamp ↗" link; the link's `onClick` calls `markVisited` and
+  flips the state in the same handler, so the marker appears immediately, no reload needed. Reuses
+  the already-AA-audited `--faint` token (see the earlier contrast-fix item) for the label's color
+  since it renders against the same `--surface` card background that token was measured against.
+  Covered by 4 new tests in `FeedCard.test.tsx`'s "seen marker" block (no marker for a
+  never-opened card; clicking the link marks it immediately; a card id already in storage starts
+  pre-marked; an unrelated stored id doesn't bleed onto a different card) and 7 in the new
+  `visited.test.ts` (mark then read back; unrelated keys unaffected; marking twice doesn't
+  duplicate; cap eviction drops the oldest; a corrupted stored value falls back to "not visited";
+  both functions degrade silently rather than throwing when `localStorage` itself throws — 2 tests).
+  Rebased onto main after the quick-filter/bulk-select/delete-scan items landed ahead of it; test
+  counts below are against that base, not the original 152/152 noted when this was first built.
+  Frontend suite passes in full post-rebase, tsc/lint/build clean, chunk split intact. PR: see git
+  history.
 
 - [x] **No way to delete a scan from the UI.** *(found by the hourly routine, 2026-09-02, via direct
   code audit — `api.deleteScan`/`DELETE /api/scans/{id}` already existed and worked, but nothing in

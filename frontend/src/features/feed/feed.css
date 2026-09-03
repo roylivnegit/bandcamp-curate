@@ -572,6 +572,13 @@
   font-size: var(--fs-tiny);
 }
 
+.seen-tag {
+  color: var(--faint);
+  font-size: var(--fs-tiny);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 /* Liking/blocking a card evaporates it upward rather than snapping it out, so
  * you can see which row your click consumed. */
 @keyframes evaporate {

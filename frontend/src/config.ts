@@ -36,3 +36,8 @@ export const RELATIVE_TIME_REFRESH_MS = 30000
 
 /** Scroll distance, in px, past which `<ScrollTopButton>` appears. */
 export const SCROLL_TOP_THRESHOLD_PX = 600
+
+/** Max card keys kept in the "seen" set (see lib/visited.ts) — oldest marked
+ *  drops first once this is exceeded, so the localStorage entry can't grow
+ *  unbounded over a long-lived account. */
+export const VISITED_CAP = 500
