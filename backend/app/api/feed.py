@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.auth.security import get_current_user
+from app.bandcamp.art import art_url
 from app.config import Settings, get_settings
 from app.crawl.runner import requests_used_by_scan
 from app.curation.engine import cold_start_diagnostics, curate
@@ -96,9 +97,8 @@ class RecommendationOut(BaseModel):
     band_name: str | None
     url: str | None
     # Bandcamp's opaque art asset id (Album.art_id / Track.art_id) — not a URL.
-    # No frontend rendering wired up yet; this just stops exposing it from
-    # being blocked on a second migration once someone builds that.
     art_id: int | None
+    art_url: str | None  # see app.bandcamp.art.art_url — None when art_id is None
     reasons: Reasons
     # The scan's `recompute_generation` at fetch time — see migration 0013.
     # Every row in one response carries the same value: `store_recommendations`
@@ -403,6 +403,7 @@ async def recommendations(
             band_name=r.band_name,
             url=r.url,
             art_id=r.art_id,
+            art_url=art_url(r.art_id),
             reasons=Reasons(**(r.reasons or {})),
             recompute_generation=generation,
         )

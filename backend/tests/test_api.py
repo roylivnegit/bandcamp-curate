@@ -126,6 +126,7 @@ async def test_recommendations_feed(client: AsyncClient) -> None:
     assert top["rank"] == 1 and top["reasons"]["co_owners"] == 1
     assert top["url"] == "https://b2.bandcamp.com/album/x"
     assert top["art_id"] == 99
+    assert top["art_url"] == "https://f4.bcbits.com/img/a99_10.jpg"
 
 
 async def test_recommendations_filter_and_paging(client: AsyncClient) -> None:
