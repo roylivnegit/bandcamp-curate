@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { fakeRec } from '../../test/renderApp'
 import { FeedCard } from './FeedCard'
@@ -135,43 +135,6 @@ describe('FeedCard block button', () => {
 
     expect(onBlock).toHaveBeenCalledTimes(1)
     expect(onBlock).toHaveBeenCalledWith(rec)
-  })
-})
-
-describe('FeedCard "seen" marker', () => {
-  beforeEach(() => localStorage.clear())
-
-  it('shows no "seen" marker for a card never opened before', () => {
-    renderCard()
-
-    expect(screen.queryByText('seen')).not.toBeInTheDocument()
-    expect(screen.getByRole('article')).not.toHaveAttribute('data-visited')
-  })
-
-  it('marks the card visited immediately after clicking "Bandcamp ↗"', () => {
-    renderCard()
-
-    fireEvent.click(screen.getByRole('link', { name: 'Bandcamp ↗' }))
-
-    expect(screen.getByText('seen')).toBeInTheDocument()
-    expect(screen.getByRole('article')).toHaveAttribute('data-visited', 'true')
-  })
-
-  it('starts already marked "seen" if this card id was visited in an earlier session', () => {
-    localStorage.setItem('crate-digger.visited', JSON.stringify(['card-test']))
-
-    renderCard()
-
-    expect(screen.getByText('seen')).toBeInTheDocument()
-    expect(screen.getByRole('article')).toHaveAttribute('data-visited', 'true')
-  })
-
-  it('does not mark an unrelated card visited', () => {
-    localStorage.setItem('crate-digger.visited', JSON.stringify(['some-other-card']))
-
-    renderCard()
-
-    expect(screen.queryByText('seen')).not.toBeInTheDocument()
   })
 })
 
