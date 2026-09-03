@@ -37,6 +37,9 @@ export function FilterBar({
   quickFilterRef,
   selectMode,
   onToggleSelectMode,
+  selectedCount,
+  selectableCount,
+  onSelectAll,
 }: {
   filters: FeedFilters
   facetTags: Facet[]
@@ -52,7 +55,11 @@ export function FilterBar({
   quickFilterRef: RefObject<HTMLInputElement | null>
   selectMode: boolean
   onToggleSelectMode: () => void
+  selectedCount: number
+  selectableCount: number
+  onSelectAll: () => void
 }) {
+  const allSelected = selectableCount > 0 && selectedCount >= selectableCount
   return (
     <div className="filterbar">
       <div className="controls">
@@ -121,6 +128,11 @@ export function FilterBar({
         >
           {selectMode ? '✕ Cancel select' : '☑ Select'}
         </button>
+        {selectMode && selectableCount > 0 && (
+          <button type="button" className="btn ghost" onClick={onSelectAll}>
+            {allSelected ? '✕ Deselect all' : '☑ Select all loaded'}
+          </button>
+        )}
         <CopyLinkButton />
         <CopyMarkdownButton rows={rows} />
         <button
