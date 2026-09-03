@@ -2076,3 +2076,32 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   pressing Enter calls `onSetReason` with the trimmed text; Enter with unchanged or
   whitespace-only text does not call it. 282/282 frontend tests pass, tsc/lint/build clean
   (chunk split intact — lands in the existing `ScanFeedPage` chunk). PR: see git history.
+
+- [x] **Login has no lockout/rate-limit.** *(proposed by the hourly routine, 2026-09-03, via the
+  same Explore-backed Product round that found the block-reason gap above — Architect+QA-approved
+  with one correction)* `app/api/auth.py`'s `login()` did a bare password check with zero attempt
+  tracking — the only rate limiter in the codebase (`app/scraping/ratelimit.py`) is for the
+  unrelated Bandcamp-scraping token bucket, not auth — and this app is publicly reachable
+  (Render), so it was an unbounded online password-guessing exposure. QA's one correction: use a
+  `locked_until: datetime | None` column (mirroring `Blacklist.expires_at`'s shape — expiry is a
+  plain timestamp comparison at read time) rather than a boolean, since a boolean can't expire on
+  its own without a third column.
+  Done: `User` gained `failed_login_attempts: int` (default 0) and `locked_until: datetime | None`
+  (migration `0016_login_lockout`, guarded like 0002-0015). New `Settings.auth_login_max_attempts`
+  (default 5) / `auth_login_lockout_minutes` (default 15) — tunable without a redeploy-and-migrate
+  cycle, per QA. `login()`: a locked account gets 429 with `verify_password` skipped entirely
+  (both to avoid wasted bcrypt work under a guessing attempt and, more importantly, so a locked
+  account never leaks whether the password would otherwise have been right); a failed verify
+  increments the counter and sets `locked_until` once the threshold is hit; a successful login
+  resets both to 0/`None`. Concurrent-request races on the counter (a lost update letting one or
+  two extra attempts slip through) were flagged by QA and accepted as-is — not worth
+  `SELECT ... FOR UPDATE` for a 5-attempt threshold on a small invite-only app. Covered by 4 new
+  tests in `test_auth.py`: locks out after the 5th failed attempt (429 even with the *correct*
+  password on the 6th try, so a 401-vs-429 split can't be used to fish for validity); a successful
+  login below the threshold resets the counter (verified both via a direct DB read and by
+  confirming 3 more failures, not 2, are needed to re-trigger); a lockout clears once its window
+  has passed (same "write a past timestamp directly" convention as
+  `test_expired_blacklist_stops_excluding` — no clock mocking); the threshold is actually driven
+  by `Settings`, not hardcoded (a custom `auth_login_max_attempts=2` locks after 2). 258/258
+  backend tests pass, ruff clean; `alembic upgrade head` / `downgrade -1` / `upgrade head`
+  round-trips clean against a fresh sqlite DB. PR: see git history.
