@@ -1495,6 +1495,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   timers). 242/242 frontend tests pass, tsc/lint/build clean (chunk split intact — the new
   `Dropdown` import lands inside the existing `ScanFeedPage` chunk, which already imports
   `Dropdown` via `FilterBar`). PR: see git history.
+  **Renew follow-up landed (2026-09-03):** `SidePanels.tsx`'s `BlockedPanel` now sorts rows by
+  `expires_at` ascending (soonest-expiring first, permanent last, via
+  `byExpirySoonestFirst`), and a row within `RENEW_WINDOW_MS` (24h, new in `config.ts`) of
+  lapsing gets a "renew ▾" `Dropdown` reusing the same `BLOCK_DURATIONS` options as the block
+  picker — picking one calls a new `ScanFeedPage.tsx` `renew(bandId, expiresAt)` (mirrors
+  `unblock`'s shape: same `blockedKeyOf`/`panelBusy`/`inFlight` guards) which re-POSTs
+  `/api/blacklist` with the same `band_id` and only reloads the Blocked list (the band is
+  already excluded from the feed, so no `loadFirstPage`/`loadFacets` round trip like a fresh
+  block needs). Covered by 3 new tests in `feed.test.tsx`: renew appears only on the
+  soon-to-expire row and the list sorts soonest-first; picking a renew duration posts the
+  correct `band_id` and a `expires_at` ~1 week out; a block expiring in several days or a
+  permanent one gets no renew action. 245/245 frontend tests pass, tsc/lint/build clean (chunk
+  split intact — `Dropdown`/`BLOCK_DURATIONS` were already imported into the `ScanFeedPage`
+  chunk). PR: see git history.
 
 - [x] **`frontend/CLAUDE.md`'s "Known conflicts and deferred items" section was stale.**
   *(found by the hourly routine, 2026-09-03, via direct code audit)* Four of its five listed gaps
