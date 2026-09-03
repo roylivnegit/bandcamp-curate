@@ -1731,11 +1731,12 @@ async def test_runner_threads_seed_fan_id_into_the_filter(
 async def test_budget_stops_the_run(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:
-    # Pre-log 5 provider requests, then seed. With max_requests=5 the budget is
-    # already spent, so run_until_empty must process nothing.
+    # Pre-log 5 requests attributed to THIS scan, then seed. With
+    # max_requests_per_scan=5 the budget is already spent, so run_until_empty
+    # must process nothing.
     async with sessionmaker_() as s:
         for _ in range(5):
-            s.add(ProviderUsage(provider="nimble", ok=True))
+            s.add(ProviderUsage(provider="nimble", ok=True, scan_id=SCAN))
         await seed_fan_collection(s, SEED_URL, scan_id=SCAN)
         await s.commit()
 
@@ -1743,7 +1744,7 @@ async def test_budget_stops_the_run(
     outcomes = await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
-        max_requests=5, max_iterations=25,
+        max_requests_per_scan=5, max_iterations=25,
         scan_id=SCAN,
     )
     assert outcomes == []  # budget exhausted before any work
@@ -1753,14 +1754,17 @@ async def test_budget_stops_the_run(
 
 
 async def test_budget_helpers(session: AsyncSession) -> None:
-    assert await runner.budget_exhausted(session, None) is False  # no cap
+    assert await runner.scan_budget_exhausted(session, SCAN, None) is False  # no cap
     for _ in range(3):
-        session.add(ProviderUsage(provider="nimble", ok=True))
-    session.add(ProviderUsage(provider="nimble", ok=False))  # failures don't count
+        session.add(ProviderUsage(provider="nimble", ok=True, scan_id=SCAN))
+    session.add(ProviderUsage(provider="nimble", ok=False, scan_id=SCAN))  # failures don't count
+    session.add(ProviderUsage(provider="nimble", ok=True, scan_id=SCAN + 1))  # a different scan
     await session.commit()
-    assert await runner.requests_used(session) == 3
-    assert await runner.budget_exhausted(session, 3) is True
-    assert await runner.budget_exhausted(session, 4) is False
+    assert await runner.requests_used_by_scan(session, SCAN) == 3
+    assert await runner.scan_budget_exhausted(session, SCAN, 3) is True
+    assert await runner.scan_budget_exhausted(session, SCAN, 4) is False
+    # A different scan's spend never counts against this one — no aggregation.
+    assert await runner.requests_used_by_scan(session, SCAN + 1) == 1
 
 
 async def test_page_render_fetches_are_tagged_with_their_scan(
@@ -1804,43 +1808,20 @@ async def _make_scan(session: AsyncSession, user_id: int) -> Scan:
     return scan
 
 
-async def test_user_budget_helpers(session: AsyncSession) -> None:
-    alice = await _make_user(session)
-    bob = await _make_user(session)
-    alice_scan = await _make_scan(session, alice.id)
-    bob_scan = await _make_scan(session, bob.id)
-    await session.commit()
-
-    assert await runner.user_budget_exhausted(session, alice.id, None) is False  # no cap
-    assert await runner.user_budget_exhausted(session, None, 3) is False  # no user to check
-
-    for _ in range(3):
-        session.add(ProviderUsage(provider="nimble", ok=True, scan_id=alice_scan.id))
-    session.add(ProviderUsage(provider="nimble", ok=False, scan_id=alice_scan.id))  # doesn't count
-    session.add(ProviderUsage(provider="nimble", ok=True, scan_id=bob_scan.id))  # not alice's
-    session.add(ProviderUsage(provider="nimble", ok=True))  # unattributed — nobody's
-    await session.commit()
-
-    assert await runner.user_requests_used(session, alice.id) == 3
-    assert await runner.user_requests_used(session, bob.id) == 1
-    assert await runner.user_budget_exhausted(session, alice.id, 3) is True
-    assert await runner.user_budget_exhausted(session, alice.id, 4) is False
-    assert await runner.user_budget_exhausted(session, bob.id, 3) is False
-
-
-async def test_user_budget_stops_the_run_even_without_a_global_cap(
+async def test_a_scans_own_spend_never_blocks_a_different_scan(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:
-    # Alice has already spent her own budget on an earlier scan; a fresh scan of
-    # hers must not process anything, even though no global `max_requests` is
-    # set and Bob (a different user) would still have plenty of room.
+    # Alice already spent 5 requests on an EARLIER scan of her own. A fresh scan
+    # (hers or anyone else's) must not inherit that spend — the budget is
+    # per-scan, not per-user and not global, so a brand new scan starts at zero
+    # even for the same owner.
     async with sessionmaker_() as s:
         alice = await _make_user(s)
         earlier = await _make_scan(s, alice.id)
         for _ in range(5):
             s.add(ProviderUsage(provider="nimble", ok=True, scan_id=earlier.id))
         new_scan = await _make_scan(s, alice.id)
-        alice_id, scan_id = alice.id, new_scan.id
+        scan_id = new_scan.id
         await seed_fan_collection(s, SEED_URL, scan_id=scan_id)
         await s.commit()
 
@@ -1848,13 +1829,12 @@ async def test_user_budget_stops_the_run_even_without_a_global_cap(
     outcomes = await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
-        user_id=alice_id, max_requests_per_user=5, max_iterations=25,
+        max_requests_per_scan=5, max_iterations=25,
         scan_id=scan_id,
     )
-    assert outcomes == []  # her own budget was already exhausted
-    assert fetcher.calls == []
+    assert outcomes != []  # the new scan's own budget is untouched — it can still run
     async with sessionmaker_() as s:
-        assert await frontier.pending_count(s, scan_id=scan_id) == 1  # seed still pending
+        assert await runner.requests_used_by_scan(s, earlier.id) == 5  # unchanged
 
 
 async def test_runner_respects_max_depth(

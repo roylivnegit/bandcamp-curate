@@ -221,7 +221,7 @@ async def test_run_scan_crawls_resolves_and_curates(sessionmaker_) -> None:  # n
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML, "/album/": ALBUM_HTML})
     done = await run_scan(
         sessionmaker_, fetcher, scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
     assert done.status == str(ScanStatus.DONE)
     assert "recommendations" in done.stats
@@ -256,7 +256,7 @@ async def test_run_scan_passes_the_owners_fan_to_the_drain(
     monkeypatch.setattr(runner, "run_until_empty", spy)
     await run_scan(
         sessionmaker_, FakeFetcher({ALBUM_URL: ALBUM_HTML}), scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
     assert seen["seed_fan_id"] == fan_id
 
@@ -287,7 +287,7 @@ async def test_slices_pick_up_the_owner_fan_once_it_exists(sessionmaker_) -> Non
             await advance_scan(
                 sessionmaker_, fetcher, scan_id,
                 collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-                supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+                supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
                 slice_entries=1,  # one entry per slice, so the fan page is slice 1
             )
 
@@ -312,7 +312,7 @@ async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -
     more = await advance_scan(
         sessionmaker_, fetcher, scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
         slice_entries=1,
     )
     assert more is True  # the owned albums it just found are still queued
@@ -351,7 +351,7 @@ async def test_a_slice_offers_several_entries_per_worker(sessionmaker_) -> None:
         await advance_scan(
             sessionmaker_, fetcher, scan_id,
             collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-            supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+            supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
             slice_entries=entries, concurrency=workers,
         )
 
@@ -384,7 +384,7 @@ async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN00
         return await advance_scan(
             sessionmaker_, fetcher, scan_id,
             collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-            supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+            supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
             slice_entries=1,
         )
 
@@ -413,7 +413,7 @@ async def test_slice_count_resets_on_a_fresh_run(sessionmaker_) -> None:  # noqa
     fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
     kwargs = dict(
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
         slice_entries=1,
     )
     await advance_scan(sessionmaker_, fetcher, scan_id, **kwargs)
@@ -448,7 +448,7 @@ async def test_first_slice_of_a_fresh_collection_scan_takes_one_entry(
     await advance_scan(
         sessionmaker_, fetcher, scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
         slice_entries=10,
     )
 
@@ -496,7 +496,7 @@ async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML, TRACK_URL: TRACK_HTML})
     done = await run_scan(
         sessionmaker_, fetcher, scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
     assert done.status == str(ScanStatus.DONE)
 
@@ -530,7 +530,7 @@ async def _run_collection_scan(sessionmaker_, user_id: int, scan_id: int):  # no
     return await run_scan(
         sessionmaker_, fetcher, scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
 
 
@@ -650,7 +650,7 @@ async def test_a_slice_writes_a_heartbeat(sessionmaker_) -> None:  # noqa: ANN00
     await advance_scan(
         sessionmaker_, FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML}), scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
 
     async with sessionmaker_() as s:
@@ -712,7 +712,7 @@ async def _curate_calls_for(sessionmaker_, who: str, fan_html: str, client) -> l
         await advance_scan(
             sessionmaker_, FakeFetcher({FAN_URL: fan_html}), sid,
             collection_client=client, follows_client=FakeFollowsClient(),
-            supporters_client=FakeSupportersClient(), max_depth=0, max_requests=50,
+            supporters_client=FakeSupportersClient(), max_depth=0, max_requests_per_scan=50,
             slice_entries=1, curate_each_slice=True,
         )
     return calls
@@ -752,7 +752,7 @@ async def test_interim_curation_resolves_seeds_first(sessionmaker_) -> None:  # 
 
     await advance_scan(
         sessionmaker_, FakeFetcher({ALBUM_URL: ALBUM_HTML}), scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=0, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=0, max_requests_per_scan=50,
         curate_each_slice=True,
     )
 
@@ -786,7 +786,7 @@ async def test_a_timed_out_entry_keeps_the_scan_from_finalizing(sessionmaker_) -
 
     more = await advance_scan(
         sessionmaker_, Hangs(), scan_id, supporters_client=FakeSupportersClient(),
-        max_depth=0, max_requests=50, entry_seconds=0.2,
+        max_depth=0, max_requests_per_scan=50, entry_seconds=0.2,
     )
 
     assert more is True  # the scan must NOT finalize on unfinished work

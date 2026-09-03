@@ -227,15 +227,17 @@ async def start_scan(sessionmaker: async_sessionmaker[AsyncSession], scan_id: in
         if owner is None:
             raise ValueError("scan's owning user not found")
 
-        # A scan that isn't already running is starting fresh — reset the per-run
-        # bookkeeping (credit baseline + slice count) rather than continuing a
-        # previous run's totals. Re-running via the API sets status back to queued.
+        # A scan that isn't already running is starting fresh — reset the slice
+        # count rather than continuing a previous run's total. Re-running via the
+        # API sets status back to queued. No credit baseline needed: credits are
+        # this scan's own request count (`requests_used_by_scan`), which is
+        # already zero for a scan that's never run and never mixed with any
+        # other scan's spend.
         stats = dict(scan.stats or {})
         if scan.status != str(ScanStatus.RUNNING):
             scan.status = str(ScanStatus.RUNNING)
             scan.error = None
-            stats = {"credits_at_start": await runner.requests_used(session), "slices_run": 0}
-        stats.setdefault("credits_at_start", await runner.requests_used(session))
+            stats = {"slices_run": 0}
         stats["slices_run"] = stats.get("slices_run", 0) + 1
         # Heartbeat: a chain whose job was killed leaves the scan `running` with
         # nobody working it, and the poller only claims `queued` — so without a
@@ -282,8 +284,7 @@ async def advance_scan(
     follows_client=None,
     supporters_client=None,
     max_depth: int | None = None,
-    max_requests: int | None = None,
-    max_requests_per_user: int | None = None,
+    max_requests_per_scan: int | None = None,
     slice_entries: int = SCAN_SLICE_ENTRIES,
     concurrency: int = 1,
     slice_seconds: float | None = None,
@@ -320,8 +321,7 @@ async def advance_scan(
         seed_url=plan.self_url, seed_fan_id=plan.seed_fan_id,
         collection_client=collection_client, follows_client=follows_client,
         supporters_client=supporters_client,
-        max_depth=max_depth, max_requests=max_requests,
-        user_id=plan.user_id, max_requests_per_user=max_requests_per_user,
+        max_depth=max_depth, max_requests_per_scan=max_requests_per_scan,
         max_iterations=entries, max_seconds=slice_seconds,
         entry_seconds=entry_seconds,
         scan_id=scan_id, concurrency=concurrency,
@@ -349,10 +349,8 @@ async def advance_scan(
         await _curate_progress(sessionmaker, scan_id, plan.self_url)
 
     async with sessionmaker() as session:
-        if await runner.budget_exhausted(session, max_requests):
-            return False  # out of credits — finalize with what we have
-        if await runner.user_budget_exhausted(session, plan.user_id, max_requests_per_user):
-            return False  # this scan's owner is out of their own credits
+        if await runner.scan_budget_exhausted(session, scan_id, max_requests_per_scan):
+            return False  # this scan is out of its own budget — finalize with what we have
         return await frontier.pending_count(session, scan_id=scan_id) > 0
 
 
@@ -444,16 +442,15 @@ async def finalize_scan(
             raise ValueError(
                 "your collection is only partly crawled (the crawl budget ran out "
                 "before it finished); refusing to curate on incomplete exclusions — "
-                "raise CRAWL_MAX_REQUESTS and re-run to resume where it stopped"
+                "raise CRAWL_MAX_REQUESTS_PER_SCAN and re-run to resume where it stopped"
             )
-        credits_at_start = (scan.stats or {}).get("credits_at_start", 0)
 
     async with sessionmaker() as session:
         await _resolve_seeds(session, scan_id)
     stats_out: dict = {}
     async with sessionmaker() as session:
         scored = await curate(session, scan_id=scan_id, stats_out=stats_out)
-        used_after = await runner.requests_used(session)
+        credits = await runner.requests_used_by_scan(session, scan_id)
 
     async with sessionmaker() as session:
         scan = await session.get(Scan, scan_id)
@@ -461,7 +458,7 @@ async def finalize_scan(
         scan.last_run_at = datetime.now(UTC)
         scan.stats = {
             "recommendations": len(scored),
-            "credits": used_after - credits_at_start,
+            "credits": credits,
             **stats_out,
         }
         await session.commit()
@@ -492,8 +489,7 @@ async def run_scan(
     follows_client=None,
     supporters_client=None,
     max_depth: int | None = None,
-    max_requests: int | None = None,
-    max_requests_per_user: int | None = None,
+    max_requests_per_scan: int | None = None,
     max_slices: int = MAX_SCAN_SLICES,
     concurrency: int = 1,
 ) -> Scan:
@@ -511,8 +507,7 @@ async def run_scan(
                 sessionmaker, fetcher, scan_id,
                 collection_client=collection_client, follows_client=follows_client,
                 supporters_client=supporters_client,
-                max_depth=max_depth, max_requests=max_requests,
-                max_requests_per_user=max_requests_per_user,
+                max_depth=max_depth, max_requests_per_scan=max_requests_per_scan,
                 concurrency=concurrency,
             )
             if not more:

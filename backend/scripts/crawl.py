@@ -68,7 +68,8 @@ async def cmd_run(max_iters: int) -> int:
     outcomes = await runner.run_until_empty(
         sessionmaker, gateway, seed_url=settings.bandcamp_fan_url, scan_id=scan_id,
         collection_client=col, follows_client=fol, supporters_client=sup,
-        max_depth=settings.crawl_max_depth, max_requests=settings.crawl_max_requests,
+        max_depth=settings.crawl_max_depth,
+        max_requests_per_scan=settings.crawl_max_requests_per_scan,
         max_iterations=max_iters,
     )
     for o in outcomes:
