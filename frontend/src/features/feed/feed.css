@@ -73,11 +73,17 @@
   position: sticky;
   top: 58px; /* below the app header */
   z-index: 20;
-  padding: var(--s-3) 0;
+  padding: var(--s-3);
   margin-top: var(--s-3);
-  background: linear-gradient(var(--bg) 60%, rgba(10, 12, 17, 0.85));
+  /* A near-opaque tint of --surface-2 (not a flat --bg/near-black slab) so the
+   * bar reads as a toolbar chip like the rest of the app, not a stray block —
+   * still translucent enough for the backdrop-filter to do its job while
+   * scrolled content passes underneath. */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 40%),
+    rgba(27, 33, 48, 0.92);
   backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
 
 .controls {
