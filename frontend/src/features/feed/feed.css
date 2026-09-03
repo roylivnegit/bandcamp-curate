@@ -75,12 +75,13 @@
   z-index: 20;
   padding: var(--s-3);
   margin-top: var(--s-3);
-  /* A near-opaque tint of --surface-2 (not a flat --bg/near-black slab) so the
-   * bar reads as a toolbar chip like the rest of the app, not a stray block —
-   * still translucent enough for the backdrop-filter to do its job while
-   * scrolled content passes underneath. */
+  /* A near-opaque tint of --surface-3, not --surface-2 — that's what cards
+   * use, and sharing it made the sticky bar disappear into the card behind
+   * it while scrolling. --surface-3 is the same "elevated, floating above
+   * the page" tier ScrollTopButton uses, one step lighter than a card, so
+   * the bar reads as its own layer rather than blending into the list. */
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 40%),
-    rgba(27, 33, 48, 0.92);
+    rgba(35, 42, 59, 0.94);
   backdrop-filter: blur(8px);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
