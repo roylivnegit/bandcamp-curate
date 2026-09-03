@@ -87,7 +87,10 @@ export function useFeedFilters(scanId: number | null) {
 
   const label = useMemo<LabelFilter | null>(() => {
     const id = searchParams.get(LABEL_ID)
-    if (id === null) return null
+    // `Number('')` is `0`, and `Number.isInteger(0)` is true, so an empty
+    // `label_id=` (a hand-edited or partially-stripped bookmarked URL) would
+    // otherwise parse as a real filter on band id 0 instead of "no filter".
+    if (id === null || id === '') return null
     const parsed = Number(id)
     if (!Number.isInteger(parsed)) return null
     return { id: parsed, name: searchParams.get(LABEL_NAME) ?? 'unknown' }
