@@ -1100,3 +1100,45 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `/scans`; a failed `DELETE` shows the error via `role="alert"` and leaves the scan/route in place.
   164/164 frontend tests pass (159 + 5 new), tsc/lint/build clean (chunk split intact — the button
   bundles into the existing `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [ ] **Route like/block/undo failures through a toast with Retry, not a sticky inline error.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved with one correction)* When
+  `like`/`block`/`undoRetire` fail, `ScanFeedPage.tsx` drops a permanent `<p class="err">` at the
+  top of the feed that only clears on a fresh fetch — inconsistent with copy-link/delete-scan,
+  which already use the transient toast primitive (`lib/toast.ts`/`ToastStack.tsx`). Add an
+  optional `action?: { label, onClick }` to the `Toast` type, render it as a button in
+  `ToastStack`, and swap those three call sites' `setError(...)` for
+  `showToast(msg, 'alert', { action: { label: 'Retry', onClick: () => like(rec) } })`.
+  **QA correction:** `error`/`setError` is NOT dead code — `loadFirstPage`/`loadMore` still use it
+  and JSX gates on `!error` — only the like/block/undoRetire call sites move to toasts, the rest of
+  `error` state stays. Verify: mock `api.like` to reject, call `like()`, assert `showToast` was
+  invoked with `variant: 'alert'` and an `action`; a second test clicks the rendered toast's Retry
+  button (RTL) and asserts `api.like` was called again; `tsc -b` passes with `action` typed through
+  `ToastStack`.
+
+- [ ] **Toast the user when a 401 mid-session logs them out.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved)* `AuthContext.tsx`'s `setUnauthorizedHandler` callback calls
+  `setMe(null)` on any 401 mid-session with no explanation — a user typing a filter can get bounced
+  to the login screen, indistinguishable from having chosen to log out themselves.
+  **QA note:** easier than it sounds — `client.ts:108` already throws `'Your session expired.
+  Please sign in again.'` on 401, so this is just gating `showToast(that message, 'alert')` on
+  `me !== null` (i.e. they *were* signed in) inside the existing unauthorized-handler callback;
+  leave the initial stale-token-on-load path and an explicit `logout()` call untouched — neither
+  should toast. Verify: render `AuthProvider` with an authenticated `me`, trigger a mocked 401 (same
+  pattern `auth.test.tsx` already uses), assert `showToast` was called with that message and
+  `'alert'`; a second test calls `logout()` directly and asserts `showToast` was NOT called.
+
+- [ ] **"You're offline" banner.** *(proposed by the hourly routine, 2026-09-03, Architect+QA:
+  the `useOnlineStatus()` hook is sound and small, but the original toast-based design is not —
+  see correction)* If wifi drops, every subsequent like/block/scan-create just fails with a generic
+  error — nothing tells the user it's connectivity, not a bug.
+  **QA correction (do not build as originally proposed):** routing this through
+  `showToast(msg, variant, durationMs)` doesn't work — it always arms a real
+  `window.setTimeout(dismiss, durationMs)`, `Infinity` coerces to a ~0ms timeout (immediate
+  dismiss, not persistent), and `showToast` returns `void` so there's no id to hand `dismissToast`
+  on `online` anyway. Build a `useOnlineStatus()` hook (`navigator.onLine` +
+  `online`/`offline` listeners) mounted once in `App.tsx`, paired with a small standalone banner
+  component (own visibility state, not routed through the toast queue) — NOT toast plumbing.
+  Verify: a hook test dispatches `window` `offline`/`online` events and asserts the returned value
+  flips (jsdom lets `navigator.onLine` be stubbed directly, no judgment call); a component test
+  asserts the banner text appears/disappears with those same events.
