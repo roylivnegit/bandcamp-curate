@@ -204,6 +204,17 @@ describe('scan feed', () => {
     expect(await screen.findByRole('button', { name: /✓ include.*psybient/ })).toBeInTheDocument()
   })
 
+  it('treats an empty label_id in the URL as no artist filter, not band id 0', async () => {
+    // Number('') is 0, which Number.isInteger accepts — a hand-edited or
+    // partially-stripped bookmarked URL (`?label_id=` with nothing after the
+    // `=`) must not silently turn into "filtered to band 0".
+    mockFetch(feedRoutes())
+    renderApp('/scans/1?label_id=')
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.queryByText(/artist:/)).not.toBeInTheDocument()
+  })
+
   it('keeps a filter in the URL across an unrelated filter change, so back restores it', async () => {
     // A real page navigation (leaving, then hitting browser-back) lands back on
     // whatever URL this page last held — so the fix only holds if a *second*
