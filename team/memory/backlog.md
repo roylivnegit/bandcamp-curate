@@ -1243,7 +1243,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `lib/toast.ts` is already in the eagerly-loaded shared chunk via `ToastStack`). PR: see git
   history.
 
-- [ ] **Signup's Bandcamp URL field has no format feedback until the server rejects it.**
+- [x] **Signup's Bandcamp URL field has no format feedback until the server rejects it.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)* `SignupPage`'s "Your
   Bandcamp collection" input only checks non-empty — a malformed URL round-trips to the API and
   comes back as a generic error, whereas `NewScanForm` already validates seed URLs inline
@@ -1252,3 +1252,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   submit before any network call. Verify: unit test for `isValidFanUrl` across valid/invalid
   cases; an RTL test asserting `aria-invalid="true"` and the error's `id` matches
   `aria-describedby` for an invalid value, and that submit stays disabled.
+  Done: new `isValidFanUrl(url)` in `lib/format.ts`, next to the existing URL helpers
+  (`bandcampHandle`/`seedKind`). Deliberately **stricter** than `NewScanForm`'s `SEED_URL_RE`:
+  a fan's collection page always lives at the literal `bandcamp.com` host (`FAN_URL_RE =
+  /^https?:\/\/bandcamp\.com\/[^/?#]+\/?(?:[?#].*)?$/i`), unlike an album/track URL which is
+  hosted per-artist on any subdomain — the backend itself still only checks non-empty
+  (`api/auth.py`), so this is UI-side early feedback, not a stricter gate than the API's. Rejects
+  a bare `bandcamp.com`/`bandcamp.com/` (no handle) and an artist/label subdomain (that's a
+  storefront, not a fan page); accepts a trailing slash, a tacked-on query string, surrounding
+  whitespace, and is host-case-insensitive. `SignupPage.tsx`'s `fanUrlError` is a derived
+  expression (frontend/CLAUDE.md rule 6 — no effect), shown only once the field is non-empty so a
+  fresh form doesn't open already invalid; folded into the existing `complete` gate so submit stays
+  disabled. The field's hint/error paragraphs now share one `aria-describedby` slot
+  (`su-fanurl-hint` normally, `su-fanurl-error` — `role="alert"` — when invalid), with
+  `aria-invalid="true"` added only in the error case. Covered by 9 new unit tests in
+  `lib/format.test.ts` (valid plain URL, http/trailing-slash/whitespace, query string, host
+  case-insensitivity, non-URL string, artist subdomain rejected, no-handle rejected, non-bandcamp
+  host rejected, empty string) and 2 new integration tests in `auth/auth.test.tsx`: typing a
+  malformed URL shows the alert with matching `aria-describedby`/`aria-invalid`, disables "Create
+  account", and confirms `fetch` is never called; a well-formed URL shows no alert and leaves
+  submit enabled. 202/202 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see
+  git history.

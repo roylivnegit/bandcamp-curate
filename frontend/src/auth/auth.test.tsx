@@ -75,6 +75,43 @@ describe('auth flow', () => {
     expect(await screen.findByText(/invalid invite code/i)).toBeInTheDocument()
   })
 
+  it('flags a malformed Bandcamp collection URL before any network call', async () => {
+    const fetchMock = mockFetch([])
+    renderApp('/signup')
+    const user = userEvent.setup()
+
+    await user.type(await screen.findByLabelText('Invite code'), 'ok')
+    await user.type(screen.getByLabelText('Username'), 'newbie')
+    await user.type(screen.getByLabelText('Password'), 'pw12345')
+    const fanUrlInput = screen.getByLabelText('Your Bandcamp collection')
+    await user.type(fanUrlInput, 'not a url')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/doesn.t look like a Bandcamp collection URL/i)
+    expect(fanUrlInput).toHaveAttribute('aria-invalid', 'true')
+    expect(fanUrlInput.getAttribute('aria-describedby')).toBe(alert.id)
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeDisabled()
+
+    // Never called: submit must be gated on the client, not left to the server 400.
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('accepts a well-formed Bandcamp collection URL with no error shown', async () => {
+    mockFetch([['/api/auth/signup', { access_token: 'tok-123', token_type: 'bearer' }]])
+    renderApp('/signup')
+    const user = userEvent.setup()
+
+    await user.type(await screen.findByLabelText('Invite code'), 'ok')
+    await user.type(screen.getByLabelText('Username'), 'newbie')
+    await user.type(screen.getByLabelText('Password'), 'pw12345')
+    const fanUrlInput = screen.getByLabelText('Your Bandcamp collection')
+    await user.type(fanUrlInput, 'https://bandcamp.com/newbie')
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(fanUrlInput).not.toHaveAttribute('aria-invalid')
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeEnabled()
+  })
+
   it('drops a stale stored token instead of hanging on a spinner', async () => {
     localStorage.setItem('crate-digger.token', 'expired')
     mockFetch([['/api/auth/me', { detail: 'Not authenticated' }, 401]])

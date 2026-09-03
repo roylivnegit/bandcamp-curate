@@ -29,6 +29,17 @@ export function seedKind(url: string): 'album' | 'track' {
   return url.toLowerCase().includes('/track/') ? 'track' : 'album'
 }
 
+// A fan's collection page always lives at bandcamp.com/<handle> — unlike album/track
+// URLs (SEED_URL_RE in NewScanForm.tsx), which are hosted per-artist and deliberately
+// accept any host. The backend itself only checks non-empty (`api/auth.py`), so this
+// is strictly a UI-side early-feedback check, not a stricter gate than the API's.
+const FAN_URL_RE = /^https?:\/\/bandcamp\.com\/[^/?#]+\/?(?:[?#].*)?$/i
+
+/** Whether a string looks like a Bandcamp fan-collection URL (https://bandcamp.com/<handle>). */
+export function isValidFanUrl(url: string): boolean {
+  return FAN_URL_RE.test(url.trim())
+}
+
 export function plural(n: number, one: string, many = `${one}s`): string {
   return n === 1 ? one : many
 }
