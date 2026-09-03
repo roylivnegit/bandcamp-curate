@@ -2012,3 +2012,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   eagerly-loaded shared chunk via `App.tsx`, not a lazy route chunk, as expected for a boundary
   that must exist before either route renders). Merged same run (PR #128, after a merge conflict
   with #127 in this same file — resolved by keeping both entries). PR: see git history.
+
+- [x] **Duplicate seed URL gives no feedback.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* `features/scans/NewScanForm.tsx`'s `addSeed()` (line 44-54) called
+  `setError('')` and `setSeedUrl('')` unconditionally even when `seeds.includes(u)` was already
+  true — re-adding a URL already in the list silently no-opped, so it looked like the Add click
+  didn't register.
+  Done: `addSeed()` now checks `seeds.includes(u)` before the dedupe-and-add, and on a hit calls
+  `setError('Already in your seed list.')` and returns without touching `seedUrl` — the
+  offending text stays in the input instead of being silently cleared. The multi-line paste path
+  (`onSeedPaste`) is untouched; it already dedupes silently by design with its own test coverage,
+  and this fix only changes the single-URL Add/Enter path.
+  Covered by a new test in `NewScanForm.test.tsx`'s "seed URL validation" block: add a seed via
+  the Add button, add the identical URL again, assert `role="alert"` shows "Already in your seed
+  list." and the seed list is still exactly one `listitem`. 277/277 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [ ] **Command palette arrow-key nav doesn't scroll the active row into view.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)*
+  `components/CommandPalette.tsx`'s `onInputKeyDown` (line 117-128) moves `activeIndex` but
+  nothing calls `scrollIntoView` on the newly active row — on a longer filtered list, arrowing
+  down past the visible rows highlights an option the user can't see. Fix: an effect keyed on
+  `activeIndex`/`open` that looks up the active row by `cmdk-opt-${activeRow.id}` and calls
+  `.scrollIntoView({ block: 'nearest' })`. Test: stub `Element.prototype.scrollIntoView` with
+  `vi.fn()` (jsdom doesn't implement it), open the palette, dispatch ArrowDown keydowns, assert
+  the mock was called.
