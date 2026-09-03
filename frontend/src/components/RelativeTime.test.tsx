@@ -42,6 +42,24 @@ describe('RelativeTime', () => {
     expect(clearIntervalSpy).toHaveBeenCalled()
   })
 
+  it('carries the raw ISO timestamp as a title, alongside the relative text', () => {
+    vi.useFakeTimers()
+    const iso = new Date().toISOString()
+    render(<RelativeTime iso={iso} />)
+
+    const el = screen.getByText('just now')
+    expect(el.tagName).toBe('TIME')
+    expect(el).toHaveAttribute('title', iso)
+    expect(el).toHaveAttribute('dateTime', iso)
+  })
+
+  it('renders nothing for a null iso, not an empty <time>', () => {
+    vi.useFakeTimers()
+    const { container } = render(<RelativeTime iso={null} />)
+
+    expect(container.querySelector('time')).not.toBeInTheDocument()
+  })
+
   it('ticks every RELATIVE_TIME_REFRESH_MS, not on some other cadence', async () => {
     vi.useFakeTimers()
     const iso = new Date(Date.now() - 59_000).toISOString()

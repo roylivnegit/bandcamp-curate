@@ -1341,3 +1341,41 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   accessible name and `href`; one with `band_url: null` has no link at all inside its row.
   213/213 frontend tests pass (212 + 1 new), tsc/lint/build clean (chunk split intact). PR: see
   git history.
+
+- [ ] **Extract existing empty-state logic into a shared `EmptyState` component.**
+  *(proposed by the hourly routine, 2026-09-03)* Product pitched this as three new empty-state
+  variants (no scan yet / filtered-to-zero / genuinely empty); Architect+QA checked the actual
+  code first and found all three already exist (`ColdStartPanel` for the cold-start cases, the
+  "Clear filters" button for filtered-to-zero) — rescoped down to a consolidation: wrap the
+  existing branches in one component with a `data-testid` per variant, no new behavior. Small,
+  testable (RTL asserts the right testid for each mock combo), but lower value than net-new work
+  since nothing user-visible changes — left queued behind the item below.
+
+- [ ] **Auto-prune URL-persisted filters that no longer exist in facets.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved as genuinely new)* After a
+  recompute or crawl, a `tag`/`label_id` filter carried in the URL can point at a facet that no
+  longer exists, silently rendering an empty feed with no explanation why. When `GET /api/facets`
+  returns and a persisted filter value isn't in the list, drop it from the URL/state and toast
+  what was dropped (reusing the existing `lib/toast.ts`/`ToastStack` primitive). QA confirmed
+  `ScanFeedPage.tsx` already fetches facets but has no diff/prune logic against the persisted
+  filters today — genuinely net-new, not a duplicate of anything shipped. Verify: a unit test
+  feeding a mock facets response missing the current filter into `useFeedFilters` asserts the
+  param is removed and the toast fires with the dropped value's name — pure logic, no visual
+  check needed.
+
+- [x] **Add an accessible ISO-time fallback to `RelativeTime`.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved with a correction)* Product pitched a new
+  `formatRelativeTime` util; QA checked the code first and found `RelativeTime.tsx`/`ago()`
+  already do self-refreshing relative text — the only real gap was accessibility: the component
+  rendered bare text with no exact-timestamp fallback for a screen reader or a sighted user who
+  wants precision, unlike `expiresLabel`/other timestamp displays in this codebase that already
+  favor plain text over any ARIA metadata. Rescoped to "add `title`/`aria-label` to the existing
+  component," not a parallel util (would have duplicated `ago()`).
+  Done: `RelativeTime.tsx` now renders `<time dateTime={iso} title={iso}>{ago(iso)}</time>`
+  instead of a bare `<span>` — semantic `<time>` element with the machine-readable `dateTime`
+  attribute plus a `title` carrying the same raw ISO string, so hovering (sighted mouse user) or
+  reading the element's title (assistive tech that surfaces it) gets the exact timestamp behind
+  the relative text. No change to the refresh interval/logic. Covered by 2 new tests in
+  `RelativeTime.test.tsx`: renders a `title` attribute equal to the raw ISO string alongside the
+  relative text; a `null` iso still renders nothing (title has nothing to attach to). PR: see git
+  history.
