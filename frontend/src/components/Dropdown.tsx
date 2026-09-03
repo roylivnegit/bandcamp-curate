@@ -27,11 +27,31 @@ export function Dropdown({
 }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
+    const trigger = triggerRef.current
+
+    // Move focus into the panel so the arrow-key nav below works immediately,
+    // unless something inside already grabbed it — the Genre/Contains panels'
+    // own `autoFocus` search input, which React focuses during commit, before
+    // this (passive) effect runs.
+    if (!panelRef.current?.contains(document.activeElement)) {
+      panelRef.current?.querySelector<HTMLButtonElement>('.ddrow')?.focus()
+    }
+
+    // Escape (no natural focus target) and selecting a row (the render prop's
+    // `close()`) both restore focus to the trigger. An outside click is left
+    // alone — the click itself already moved focus (or didn't) to whatever
+    // was clicked, and forcing it back to the trigger would fight that.
+    let restoreFocus = true
     function onDocClick(e: MouseEvent) {
-      if (!root.current?.contains(e.target as Node)) setOpen(false)
+      if (!root.current?.contains(e.target as Node)) {
+        restoreFocus = false
+        setOpen(false)
+      }
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false)
@@ -41,6 +61,7 @@ export function Dropdown({
     return () => {
       document.removeEventListener('mousedown', onDocClick)
       document.removeEventListener('keydown', onKey)
+      if (restoreFocus) trigger?.focus()
     }
   }, [open])
 
@@ -67,6 +88,7 @@ export function Dropdown({
   return (
     <div className="dd" ref={root}>
       <button
+        ref={triggerRef}
         type="button"
         className={`btn ghost${active ? ' on' : ''}`}
         aria-expanded={open}
@@ -80,6 +102,7 @@ export function Dropdown({
       </button>
       {open && (
         <div
+          ref={panelRef}
           className="ddpanel"
           style={width ? { width } : undefined}
           onKeyDown={onPanelKeyDown}

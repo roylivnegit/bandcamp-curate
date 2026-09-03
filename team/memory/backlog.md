@@ -1191,3 +1191,47 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   the "wifi was already down on load" case, not just the transition). 185/185 frontend tests pass
   (177 + 8 new), tsc/lint/build clean (chunk split intact — lands in the eagerly-loaded shared
   chunk via `App.tsx`, same as `ToastStack`, not a lazy route chunk). PR: see git history.
+
+- [x] **Dropdown opens without moving focus, and closing loses it.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved)* A keyboard user who opens a filter dropdown
+  (Sort, Genre, …) via Enter/Space can't actually arrow-key through it — `Dropdown.tsx`'s
+  `onPanelKeyDown` only fires for events bubbling from an already-focused `.ddrow`, and nothing
+  puts focus there on open; closing via Escape doesn't return focus to the trigger either, so it
+  can get lost to `<body>`. Fix: focus the first `.ddrow` when `open` becomes true; store/restore
+  focus to the trigger `<button>` when the panel closes (Escape or outside-click). Verify: an RTL
+  test — press Enter on the trigger, assert `document.activeElement` is the first `.ddrow`; press
+  Escape, assert `document.activeElement` is the trigger button again.
+  Done, with one refinement beyond the original proposal: `Dropdown.tsx` gained `panelRef`/
+  `triggerRef`. An effect on `[open]` focuses the first `.ddrow` when the panel opens — but only
+  if nothing inside it already has focus, so the Genre/Contains panels' own `autoFocus` search
+  input (which React focuses during commit, before this passive effect runs) is left alone
+  rather than fought over. On close, Escape and selecting a row (the render prop's `close()`)
+  both restore focus to the trigger button; an **outside click does not** — a `restoreFocus` flag
+  set to `false` inside the outside-click handler skips it, since the click itself already moved
+  focus (or didn't) to whatever was clicked, and yanking it back to the trigger would fight that.
+  This split wasn't in the original one-line proposal but follows directly from *why* Escape
+  needed a fix in the first place (no natural focus target) versus an outside click (which
+  already has one). Covered by 4 new tests in `Dropdown.test.tsx`'s new "open/close focus
+  management" block: opening moves focus to the first row; Escape restores focus to the trigger;
+  selecting a row restores focus to the trigger; an outside click leaves focus on whatever was
+  clicked instead of stealing it back. A lint warning caught along the way
+  (`react-hooks/exhaustive-deps` on reading `triggerRef.current` inside the effect's cleanup) was
+  fixed by capturing it in a local `const trigger` at the top of the effect, same pattern
+  `ShortcutsHelp.tsx`'s `previouslyFocused` ref already avoids by being a plain ref rather than a
+  DOM-node capture. 184/184 frontend tests pass (180 + 4 new), tsc/lint/build clean (chunk split
+  intact — `Dropdown` lands in the shared chunk used by both lazy routes, unchanged by this).
+  PR: see git history.
+
+(The "rapid likes/blocks can pile up an unbounded toast stack" proposal from this same
+Product/Architect+QA round is being implemented in parallel on a separate branch/PR this run —
+see that PR rather than a duplicate entry here.)
+
+- [ ] **Signup's Bandcamp URL field has no format feedback until the server rejects it.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)* `SignupPage`'s "Your
+  Bandcamp collection" input only checks non-empty — a malformed URL round-trips to the API and
+  comes back as a generic error, whereas `NewScanForm` already validates seed URLs inline
+  (`SEED_URL_RE` + `role="alert"`). Reuse that pattern here: extract a small `isValidFanUrl(url)`
+  check, wire `aria-invalid`/`aria-describedby` on the input, show the inline error and disable
+  submit before any network call. Verify: unit test for `isValidFanUrl` across valid/invalid
+  cases; an RTL test asserting `aria-invalid="true"` and the error's `id` matches
+  `aria-describedby` for an invalid value, and that submit stays disabled.
