@@ -456,15 +456,29 @@ async def facets(
         return Response(status_code=304, headers={"ETag": etag})
     response.headers["ETag"] = etag
 
+    # Union album-tag and track-tag matches — an inner join on AlbumTag alone
+    # (the old shape) never matches a track recommendation (album_id is NULL),
+    # so a genre that only tracks carry silently never showed up as a facet.
+    album_tag_names = (
+        select(Tag.name)
+        .select_from(Recommendation)
+        .join(AlbumTag, AlbumTag.album_id == Recommendation.album_id)
+        .join(Tag, Tag.id == AlbumTag.tag_id)
+        .where(Recommendation.scan_id == sid)
+    )
+    track_tag_names = (
+        select(Tag.name)
+        .select_from(Recommendation)
+        .join(TrackTag, TrackTag.track_id == Recommendation.track_id)
+        .join(Tag, Tag.id == TrackTag.tag_id)
+        .where(Recommendation.scan_id == sid)
+    )
+    tag_names = album_tag_names.union_all(track_tag_names).subquery()
     tag_rows = (
         await session.execute(
-            select(Tag.name, func.count().label("n"))
-            .select_from(Recommendation)
-            .join(AlbumTag, AlbumTag.album_id == Recommendation.album_id)
-            .join(Tag, Tag.id == AlbumTag.tag_id)
-            .where(Recommendation.scan_id == sid)
-            .group_by(Tag.name)
-            .order_by(func.count().desc(), Tag.name)
+            select(tag_names.c.name, func.count().label("n"))
+            .group_by(tag_names.c.name)
+            .order_by(func.count().desc(), tag_names.c.name)
         )
     ).all()
     label_rows = (
@@ -504,11 +518,25 @@ async def recompute(
 ) -> dict[str, Any]:
     """Recompute one scan's feed (defaults to the collection scan). `exclude_seed_tag`
     drops recs generated from the scan's seeds carrying those genres."""
+    # Checked before the cooldown gate: an invalid scan_id is a deterministic
+    # 404 that would otherwise still consume a caller's cooldown window,
+    # locking a legitimate follow-up call behind a 429 it doesn't deserve.
+    if scan_id is not None:
+        owner = (
+            await session.execute(select(Scan.user_id).where(Scan.id == scan_id))
+        ).scalars().first()
+        if owner is None or owner != current_user.id:
+            raise HTTPException(status_code=404, detail="scan not found")
+
+    previous_recompute_at = None
     if settings.recompute_cooldown_seconds > 0:
         now = _now()
-        last = _last_recompute_at.get(current_user.id)
-        if last is not None:
-            remaining = settings.recompute_cooldown_seconds - (now - last).total_seconds()
+        previous_recompute_at = _last_recompute_at.get(current_user.id)
+        if previous_recompute_at is not None:
+            remaining = (
+                settings.recompute_cooldown_seconds
+                - (now - previous_recompute_at).total_seconds()
+            )
             if remaining > 0:
                 raise HTTPException(
                     status_code=429,
@@ -516,18 +544,20 @@ async def recompute(
                     headers={"Retry-After": str(int(remaining) + 1)},
                 )
         # Recorded before the (potentially slow) curate() call, so two rapid
-        # calls can't both slip past the check while the first is still running.
+        # calls can't both slip past the check while the first is still
+        # running — rolled back below if curate() itself fails, so a genuine
+        # error doesn't consume a caller's retry window.
         _last_recompute_at[current_user.id] = now
-    if scan_id is not None:
-        owner = (
-            await session.execute(select(Scan.user_id).where(Scan.id == scan_id))
-        ).scalars().first()
-        if owner is None or owner != current_user.id:
-            raise HTTPException(status_code=404, detail="scan not found")
+
     try:
         scored = await curate(
             session, scan_id=scan_id, user=current_user, exclude_seed_tags=set(exclude_seed_tag)
         )
     except ValueError as e:  # e.g. collection not yet crawled → 404, not a 500
+        if settings.recompute_cooldown_seconds > 0:
+            if previous_recompute_at is not None:
+                _last_recompute_at[current_user.id] = previous_recompute_at
+            else:
+                _last_recompute_at.pop(current_user.id, None)
         raise HTTPException(status_code=404, detail=str(e)) from e
     return {"computed": len(scored), "excluded_seed_tags": exclude_seed_tag}
