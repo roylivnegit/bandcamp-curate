@@ -785,6 +785,28 @@ export function ScanFeedPage() {
     }
   }
 
+  // Same shape as `renew`, but for the reason instead of the expiry — reads
+  // the row's own current `expires_at` back out of `blocked` and passes it
+  // straight through, since `block()` overwrites `expires_at` unconditionally
+  // on every call and this must not clear an active temporary block just to
+  // attach a reason to it.
+  async function setBlockReason(bandId: number, reason: string) {
+    const key = blockedKeyOf(bandId)
+    if (inFlight.current.has(key)) return
+    const current = blocked.find((b) => b.band_id === bandId)
+    inFlight.current.add(key)
+    markPanelBusy(key, true)
+    try {
+      await api.block(bandId, current?.expires_at ?? null, reason)
+      await loadBlocked()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save that reason.')
+    } finally {
+      inFlight.current.delete(key)
+      markPanelBusy(key, false)
+    }
+  }
+
   // ── render ───────────────────────────────────────────────────────────────
   const kindWord = filters.itemType
     ? filters.itemType === 'album'
@@ -884,6 +906,7 @@ export function ScanFeedPage() {
               items={blocked}
               onUnblock={(id) => void unblock(id)}
               onRenew={(id, expiresAt) => void renew(id, expiresAt)}
+              onSetReason={(id, reason) => void setBlockReason(id, reason)}
               busy={(id) => blockedKeyOf(id) in panelBusy}
             />
           )}

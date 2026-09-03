@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import type { Blocked, Liked } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { BLOCK_DURATIONS, RENEW_WINDOW_MS, SIDEPANEL_PAGE_SIZE } from '../../config'
@@ -96,6 +97,7 @@ export function BlockedPanel({
   items,
   onUnblock,
   onRenew,
+  onSetReason,
   busy,
 }: {
   items: Blocked[]
@@ -103,6 +105,10 @@ export function BlockedPanel({
   /** Re-block the same band with a fresh `expires_at` — offered only on a
    *  row whose current block is about to lapse (see `RENEW_WINDOW_MS`). */
   onRenew: (bandId: number, expiresAt: string) => void
+  /** Set (or replace) this row's reason. The backend only overwrites an
+   *  existing reason when the new one is non-empty, so this can't be used to
+   *  clear one — only to add or change it. */
+  onSetReason: (bandId: number, reason: string) => void
   /** Whether this band's unblock is in flight — see `LikedPanel`'s `busy`. */
   busy: (bandId: number) => boolean
 }) {
@@ -127,12 +133,27 @@ export function BlockedPanel({
                 b.expires_at !== null &&
                 new Date(b.expires_at).getTime() - Date.now() <= RENEW_WINDOW_MS &&
                 new Date(b.expires_at).getTime() > Date.now()
+              const saveReason = (e: KeyboardEvent<HTMLInputElement>) => {
+                if (e.key !== 'Enter') return
+                const value = e.currentTarget.value.trim()
+                if (value && value !== b.reason) onSetReason(b.band_id, value)
+              }
               return (
                 <li className="row" key={b.id}>
                   <span className="row-main">
                     <b>{bandLabel}</b>
                     {expiry && <span className="hint"> · {expiry}</span>}
+                    {b.reason && <span className="hint"> · &ldquo;{b.reason}&rdquo;</span>}
                   </span>
+                  <input
+                    type="text"
+                    className="input reason"
+                    aria-label={`Reason for blocking ${bandLabel}`}
+                    placeholder="Reason… (Enter to save)"
+                    defaultValue={b.reason ?? ''}
+                    disabled={rowBusy}
+                    onKeyDown={saveReason}
+                  />
                   {b.band_url && (
                     // Icon-only link, same pattern as LikedPanel's — the glyph is
                     // decorative, so the accessible name comes from aria-label.

@@ -670,6 +670,16 @@
   white-space: nowrap;
 }
 
+/* Reason input in `BlockedPanel`: same `.input` base, but a dense row has no
+   room for the full-width form input — fixed to a modest width and the
+   row's own smaller type/padding instead. */
+.row .input.reason {
+  width: 140px;
+  flex: none;
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+}
+
 /* ── cold-start diagnostics under the empty state ───────────────────────── */
 
 .coldstart {
