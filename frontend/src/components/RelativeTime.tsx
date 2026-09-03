@@ -17,5 +17,11 @@ export function RelativeTime({ iso }: { iso: string | null }) {
     return () => window.clearInterval(id)
   }, [iso])
 
-  return <>{ago(iso)}</>
+  if (!iso) return null
+
+  return (
+    <time dateTime={iso} title={iso}>
+      {ago(iso)}
+    </time>
+  )
 }
