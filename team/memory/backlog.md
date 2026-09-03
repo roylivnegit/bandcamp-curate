@@ -1677,3 +1677,38 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `document.title` gains the `"✓ "` prefix once the poll observes `done`, and loses it once a
   `visibilitychange` event fires with `document.hidden` false. 258/258 frontend tests pass,
   tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Password show/hide toggle.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound, RTL-testable, small — ship it")* `LoginPage.tsx`/
+  `SignupPage.tsx` both render a raw `<input type="password">` with no way to verify what was
+  typed — a typo surfaces only as a failed sign-in/sign-up. Verified via grep before proposing:
+  no existing `PasswordInput`/toggle component anywhere in `frontend/src`.
+  Done: new `components/PasswordInput.tsx` wraps the existing `<input>` (same `id`/
+  `autoComplete`/`value`/`onChange` the two pages already passed) with a `.pwtoggle` button that
+  flips the input's `type` between `password`/`text` and its own text between "Show"/"Hide",
+  carrying `aria-pressed` — a visible-text button, so no separate `aria-label` is needed (same
+  rule `frontend/CLAUDE.md`'s icon-button guidance already applies to `♥ like`/`⊘ block`). Kept
+  as a plain text toggle rather than picking a new icon glyph, deliberately staying out of the
+  unresolved icon-glyphs-vs-SVG question flagged in `frontend/CLAUDE.md`. `PasswordInput.css`
+  positions it absolutely inside the field (existing `.input` gets extra `padding-right`) using
+  existing tokens only, no new colors. Both pages now use `<PasswordInput id="password"
+  autoComplete="current-password" .../>` in place of the raw input; the `id`/`<label htmlFor>`
+  wiring is unchanged, so every existing `getByLabelText('Password')` test kept working with no
+  edits. Covered by 4 new tests in `PasswordInput.test.tsx` (standalone RTL render, no
+  router/api mocking needed): starts masked with a "Show" toggle at `aria-pressed="false"`;
+  clicking it reveals the value, flips to "Hide"/`aria-pressed="true"`, and a second click
+  reverts both; the `onChange` wiring still fires; `autoComplete` passes through. 257/257
+  frontend tests pass, tsc/lint/build clean (chunk split intact — `LoginPage`/`SignupPage`
+  chunks pick up the shared component without collapsing into the eager bundle). PR: see git
+  history.
+
+- [ ] **Caps Lock warning on password fields.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound and testable, small — ship it, with a caveat: `getModifierState`
+  can't detect Caps Lock already on before the field is focused/typed in — a known non-blocking
+  API limitation, not a defect to fix")* A sign-in failing because Caps Lock silently mangled the
+  password gives no signal today. Add an `onKeyUp` handler on the password input(s) using
+  `event.getModifierState('CapsLock')` to show/hide an inline `role="status"` warning next to the
+  field, mirroring the existing hint/error `aria-describedby` pattern already in `SignupPage.tsx`.
+  Verify: RTL test dispatching a `keyup` event with a mocked `getModifierState` returning
+  true/false, asserting the warning node appears/disappears and `aria-describedby` points at it
+  when shown.
