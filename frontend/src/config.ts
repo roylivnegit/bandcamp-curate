@@ -47,3 +47,14 @@ export const SCROLL_TOP_THRESHOLD_PX = 600
  *  drops first once this is exceeded, so the localStorage entry can't grow
  *  unbounded over a long-lived account. */
 export const VISITED_CAP = 500
+
+/** Above this many selected cards, `<BulkActionBar>` requires a second
+ *  confirming click before firing the block calls — undo exists, but a
+ *  stray "select all" + block on a large filtered set has a bigger blast
+ *  radius than the click that caused it. At or below, block fires immediately
+ *  (today's behavior, unchanged). */
+export const BULK_CONFIRM_THRESHOLD = 5
+
+/** How long the armed "Block N?" confirm state stays up before reverting on
+ *  its own, in ms — same window/reasoning as `DeleteScanButton`'s. */
+export const BULK_CONFIRM_WINDOW_MS = 4000
