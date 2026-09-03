@@ -83,5 +83,9 @@
   --shadow-card: 0 16px 34px -22px rgba(0, 0, 0, 0.7);
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
 
-  --measure: 800px; /* the reading/scanning column */
+  /* The scans-list and feed pages' content column. Wider than a prose reading
+     measure on purpose: both are dense data views (a toolbar plus a card
+     list), not paragraphs of text, and 800px left most of a desktop screen
+     empty with the toolbar wrapping awkwardly into a second, ragged row. */
+  --measure: 1200px;
 }

@@ -215,12 +215,6 @@ function ScanMeta({ scan }: { scan: Scan }) {
           {plural(scan.seed_count, 'seed')}
         </>
       )}
-      {scan.stats?.credits ? (
-        <>
-          {' '}
-          <span className="sep">·</span> <span className="num">{scan.stats.credits}</span> credits
-        </>
-      ) : null}
       {scan.last_run_at ? (
         <>
           {' '}
