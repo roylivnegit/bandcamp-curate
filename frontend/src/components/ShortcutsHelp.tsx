@@ -8,6 +8,7 @@ const SHORTCUTS: Array<{ keys: string; description: string }> = [
   { keys: '↑ / ↓', description: 'Move to the next/previous card, or through an open menu' },
   { keys: 'Home / End', description: 'Jump to the first / last card, or menu row' },
   { keys: '/', description: 'Focus the quick filter (narrows the loaded cards by title/artist)' },
+  { keys: 'Ctrl / ⌘ K', description: 'Open the jump-to command palette' },
   { keys: '?', description: 'Toggle this panel' },
 ]
 
