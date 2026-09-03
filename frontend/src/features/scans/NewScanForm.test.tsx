@@ -117,6 +117,47 @@ describe('NewScanForm multi-URL paste', () => {
   })
 })
 
+describe('NewScanForm draft-loss warning', () => {
+  function dispatchBeforeUnload() {
+    const event = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    window.dispatchEvent(event)
+    return { event, preventDefault }
+  }
+
+  it('warns before unload once a seed has been added', () => {
+    renderForm()
+    addViaButton('https://artist.bandcamp.com/album/some-release')
+
+    const { event, preventDefault } = dispatchBeforeUnload()
+
+    expect(preventDefault).toHaveBeenCalled()
+    // jsdom's Event.returnValue coerces any assigned value to a boolean
+    // (real browsers keep the assigned string) — assert it was set to a
+    // falsy value rather than the exact string, so this doesn't pin jsdom's
+    // implementation detail instead of the component's actual behavior.
+    expect(event.returnValue).toBeFalsy()
+  })
+
+  it('does not warn before unload with an empty seed list', () => {
+    renderForm()
+
+    const { preventDefault } = dispatchBeforeUnload()
+
+    expect(preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('stops warning once the last seed is removed', () => {
+    renderForm()
+    addViaButton('https://artist.bandcamp.com/album/some-release')
+    fireEvent.click(screen.getByRole('button', { name: /remove/i }))
+
+    const { preventDefault } = dispatchBeforeUnload()
+
+    expect(preventDefault).not.toHaveBeenCalled()
+  })
+})
+
 describe('NewScanForm submission', () => {
   afterEach(() => vi.unstubAllGlobals())
 
