@@ -4,6 +4,9 @@ import { ColdStartPanel } from './ColdStartPanel'
 interface EmptyStateProps {
   anyActive: boolean
   coldStart: ColdStart | null | undefined
+  /** Passed straight through to `ColdStartPanel` — see its own doc comment. */
+  requestsUsed?: number | null
+  requestBudget?: number | null
   onClearFilters: () => void
 }
 
@@ -15,7 +18,13 @@ interface EmptyStateProps {
  *  `cold-start`: no filter at all, so `ColdStartPanel`'s own diagnostics (or,
  *  before those have loaded, nothing) explain why the scan itself hasn't
  *  produced anything yet. */
-export function EmptyState({ anyActive, coldStart, onClearFilters }: EmptyStateProps) {
+export function EmptyState({
+  anyActive,
+  coldStart,
+  requestsUsed,
+  requestBudget,
+  onClearFilters,
+}: EmptyStateProps) {
   if (anyActive) {
     return (
       <div data-testid="empty-filtered">
@@ -30,7 +39,11 @@ export function EmptyState({ anyActive, coldStart, onClearFilters }: EmptyStateP
   return (
     <div data-testid="empty-cold-start">
       <p className="empty">No recommendations in this scan yet.</p>
-      <ColdStartPanel coldStart={coldStart} />
+      <ColdStartPanel
+        coldStart={coldStart}
+        requestsUsed={requestsUsed}
+        requestBudget={requestBudget}
+      />
     </div>
   )
 }

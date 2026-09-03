@@ -48,3 +48,36 @@ describe('ColdStartPanel', () => {
     expect(container).toBeEmptyDOMElement()
   })
 })
+
+describe('ColdStartPanel crawl-budget line', () => {
+  it('shows requests used out of the budget when both are provided', () => {
+    render(<ColdStartPanel coldStart={coldStart} requestsUsed={743} requestBudget={1000} />)
+
+    expect(screen.getByText('743')).toBeInTheDocument()
+    expect(screen.getByText('1,000')).toBeInTheDocument()
+    expect(screen.getByText(/crawl requests used/)).toBeInTheDocument()
+  })
+
+  it('also shows it on the no-neighbours-yet branch', () => {
+    render(
+      <ColdStartPanel
+        coldStart={{ ...coldStart, neighbour_count: 0, candidates: 0 }}
+        requestsUsed={12}
+        requestBudget={1000}
+      />,
+    )
+
+    expect(screen.getByText(/no taste-neighbours found yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/crawl requests used/)).toBeInTheDocument()
+  })
+
+  it('renders no budget line when the values are absent', () => {
+    render(<ColdStartPanel coldStart={coldStart} />)
+    expect(screen.queryByText(/crawl requests used/)).not.toBeInTheDocument()
+  })
+
+  it('renders no budget line when the budget is zero', () => {
+    render(<ColdStartPanel coldStart={coldStart} requestsUsed={0} requestBudget={0} />)
+    expect(screen.queryByText(/crawl requests used/)).not.toBeInTheDocument()
+  })
+})

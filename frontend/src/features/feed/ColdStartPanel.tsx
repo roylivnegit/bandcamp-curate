@@ -6,7 +6,20 @@ import { count, plural } from '../../lib/format'
  *  recommendations yet" with no way to tell "still crawling" from "everything
  *  got excluded" from "nobody to compare against yet". Renders nothing until
  *  that data has loaded. */
-export function ColdStartPanel({ coldStart }: { coldStart: ColdStart | null | undefined }) {
+export function ColdStartPanel({
+  coldStart,
+  requestsUsed,
+  requestBudget,
+}: {
+  coldStart: ColdStart | null | undefined
+  /** From the same `/api/stats` response as `coldStart` (`Stats.requests_used`
+   *  / `.request_budget`) — shown here, not elsewhere, because an empty feed
+   *  is exactly when a reader wants to know whether the crawl is still
+   *  running or has simply used up its budget. `null`/`undefined`/a zero
+   *  budget renders nothing extra. */
+  requestsUsed?: number | null
+  requestBudget?: number | null
+}) {
   if (!coldStart) return null
 
   const {
@@ -18,12 +31,23 @@ export function ColdStartPanel({ coldStart }: { coldStart: ColdStart | null | un
     excluded_blacklisted,
   } = coldStart
 
+  const budgetLine =
+    requestsUsed != null && requestBudget != null && requestBudget > 0 ? (
+      <p className="hint">
+        <b className="num">{count(requestsUsed)}</b> of <b className="num">{count(requestBudget)}</b>{' '}
+        crawl requests used this scan.
+      </p>
+    ) : null
+
   if (neighbour_count === 0) {
     return (
-      <p className="coldstart hint">
-        No taste-neighbours found yet — once the crawl discovers other collectors who own the
-        same records you do, recommendations start appearing here.
-      </p>
+      <div className="coldstart">
+        <p className="hint">
+          No taste-neighbours found yet — once the crawl discovers other collectors who own the
+          same records you do, recommendations start appearing here.
+        </p>
+        {budgetLine}
+      </div>
     )
   }
 
@@ -41,6 +65,7 @@ export function ColdStartPanel({ coldStart }: { coldStart: ColdStart | null | un
           <b className="num">{count(excluded_blacklisted)}</b> blocked.
         </p>
       )}
+      {budgetLine}
     </div>
   )
 }

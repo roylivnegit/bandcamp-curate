@@ -1596,6 +1596,11 @@ describe('feed while the scan is still running', () => {
     expect(await screen.findByText('No recommendations in this scan yet.')).toBeInTheDocument()
     expect(await screen.findByText('340')).toBeInTheDocument()
     expect(screen.getByText(/candidates/)).toBeInTheDocument()
+    // requests_used (40) collides with cold_start.excluded_wishlisted (also 40) as
+    // an exact-text match, so assert on the whole budget line instead of a bare '40'.
+    expect(screen.getByText(/crawl requests used/).textContent).toBe(
+      '40 of 100 crawl requests used this scan.',
+    )
   })
 
   it('does not fetch stats, or show cold-start diagnostics, while the feed has rows', async () => {
