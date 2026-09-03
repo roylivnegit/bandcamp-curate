@@ -5,7 +5,7 @@
 
 /** Matches the `<title>` in index.html — the suffix `useDocumentTitle` appends
  *  to every per-page title. */
-export const APP_NAME = 'crate digger'
+export const APP_NAME = 'bandcamp music finder'
 
 /** Recommendations fetched per page (the API caps this at 200). */
 export const FEED_PAGE_SIZE = 50

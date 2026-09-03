@@ -2,6 +2,15 @@
   padding-bottom: var(--s-12);
 }
 
+/* `.wrap.feedpage` (not `.feedpage` alone) to out-specificity `.wrap`'s own
+   max-width: var(--measure) regardless of source order. Wider than the
+   shared measure on purpose — this page's cardlist is a grid that can use a
+   second (or, on a very large monitor, third) column of real cards, unlike
+   the scans list, which only ever holds a handful of rows. */
+.wrap.feedpage {
+  max-width: 1800px;
+}
+
 /* ── nav + title ─────────────────────────────────────────────────────────── */
 
 .feednav {
@@ -273,6 +282,20 @@
 
 /* ── feed card ───────────────────────────────────────────────────────────── */
 
+/* `auto-fill`/`minmax` rather than a fixed breakpoint: one column until the
+ * container is wide enough for a second 520px-plus one, so a wide monitor
+ * shows two columns of real cards instead of one column stretched wide with
+ * empty trailing space inside every row. */
+.cardlist {
+  display: grid;
+  /* min(520px, 100%): on a viewport narrower than 520px the column would
+     otherwise still be forced to 520px and overflow horizontally — a classic
+     auto-fill/minmax gotcha. Capping the floor at 100% lets it shrink to one
+     full-width column instead. */
+  grid-template-columns: repeat(auto-fill, minmax(min(520px, 100%), 1fr));
+  gap: 11px;
+}
+
 .card {
   position: relative;
   display: flex;
@@ -283,7 +306,6 @@
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   padding: var(--s-4) var(--s-4) var(--s-4) var(--s-5);
-  margin-bottom: 11px;
   /* "Load more" appends 50 rows at a time and a scan can hold ~1,600, so the
      list gets long. This lets the browser skip layout and paint for off-screen
      cards. The length is a rough first guess at card height so the scrollbar
@@ -690,17 +712,22 @@
     top: 0; /* the app header itself already scrolls out of a narrow view */
   }
 
+  /* One control per row. A ragged 2-per-row wrap (a search box beside half a
+     dropdown label beside a stray segmented-control button) reads as broken,
+     not compact — a plain vertical list of full-width rows reads as organized
+     even though it's taller. */
   .controls {
+    flex-direction: column;
+    align-items: stretch;
     gap: var(--s-2);
   }
 
   .controls > .spacer {
-    flex-basis: 100%;
-    height: 0;
+    display: none;
   }
 
-  .seg {
-    flex: 1 1 100%;
+  .controls > * {
+    width: 100%;
   }
 
   .seg button {
@@ -708,8 +735,11 @@
   }
 
   .quickfilter {
-    flex-basis: 100%;
     max-width: none;
+  }
+
+  .dd .btn {
+    width: 100%;
   }
 
   .card {

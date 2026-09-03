@@ -20,13 +20,43 @@ body {
   font-size: var(--fs-base);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  /* Two faint accent washes at the top, as in the original — enough to keep the
-   * ground from reading as flat black without competing with content. */
+  background: var(--bg);
+  position: relative;
+}
+
+/* A slow-drifting field of soft accent washes behind everything. The old
+ * version anchored two gradients to the top corners only — fine on a short
+ * viewport, but most of a wide monitor or a long scrolled page (the scans
+ * list, a deep feed) sat past where they fade out, reading as flat black.
+ * `inset: -10%` plus `scale()` in the animation gives the transform room to
+ * move without ever revealing a hard edge. `prefers-reduced-motion` already
+ * zeroes every animation duration globally (below), so this freezes on its
+ * own without an extra override. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
   background:
-    radial-gradient(1100px 520px at 10% -10%, rgba(94, 234, 212, 0.1), transparent 60%),
-    radial-gradient(900px 520px at 100% -4%, rgba(196, 181, 253, 0.085), transparent 55%),
-    var(--bg);
-  background-attachment: fixed;
+    radial-gradient(1300px 900px at 12% 15%, rgba(94, 234, 212, 0.22), transparent 62%),
+    radial-gradient(1200px 850px at 88% 12%, rgba(196, 181, 253, 0.19), transparent 62%),
+    radial-gradient(1400px 1100px at 50% 55%, rgba(45, 212, 191, 0.1), transparent 68%),
+    radial-gradient(1200px 950px at 20% 92%, rgba(196, 181, 253, 0.14), transparent 65%),
+    radial-gradient(1200px 950px at 82% 95%, rgba(94, 234, 212, 0.15), transparent 65%);
+  animation: bg-drift 42s ease-in-out infinite alternate;
+}
+
+@keyframes bg-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(2%, -3%, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(-3%, 2%, 0) scale(1);
+  }
 }
 
 a {
