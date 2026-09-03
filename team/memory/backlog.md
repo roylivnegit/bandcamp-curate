@@ -1867,3 +1867,27 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   never a broken-image icon. Covered by 3 new tests in `FeedCard.test.tsx`: no image without
   `art_url`; an image with the right `src`/empty `alt` when present; `onError` removes it. 258/258
   frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Notice when a scan's feed changed since your last visit.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved with a correction)* Product's original pitch was
+  per-item "new since last visit" badges off `recommendations.computed_at` — QA killed that:
+  `store_recommendations` clear+inserts every recompute, so `computed_at` is stamped fresh on
+  every surviving row on every recompute (a like, a block, an unrelated filter recompute), not
+  just genuinely new items; badging on it would be a false-positive machine.
+  Done (corrected version): keys off `recompute_generation` instead, the same per-scan "did the
+  feed change" counter the existing in-session reflow banner already uses — but this is a
+  different signal: the reflow banner only fires for a bump observed while the page is already
+  open (a `useRef`, gone once the tab closes), while this persists a per-scan "last seen
+  generation" to `localStorage` (`lib/lastSeenGeneration.ts`, same try/catch pattern as
+  `visited.ts`), so it can say the feed moved on since your *previous* visit, not just this
+  session. `features/feed/useUpdatedSinceLastVisit.ts` runs the check once per `scanId` (a
+  `checkedFor` ref, same shape as `useResumeScroll`'s `restoredFor`), showing a dismissible
+  banner (reuses the existing `.banner.reflow` styling) the first time a real prior visit's
+  generation is behind the current one. Can only say "the feed changed", not which items —
+  per-item novelty would need a `first_seen_at` set once via upsert-preserve rather than reset on
+  every clear+insert, flagged as a separate, larger follow-up if wanted. Covered by 8 new unit
+  tests in `lastSeenGeneration.test.ts` and 4 new integration tests in `feed.test.tsx`'s
+  "updated-since-last-visit notice" block: silent on a scan's first-ever visit; shows and is
+  dismissible when the generation moved on since the recorded visit; silent when it matches;
+  persists the current generation so a same-session reload doesn't repeat it. 272/272 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
