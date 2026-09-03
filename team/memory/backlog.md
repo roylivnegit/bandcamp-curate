@@ -1617,7 +1617,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   asserting the countline has `role="status"` and its text reflects the new count after
   `loadMore` resolves — no visual check needed.
 
-- [ ] **"Select all loaded" for bulk-select.** *(proposed by the hourly routine, 2026-09-03,
+- [x] **"Select all loaded" for bulk-select.** *(proposed by the hourly routine, 2026-09-03,
   Architect+QA-approved — "testable if confined to a pure state-derivation function; must read
   from the already-filtered `visibleRows`, not raw data")* Bulk-select only toggles one card at a
   time, so clearing a genre's worth of recs from a large scan still means clicking every checkbox.
@@ -1626,6 +1626,18 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   result set), toggling back to none on a second click. Verify: unit test — with N visible rows
   and select mode on, one click makes the selection size equal `visibleRows.length` and every
   card show `selected=true`; a second click clears it back to zero.
+  Done: `ScanFeedPage.tsx` derives `selectableKeys` from `visibleRows` filtered to `band_id !==
+  null` (mirrors `FeedCard`'s own checkbox gate — nothing is offered for selection that never had
+  a checkbox), and a new `selectAllLoaded()` toggles the selection between "every selectable key"
+  and empty, based on whether every one is already selected (not a plain boolean flip — clicking
+  it after individually checking some, but not all, rows completes the selection rather than
+  clearing it). `FilterBar.tsx` renders a "☑ Select all loaded" / "✕ Deselect all" button next to
+  the select-mode toggle, shown only in select mode and only when there's at least one selectable
+  row. Covered by 2 new tests in `feed.test.tsx`'s "bulk select" block: clicking it checks every
+  card and a second click clears them all (scoped against the bulk bar's own count via `within`,
+  not a bare `findByText`, since the feed's countline can coincidentally show the same digit as
+  the unfiltered total); a quick-filtered view offers only the narrowed set. 252/252 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [ ] **Tab-title status marker for a finished scan.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved with a caveat: "sound in isolation but riskiest of the three —
