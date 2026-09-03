@@ -63,3 +63,28 @@ QA catching it still burned two full `claude -p` calls on proposals that never h
 Album art in particular is worth flagging separately: if Roy ever wants cover art on cards, that
 touches the backend (Bandcamp album pages do carry art URLs the parser doesn't currently keep)
 and is a real, if bigger, idea — just not a same-run, no-backend-change UI polish item.
+
+## 2026-09-03 — hourly routine, second Option C round of this run: one shipped, one more caught pre-QA
+
+First call (fed the real, current file inventory rather than a summary, specifically to route
+around the failure mode above) found one genuinely new gap — CSV export of the feed — which
+survived a self-check against `grep -i 'csv|createObjectURL|download='` (zero hits) and an
+Architect+QA sanity call, then got built and opened as a PR this same task.
+
+A second attempt later in the same run, prompted with an updated inventory including the just-
+shipped CSV export, proposed one more idea: "announce new recommendations via an `aria-live`
+region when a running scan's poll increases the count." Caught before spending an Architect+QA
+call this time — `ScanFeedPage.tsx`'s `countline` paragraph already has `role="status"
+aria-live="polite"` (added 2026-09-03, commit b781405 / PR #100, "announce the feed match count
+to screen readers") and re-renders on every change to `total`, which already covers a poll-driven
+increase during a running scan, not just a like/block decrement. No new evidence beyond what
+b781405's own commit message already states — do not re-propose this without a concrete reason
+the existing live region doesn't fire for the running-scan case specifically (e.g. a repro showing
+`total` not updating during a live poll).
+
+Net for the run: pre-checking Product's proposal against the actual source (not just a summary)
+before spending the QA call caught this one for near-zero cost, same as the sort-order duplicate
+caught earlier in the run. Two-for-two on self-caught duplicates today suggests the fully-mined
+backlog is now past the point where a summary-fed Product call reliably finds real gaps — future
+rounds may want to lead with a targeted grep for the proposed feature before invoking `claude -p`
+at all, rather than after.
