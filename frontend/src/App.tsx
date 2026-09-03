@@ -56,13 +56,19 @@ export default function App() {
 
   if (!me) {
     return (
-      <Suspense fallback={<div className="wrap">{Loading}</div>}>
-        <Routes>
-          <Route path="/signup" element={<SignupPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
-      </Suspense>
+      <>
+        {/* A mid-session 401 lands here in the same commit it toasts from
+         * (AuthContext) — this instance must exist to pick up that toast, not
+         * just the signed-in shell's. */}
+        <ToastStack />
+        <Suspense fallback={<div className="wrap">{Loading}</div>}>
+          <Routes>
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </Suspense>
+      </>
     )
   }
 

@@ -1116,17 +1116,30 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   button (RTL) and asserts `api.like` was called again; `tsc -b` passes with `action` typed through
   `ToastStack`.
 
-- [ ] **Toast the user when a 401 mid-session logs them out.** *(proposed by the hourly routine,
+- [x] **Toast the user when a 401 mid-session logs them out.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved)* `AuthContext.tsx`'s `setUnauthorizedHandler` callback calls
   `setMe(null)` on any 401 mid-session with no explanation — a user typing a filter can get bounced
   to the login screen, indistinguishable from having chosen to log out themselves.
-  **QA note:** easier than it sounds — `client.ts:108` already throws `'Your session expired.
-  Please sign in again.'` on 401, so this is just gating `showToast(that message, 'alert')` on
-  `me !== null` (i.e. they *were* signed in) inside the existing unauthorized-handler callback;
-  leave the initial stale-token-on-load path and an explicit `logout()` call untouched — neither
-  should toast. Verify: render `AuthProvider` with an authenticated `me`, trigger a mocked 401 (same
-  pattern `auth.test.tsx` already uses), assert `showToast` was called with that message and
-  `'alert'`; a second test calls `logout()` directly and asserts `showToast` was NOT called.
+  Done, one design gap found beyond QA's sanity check: `ToastStack` was only mounted in the
+  signed-in branch of `App.tsx`, but the 401 → `setMe(null)` transition unmounts that whole branch
+  in the same commit the toast needs to render in — the toast would have been queued but never
+  shown, since the signed-out branch (login screen) never mounted a `ToastStack` to pick it up.
+  Fixed by mounting a second `<ToastStack />` in the `!me` branch too, so whichever branch is live
+  at commit time still renders the queue (the module-scope queue itself survives the swap either
+  way — `useSyncExternalStore`'s `getSnapshot()` reads it fresh on mount).
+  `AuthContext.tsx` gets a `meRef` (synced via a `[me]`-effect) so the unauthorized handler — which
+  registers once (`[]` deps) — can read the *current* `me` without re-registering on every change,
+  same ref-for-imperative-reads shape as rule 3 in `frontend/CLAUDE.md`. The handler now does
+  `if (meRef.current !== null) showToast(SESSION_EXPIRED_MESSAGE, 'alert')` before `setMe(null)` —
+  the initial stale-token-on-load 401 (`meRef.current` still null there) and an explicit `logout()`
+  call (bypasses the handler entirely) both correctly stay silent.
+  Covered by two new tests in `auth.test.tsx`: a session that's genuinely live (signed in, `me` set)
+  hitting a 401 on `ScanFeedPage`'s poll shows a `role="alert"` toast reading "session expired" and
+  lands on the login screen (deliberately uses `ScanFeedPage`'s single-request poll rather than
+  `ScanListPage`'s, which also fires a parallel `refresh()` `/api/auth/me` call each tick — using
+  that one would race two concurrent responses over which `setMe` call lands last); a second test
+  signs in, clicks "Sign out", and asserts no alert appeared. 177/177 frontend tests pass, tsc/lint/
+  build clean (chunk split intact). PR: see git history.
 
 - [ ] **"You're offline" banner.** *(proposed by the hourly routine, 2026-09-03, Architect+QA:
   the `useOnlineStatus()` hook is sound and small, but the original toast-based design is not —
