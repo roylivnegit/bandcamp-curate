@@ -1,9 +1,10 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 import type { RefObject } from 'react'
 
-import type { Facet, SortKey } from '../../api/types'
+import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { RemoveButton } from '../../components/RemoveButton'
+import { downloadCsv, formatRecommendationsAsCsv } from '../../lib/export'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
 
@@ -34,6 +35,7 @@ export function FilterBar({
   selectedCount,
   selectableCount,
   onSelectAll,
+  exportRows,
 }: {
   filters: FeedFilters
   facetTags: Facet[]
@@ -49,6 +51,10 @@ export function FilterBar({
   selectedCount: number
   selectableCount: number
   onSelectAll: () => void
+  /** The currently-loaded, currently-filtered rows — exactly what's on
+   *  screen (server-side filters + the quick-filter narrowing), not a
+   *  separate fetch of the whole result set. */
+  exportRows: Recommendation[]
 }) {
   const allSelected = selectableCount > 0 && selectedCount >= selectableCount
   return (
@@ -116,6 +122,17 @@ export function FilterBar({
             {allSelected ? '✕ Deselect all' : '☑ Select all loaded'}
           </button>
         )}
+        <button
+          type="button"
+          className="btn ghost"
+          disabled={exportRows.length === 0}
+          onClick={() => {
+            const csv = formatRecommendationsAsCsv(exportRows)
+            downloadCsv(`bandcamp-feed-${new Date().toISOString().slice(0, 10)}.csv`, csv)
+          }}
+        >
+          ⇩ Export CSV
+        </button>
         <button
           type="button"
           className={`btn ghost${panel === 'liked' ? ' on' : ''}`}

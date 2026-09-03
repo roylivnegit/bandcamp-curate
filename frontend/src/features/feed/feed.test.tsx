@@ -1789,6 +1789,67 @@ describe('scroll-to-top button', () => {
   })
 })
 
+describe('export feed as CSV', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('is disabled with nothing loaded, then downloads the loaded rows via a Blob URL', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 0 }],
+      ['/api/recommendations', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    expect(await screen.findByRole('button', { name: /Export CSV/ })).toBeDisabled()
+  })
+
+  it('downloads the currently-loaded rows as a CSV via a Blob URL', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:mock')
+    const revokeObjectURL = vi.fn()
+    URL.createObjectURL = createObjectURL
+    URL.revokeObjectURL = revokeObjectURL
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      const button = await screen.findByRole('button', { name: /Export CSV/ })
+      expect(button).not.toBeDisabled()
+      fireEvent.click(button)
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1)
+      const blob = createObjectURL.mock.calls[0]?.[0]
+      if (!blob) throw new Error('createObjectURL was not called with a Blob')
+      expect(blob.type).toContain('text/csv')
+      expect(await blob.text()).toContain('Eyes of Infinity')
+      expect(click).toHaveBeenCalledTimes(1)
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL
+      URL.revokeObjectURL = originalRevokeObjectURL
+      click.mockRestore()
+    }
+  })
+})
+
 describe('command palette', () => {
   beforeEach(() => {
     localStorage.clear()
