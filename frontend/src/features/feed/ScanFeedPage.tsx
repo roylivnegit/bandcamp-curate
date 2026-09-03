@@ -514,14 +514,14 @@ export function ScanFeedPage() {
   )
 
   const block = useCallback(
-    async (rec: Recommendation) => {
+    async (rec: Recommendation, expiresAt?: string | null) => {
       const key = keyOf(rec)
       if (rec.band_id === null || inFlight.current.has(key)) return
       inFlight.current.add(key)
       markBusy(key, 'block')
       retire(rec, 'block')
       try {
-        await api.block(rec.band_id)
+        await api.block(rec.band_id, expiresAt)
         await Promise.all([loadBlocked(), loadFacets()])
       } catch (err) {
         cancelRetire(rec)
@@ -529,7 +529,7 @@ export function ScanFeedPage() {
           err instanceof Error ? err.message : 'Could not block that artist.',
           'alert',
           TOAST_DURATION_MS,
-          { label: 'Retry', onClick: () => void block(rec) },
+          { label: 'Retry', onClick: () => void block(rec, expiresAt) },
         )
       } finally {
         inFlight.current.delete(key)

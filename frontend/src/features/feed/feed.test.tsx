@@ -500,6 +500,40 @@ describe('scan feed', () => {
       }),
     ).toBe(false)
   })
+
+  it('blocking via the duration picker sends the computed expires_at and blocks the card', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2026-09-03T00:00:00.000Z'))
+    const fetchMock = mockFetch(feedRoutes())
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'block for… ▾' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 day' }))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+    expect(screen.queryByText('Eyes of Infinity')).not.toBeInTheDocument()
+
+    const blockCall = fetchMock.mock.calls.find(([u, init]) => {
+      const url = String(u)
+      return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+    })
+    expect(blockCall).toBeDefined()
+    const body = JSON.parse(String(blockCall?.[1]?.body))
+    expect(body.band_id).toBe(20)
+    // `shouldAdvanceTime` lets real awaits (the initial fetches) nudge the
+    // fake clock forward a few ms before the click, so assert "about a day
+    // from the set start time" rather than an exact-to-the-millisecond value.
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000
+    const delta = new Date(body.expires_at).getTime() - new Date('2026-09-03T00:00:00.000Z').getTime()
+    expect(delta).toBeGreaterThanOrEqual(ONE_DAY_MS)
+    expect(delta).toBeLessThan(ONE_DAY_MS + 5000)
+
+    vi.useRealTimers()
+  })
 })
 
 describe('delete scan', () => {

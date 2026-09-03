@@ -2,6 +2,8 @@ import { memo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
+import { Dropdown } from '../../components/Dropdown'
+import { BLOCK_DURATIONS } from '../../config'
 import { bandcampHandle, plural } from '../../lib/format'
 import { isVisited, markVisited } from '../../lib/visited'
 
@@ -45,7 +47,10 @@ export const FeedCard = memo(function FeedCard({
   selectMode: boolean
   selected: boolean
   onLike: (rec: Recommendation) => void
-  onBlock: (rec: Recommendation) => void
+  /** `expiresAt` (an ISO string), when passed, makes this a temporary block —
+   *  see the "block for… ▾" picker below. Omitted, it's the existing
+   *  permanent block. */
+  onBlock: (rec: Recommendation, expiresAt?: string | null) => void
   onTagClick: (tag: string) => void
   onBandClick: (rec: Recommendation) => void
   onToggleSelect: (rec: Recommendation) => void
@@ -157,6 +162,27 @@ export const FeedCard = memo(function FeedCard({
             >
               {busyAction === 'block' ? 'Blocking…' : '⊘ block'}
             </button>
+          )}
+          {rec.band_id !== null && !busy && (
+            <Dropdown label="block for… ▾" width={140}>
+              {(close) => (
+                <div>
+                  {BLOCK_DURATIONS.map((d) => (
+                    <button
+                      key={d.label}
+                      type="button"
+                      className="ddrow"
+                      onClick={() => {
+                        onBlock(rec, new Date(Date.now() + d.ms).toISOString())
+                        close()
+                      }}
+                    >
+                      <span className="nm">{d.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Dropdown>
           )}
           {rec.url && (
             <a
