@@ -153,9 +153,29 @@ feed of tracks you don't own yet. Full build plan: `~/.claude/plans/i-want-to-cr
     `run_scan`'s own-collection branch is NOT frontier-backed, so it drains visits in a loop
     (`MAX_COLLECTION_VISITS`) — your wishlist/follows must be complete or curation under-excludes.
 - **Fan-out is bounded by depth** (`crawl_frontier.depth`, seed=0; `crawl_max_depth` config,
-  default 3) **and by a request budget** (`crawl_max_requests`, default 100 = cumulative successful
-  provider fetches; enforced in `runner.run_until_empty` + the ARQ `crawl_next` chain). Ingest
-  still happens at the boundary, only outward enqueue stops.
+  default 3) **and by a request budget** (`crawl_max_requests`, default 5000 = cumulative successful
+  provider fetches, all-time, global across every user and scan; enforced in
+  `runner.run_until_empty` + the ARQ `crawl_next` chain). A **per-user** cap now also exists
+  (`crawl_max_requests_per_user`) but defaults to `None` (unbounded) — see "Immediate next steps"
+  below for how to turn it on. Ingest still happens at the boundary, only outward enqueue stops.
+  - **What each depth means, in plain terms:** depth 0 is your own collection. Depth 1 is an album
+    or track *you* own — `crawl_album`/`crawl_track` fetch its page (ingesting its tags) and enqueue
+    its supporters' collections at depth 2. Depth 2 is a taste-neighbour's collection —
+    `crawl_fan_collection` enqueues *their* owned albums at depth 3. Depth 3 is one of those
+    albums — `crawl_album` runs again, ingesting **its** tags and full supporter list, but with
+    `max_depth=3` the `depth < max_depth` check (`_within_depth`) is false, so it does **not**
+    enqueue depth-3's supporters onward. Fan-out stops there by construction: depth 3 is tag/
+    supporter *enrichment* of a neighbour's collection, not a further hop into the social graph.
+    (Track supporters and standalone-track fan-out follow the identical shape via `crawl_track`.)
+  - **The seed fan is skipped as their own supporter** (`seed_fan_id`/`seed_url` params on
+    `crawl_album`/`crawl_track`, plus the replay path in `replay.py`; `CrawlOutcome.skipped_self`).
+    You are a real supporter of every album/track you own, so you'd otherwise show up in that
+    album's own supporters list at depth 1→2 and get (re-)enqueued as if you were a taste-neighbour
+    of yourself — wasting a visit re-reading data the depth-0 crawl already has. Matched by
+    `fan_id` when the structured supporters blob has one, falling back to URL equality for the
+    DOM-anchor path (no `fan_id` there). Fixed 2026-09-02 — previously neither the live crawl nor
+    the graph-reuse replay path excluded the seed, so a popular self-owned album could requeue
+    your own collection every time it (or an equivalent album) got crawled.
 - **Fan-out is also pruned by your follows** (`service.FOLLOWED_FILTER_MIN_DEPTH = 2`): from depth 2
   down (a neighbour's collection), an owned item whose artist/label you already follow is **ingested
   but not detail-crawled** — the ownership edge is the co-ownership signal, while its page (tags,
