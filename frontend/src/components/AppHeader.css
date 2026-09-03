@@ -19,18 +19,7 @@
   align-items: center;
   gap: var(--s-3);
   text-decoration: none;
-}
-
-/* A stack of crate dividers, drawn rather than an icon font. */
-.brand-mark {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  border-radius: 4px;
-  background:
-    linear-gradient(var(--accent), var(--accent)) 0 3px / 100% 2px no-repeat,
-    linear-gradient(var(--violet), var(--violet)) 0 8px / 100% 2px no-repeat,
-    linear-gradient(var(--accent-deep), var(--accent-deep)) 0 13px / 100% 2px no-repeat;
+  min-width: 0;
 }
 
 .brand-name {
@@ -39,10 +28,28 @@
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.brand-hl {
-  color: var(--accent);
+/* The header's real, working nav menu (a Dropdown) — three clean bars, not
+   the old brand mark that looked like a menu trigger but only ever linked
+   home. */
+.menu-icon {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 18px;
+  height: 14px;
+}
+
+.menu-icon span {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
 }
 
 .whoami {
@@ -57,4 +64,18 @@
 .signout {
   padding: 7px 13px;
   font-size: var(--fs-tiny);
+}
+
+/* "bandcamp music finder" is a lot longer than the old wordmark — without
+   this it truncates behind the username pill and Sign out button on a phone.
+   The username is decorative here (Sign out alone is enough to act on), so
+   it's the one that gives way first. */
+@media (max-width: 480px) {
+  .whoami {
+    display: none;
+  }
+
+  .brand-name {
+    font-size: var(--fs-sm);
+  }
 }

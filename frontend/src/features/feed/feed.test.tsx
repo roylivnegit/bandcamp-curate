@@ -761,15 +761,15 @@ describe('document title', () => {
     renderApp('/scans')
 
     await screen.findByRole('heading', { name: 'Your scans' })
-    expect(document.title).toBe('Scans · crate digger')
+    expect(document.title).toBe('Scans · bandcamp music finder')
 
     await user.click(await screen.findByRole('link', { name: /My collection/ }))
     await screen.findByRole('heading', { name: /My collection/ })
-    expect(document.title).toBe('My collection · crate digger')
+    expect(document.title).toBe('My collection · bandcamp music finder')
 
     await user.click(screen.getByRole('link', { name: /Scans/ }))
     await screen.findByRole('heading', { name: 'Your scans' })
-    expect(document.title).toBe('Scans · crate digger')
+    expect(document.title).toBe('Scans · bandcamp music finder')
   })
 
   it('marks the tab title when a scan finishes while the tab is hidden, and clears it on refocus', async () => {
@@ -794,19 +794,19 @@ describe('document title', () => {
 
     renderApp('/scans/1')
     await screen.findByText('Eyes of Infinity')
-    expect(document.title).toBe('My collection · crate digger')
+    expect(document.title).toBe('My collection · bandcamp music finder')
 
     state.status = 'done'
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
     })
-    expect(document.title).toBe('✓ My collection · crate digger')
+    expect(document.title).toBe('✓ My collection · bandcamp music finder')
 
     await act(async () => {
       Object.defineProperty(document, 'hidden', { configurable: true, value: false })
       document.dispatchEvent(new Event('visibilitychange'))
     })
-    expect(document.title).toBe('My collection · crate digger')
+    expect(document.title).toBe('My collection · bandcamp music finder')
 
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
     vi.useRealTimers()

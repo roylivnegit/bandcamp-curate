@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { APP_NAME } from '../config'
 import './auth.css'
 
 /** The shared frame for login/signup: a centred card under the wordmark. */
@@ -18,10 +19,7 @@ export function AuthLayout({
     <div className="authpage">
       <div className="authbox">
         <div className="authbrand">
-          <span className="brand-mark" aria-hidden="true" />
-          <span className="authbrand-name">
-            crate <span className="brand-hl">digger</span>
-          </span>
+          <span className="authbrand-name">{APP_NAME}</span>
         </div>
         <h1 className="authtitle">{title}</h1>
         <p className="authblurb">{blurb}</p>
