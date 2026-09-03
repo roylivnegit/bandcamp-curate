@@ -1702,13 +1702,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   chunks pick up the shared component without collapsing into the eager bundle). PR: see git
   history.
 
-- [ ] **Caps Lock warning on password fields.** *(proposed by the hourly routine, 2026-09-03,
+- [x] **Caps Lock warning on password fields.** *(proposed by the hourly routine, 2026-09-03,
   Architect+QA-approved — "sound and testable, small — ship it, with a caveat: `getModifierState`
   can't detect Caps Lock already on before the field is focused/typed in — a known non-blocking
   API limitation, not a defect to fix")* A sign-in failing because Caps Lock silently mangled the
-  password gives no signal today. Add an `onKeyUp` handler on the password input(s) using
-  `event.getModifierState('CapsLock')` to show/hide an inline `role="status"` warning next to the
-  field, mirroring the existing hint/error `aria-describedby` pattern already in `SignupPage.tsx`.
-  Verify: RTL test dispatching a `keyup` event with a mocked `getModifierState` returning
-  true/false, asserting the warning node appears/disappears and `aria-describedby` points at it
-  when shown.
+  password gives no signal today.
+  Done: added directly to `components/PasswordInput.tsx` (built for the show/hide-toggle item
+  just above) rather than duplicating an `onKeyUp` handler in both `LoginPage.tsx` and
+  `SignupPage.tsx` — both already route their password field through it. `onKeyDown`/`onKeyUp`
+  both call `event.getModifierState('CapsLock')` (`onKeyDown` too, so the warning appears on the
+  very keystroke that turns it on, not one keystroke later); a `role="status"` `<p className=
+  "pwcaps">` renders next to the field while it's true, wired via `aria-describedby` on the input
+  — the same hint/error pattern `SignupPage.tsx`'s `fanUrlError` already uses. New `--warn` token
+  color (already used elsewhere for expiry/budget warnings), no new colors. The known
+  `getModifierState` limitation (can't see Caps Lock already on before the field is touched) is
+  left as-is per QA's caveat, not treated as a defect. Covered by 2 new tests in
+  `PasswordInput.test.tsx`: no warning by default; a `keydown` with `getModifierState` stubbed
+  `true` on the dispatched event (jsdom's `KeyboardEvent` constructor drops non-standard init
+  fields, so the stub has to be set on the event instance directly, not passed through
+  `fireEvent`'s init dict) shows the warning wired via `aria-describedby`, and a `keyup` with it
+  stubbed `false` hides it again. 259/259 frontend tests pass, tsc/lint/build clean (chunk split
+  intact). PR: see git history.

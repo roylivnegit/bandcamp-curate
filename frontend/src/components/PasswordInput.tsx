@@ -17,6 +17,15 @@ export function PasswordInput({
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
 }) {
   const [visible, setVisible] = useState(false)
+  const [capsLock, setCapsLock] = useState(false)
+  const capsLockId = `${id}-capslock`
+
+  // getModifierState only reflects Caps Lock once the user has pressed a key in this
+  // field -- it can't see a Caps Lock that was already on before the field was
+  // touched. A known limitation of the API, not a bug to work around.
+  function checkCapsLock(e: React.KeyboardEvent<HTMLInputElement>) {
+    setCapsLock(e.getModifierState('CapsLock'))
+  }
 
   return (
     <div className="pwfield">
@@ -27,6 +36,9 @@ export function PasswordInput({
         autoComplete={autoComplete}
         value={value}
         onChange={onChange}
+        onKeyUp={checkCapsLock}
+        onKeyDown={checkCapsLock}
+        aria-describedby={capsLock ? capsLockId : undefined}
       />
       <button
         type="button"
@@ -36,6 +48,11 @@ export function PasswordInput({
       >
         {visible ? 'Hide' : 'Show'}
       </button>
+      {capsLock && (
+        <p className="pwcaps" role="status" id={capsLockId}>
+          Caps Lock is on
+        </p>
+      )}
     </div>
   )
 }
