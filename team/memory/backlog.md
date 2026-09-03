@@ -1602,3 +1602,32 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   enabled cooldown, then an immediate valid call still gets `200`), confirmed to fail against the
   old ordering (`429`) before the fix. 249/249 backend tests pass, ruff clean, both bugs from this
   round.
+
+- [ ] **Announce the updated match count after "Load more."** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved: "sound, testable, small. Ship it.")* `ScanFeedPage.tsx`'s
+  `.countline` paragraph ("N recs match your filters") updates visibly when "Load more" resolves,
+  but it's a plain `<p>` with no `aria-live`, so a screen-reader user gets no confirmation that
+  more rows actually loaded. Add `role="status" aria-live="polite"` to it. Verify: RTL test
+  asserting the countline has `role="status"` and its text reflects the new count after
+  `loadMore` resolves — no visual check needed.
+
+- [ ] **"Select all loaded" for bulk-select.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "testable if confined to a pure state-derivation function; must read
+  from the already-filtered `visibleRows`, not raw data")* Bulk-select only toggles one card at a
+  time, so clearing a genre's worth of recs from a large scan still means clicking every checkbox.
+  Add a "Select all loaded" control (select mode only) that sets the selection to every currently
+  *visible* row's key (respecting the active quick-filter/genre filters, not the full server-side
+  result set), toggling back to none on a second click. Verify: unit test — with N visible rows
+  and select mode on, one click makes the selection size equal `visibleRows.length` and every
+  card show `selected=true`; a second click clears it back to zero.
+
+- [ ] **Tab-title status marker for a finished scan.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with a caveat: "sound in isolation but riskiest of the three —
+  keep the effect isolated to one small hook so the test doesn't need the whole ScanFeedPage tree,
+  and watch for `document.title`/`document.hidden` mock cleanup polluting other test suites")* A
+  scan can run for a while (crawl on the operator's Mac); tabbing away gives no signal it finished
+  — `useDocumentTitle` only ever shows the scan's name, never its status. Prefix the title (e.g.
+  `"✓ "`) when a poll observes a `running`→`done` transition while the tab is hidden/unfocused,
+  clearing the prefix on refocus. Verify: a hook-level unit test (not a full-page render) driving
+  a mocked status transition plus `document.hidden`, asserting the title gains the prefix on the
+  transition and loses it on simulated refocus.

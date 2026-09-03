@@ -134,6 +134,27 @@ describe('scan feed', () => {
     expect(await screen.findByRole('button', { name: 'Load more' })).toBeInTheDocument()
   })
 
+  it('announces the match count to screen readers, and it updates as the count changes', async () => {
+    // The countline text visibly changes whenever `total` does (e.g. a
+    // like/block decrementing it) but was a plain <p> with no aria-live, so a
+    // screen-reader user got no confirmation anything happened.
+    mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    const countline = screen.getByRole('status')
+    expect(countline).toHaveTextContent('1 results')
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    expect(countline).toHaveTextContent('0 results')
+  })
+
   it('shows skeleton recommendation cards while the first page loads', async () => {
     let releaseRecs = () => {}
     const recsHeld = new Promise<void>((resolve) => {
@@ -1522,6 +1543,12 @@ describe('auto-prune stale tag filters', () => {
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 
+  // The feed's countline (`.countline`) also carries `role="status"` now (see
+  // the "announces the match count" test above), so a bare `*ByRole('status')`
+  // no longer uniquely identifies the prune toast — narrow to the toast's own
+  // class, same as `ToastStack.tsx` renders it.
+  const toastStatus = () => screen.queryAllByRole('status').find((el) => el.classList.contains('toast'))
+
   /** A running scan whose recommendation count and facets tags are both
    *  controlled by the two out-of-band flags, so a test can change what the
    *  *next* poll turns up (mimicking a recompute that dropped a genre from
@@ -1564,7 +1591,8 @@ describe('auto-prune stale tag filters', () => {
     })
 
     await waitFor(() => expect(currentLocation().search).not.toContain('tag=psybient'))
-    expect(await screen.findByRole('status')).toHaveTextContent(/psybient/)
+    await waitFor(() => expect(toastStatus()).toBeTruthy())
+    expect(toastStatus()).toHaveTextContent(/psybient/)
   })
 
   it('leaves an exclude-mode tag filter alone even once it is absent from facets', async () => {
@@ -1585,7 +1613,7 @@ describe('auto-prune stale tag filters', () => {
     // An excluded value that's already absent is a no-op, not a stuck filter —
     // nothing to auto-clear, so the param and no toast should appear.
     expect(currentLocation().search).toContain('exclude_tag=psybient')
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(toastStatus()).toBeUndefined()
   })
 
   it('keeps a still-valid tag filter untouched across a recompute', async () => {
@@ -1603,7 +1631,7 @@ describe('auto-prune stale tag filters', () => {
 
     await waitFor(() => expect(screen.getByText(fakeRec().title!)).toBeInTheDocument())
     expect(currentLocation().search).toContain('tag=psybient')
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(toastStatus()).toBeUndefined()
   })
 })
 
