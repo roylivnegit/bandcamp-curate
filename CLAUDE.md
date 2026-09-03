@@ -357,8 +357,11 @@ stop postgresql@16 redis` — still installed but off, so it won't fight compose
    collection/wishlist/follows pagination and `crawl_album`/`crawl_track`'s supporters pagination
    now pass their `scan_id` through, so the per-user budget counts collection-heavy scans (the
    majority of a scan's real cost) correctly instead of undercounting them.
-3. Retire or relabel the legacy `seed_crawl`/`crawl_next` ARQ chain and `scripts/crawl.py`, which
-   still key off the single global `BANDCAMP_FAN_URL` (documented as operator-only for now).
+3. ~~Retire or relabel the legacy `seed_crawl`/`crawl_next` ARQ chain...~~ **Done.** New
+   `Settings.enable_operator_crawl` (default `False`); `app.worker.seed_crawl` raises and
+   `scripts/crawl.py`'s `seed`/`run` commands refuse (exit 2) unless it's set, so the chain that
+   keys off the single global `BANDCAMP_FAN_URL` can no longer run by accident. `crawl_next` and
+   the per-user `run_scan` path are untouched.
 
 ## Open decision — RESOLVED (2026-07-24)
 Earlier flagged: local Python parsing vs Nimble server-side parsing, with the v2 parser def
