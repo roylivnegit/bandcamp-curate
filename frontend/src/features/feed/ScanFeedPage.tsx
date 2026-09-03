@@ -20,6 +20,7 @@ import { FilterBar } from './FilterBar'
 import { BlockedPanel, LikedPanel } from './SidePanels'
 import { useFeedFilters } from './useFeedFilters'
 import { useResumeScroll } from './useResumeScroll'
+import { useUpdatedSinceLastVisit } from './useUpdatedSinceLastVisit'
 import './feed.css'
 
 const LIMIT = FEED_PAGE_SIZE
@@ -173,6 +174,11 @@ export function ScanFeedPage() {
    * screen, not just `showFeed`, so it never fires against an empty page. */
   const scrollStorageKey = scanId === null ? null : `crate-digger.feedScroll:${scanId}${location.search}`
   useResumeScroll(scrollStorageKey, showFeed && rows.length > 0)
+
+  const { updated: updatedSinceVisit, dismiss: dismissUpdatedSinceVisit } = useUpdatedSinceLastVisit(
+    scanId,
+    generation,
+  )
 
   // ── scan metadata, polled while the crawl is still in flight ──────────────
   const loadScan = useCallback(async () => {
@@ -882,6 +888,21 @@ export function ScanFeedPage() {
           {error}
         </p>
       )}
+
+            {updatedSinceVisit && (
+              <p className="banner reflow" role="status">
+                <span aria-hidden="true">◎</span>
+                <span>This feed has changed since your last visit.</span>
+                <button
+                  type="button"
+                  className="rm"
+                  aria-label="Dismiss"
+                  onClick={dismissUpdatedSinceVisit}
+                >
+                  ✕
+                </button>
+              </p>
+            )}
 
             {listUpdated && (
               <p className="banner reflow" role="status">

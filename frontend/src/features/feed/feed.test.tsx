@@ -1595,6 +1595,75 @@ describe('feed reflow notice', () => {
   })
 })
 
+describe('updated-since-last-visit notice', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+  function mockScanAtGeneration(generation: number) {
+    return vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1')) {
+        return json({ ...fakeScan, recompute_generation: generation, seeds: [] })
+      }
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('shows nothing on a scan’s first-ever visit, with no prior generation on record', async () => {
+    vi.stubGlobal('fetch', mockScanAtGeneration(1))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(screen.queryByText(/changed since your last visit/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the notice when the scan moved on since the recorded last visit', async () => {
+    localStorage.setItem('crate-digger.lastSeenGeneration:1', '1')
+    vi.stubGlobal('fetch', mockScanAtGeneration(2))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(/changed since your last visit/i)).toBeInTheDocument()
+    // Dismissing just hides the notice — it doesn't re-trigger a fetch.
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText(/changed since your last visit/i)).not.toBeInTheDocument()
+  })
+
+  it('shows nothing when the recorded last visit already matches the current generation', async () => {
+    localStorage.setItem('crate-digger.lastSeenGeneration:1', '2')
+    vi.stubGlobal('fetch', mockScanAtGeneration(2))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(screen.queryByText(/changed since your last visit/i)).not.toBeInTheDocument()
+  })
+
+  it('records the current generation as seen, so a same-session reload would not repeat the notice', async () => {
+    localStorage.setItem('crate-digger.lastSeenGeneration:1', '1')
+    vi.stubGlobal('fetch', mockScanAtGeneration(2))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(/changed since your last visit/i)).toBeInTheDocument()
+    expect(localStorage.getItem('crate-digger.lastSeenGeneration:1')).toBe('2')
+  })
+})
+
 describe('auto-prune stale tag filters', () => {
   beforeEach(() => {
     localStorage.clear()
