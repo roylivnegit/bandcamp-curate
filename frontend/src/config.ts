@@ -80,3 +80,9 @@ export const BULK_CONFIRM_THRESHOLD = 5
 /** How long the armed "Block N?" confirm state stays up before reverting on
  *  its own, in ms — same window/reasoning as `DeleteScanButton`'s. */
 export const BULK_CONFIRM_WINDOW_MS = 4000
+
+/** How many rows `LikedPanel`/`BlockedPanel` render before requiring a "Show
+ *  more" click. Both lists are per-user and grow forever with no expiry (or,
+ *  for blocks, a long one) — without a cap the side panel just keeps
+ *  growing. */
+export const SIDEPANEL_PAGE_SIZE = 20
