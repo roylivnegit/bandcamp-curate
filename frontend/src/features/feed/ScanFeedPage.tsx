@@ -14,6 +14,7 @@ import { matchesQuery } from '../../lib/quickFilter'
 import { showToast } from '../../lib/toast'
 import { useDensity } from '../../lib/useDensity'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
+import { useScanFinishedMarker } from '../../lib/useScanFinishedMarker'
 import { EmptyState } from './EmptyState'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
@@ -76,7 +77,8 @@ export function ScanFeedPage() {
   }, [activeTags])
 
   const [scan, setScan] = useState<ScanDetail | null>(null)
-  useDocumentTitle(scan?.name)
+  const justFinished = useScanFinishedMarker(scan?.status)
+  useDocumentTitle(scan?.name ? (justFinished ? `✓ ${scan.name}` : scan.name) : scan?.name)
   const [rows, setRows] = useState<Recommendation[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [facetTags, setFacetTags] = useState<Facet[]>([])

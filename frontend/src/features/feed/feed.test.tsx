@@ -805,6 +805,46 @@ describe('document title', () => {
     await screen.findByRole('heading', { name: 'Your scans' })
     expect(document.title).toBe('Scans · crate digger')
   })
+
+  it('marks the tab title when a scan finishes while the tab is hidden, and clears it on refocus', async () => {
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    const state = { status: 'running' as 'running' | 'done' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, status: state.status, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    expect(document.title).toBe('My collection · crate digger')
+
+    state.status = 'done'
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+    expect(document.title).toBe('✓ My collection · crate digger')
+
+    await act(async () => {
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(document.title).toBe('My collection · crate digger')
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    vi.useRealTimers()
+  })
 })
 
 describe('skip to content', () => {
