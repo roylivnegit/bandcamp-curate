@@ -3,7 +3,6 @@ import type { KeyboardEvent, MouseEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
 import { bandcampHandle, plural } from '../../lib/format'
-import { isVisited, markVisited } from '../../lib/visited'
 
 /** `exiting` drives the evaporate animation the old UI had: a liked/blocked card
  *  dissolves upward instead of vanishing, so you can see what you just acted on.
@@ -57,11 +56,6 @@ export const FeedCard = memo(function FeedCard({
   const co = rec.reasons.co_owners ?? 0
   const handle = bandcampHandle(rec.url)
   const tags = rec.reasons.matched_tags ?? []
-  // `cardId` is already a stable per-item key (see ScanFeedPage's `cardIdOf`),
-  // so it doubles as the "seen" storage key with nothing extra to compute.
-  // Local state (not a prop) because clicking "Bandcamp ↗" only changes what
-  // this one card knows — nothing the parent tracks.
-  const [visited, setVisited] = useState(() => isVisited(cardId))
   // Some crawled items have no stored art_id yet (see api/types.ts), and a
   // URL that resolves fine at crawl time can still 404 later (Bandcamp CDN
   // churn) — either way, fall back to the plain score box rather than a
@@ -106,7 +100,6 @@ export const FeedCard = memo(function FeedCard({
       tabIndex={active ? 0 : -1}
       onKeyDown={onCardKeyDown}
       onClick={onCardClick}
-      data-visited={visited ? 'true' : undefined}
     >
       {selectMode && rec.band_id !== null && (
         <input
@@ -131,11 +124,6 @@ export const FeedCard = memo(function FeedCard({
           onError={() => setArtFailed(true)}
         />
       )}
-
-      <div className="score" title="Recommendation score">
-        <b className="num">{rec.score.toFixed(1)}</b>
-        <span>score</span>
-      </div>
 
       <div className="card-body">
         {/* h2: the page's h1 is the scan title, so h3 skipped a level. Styling
@@ -187,20 +175,10 @@ export const FeedCard = memo(function FeedCard({
             </button>
           )}
           {rec.url && (
-            <a
-              className="listen"
-              href={rec.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => {
-                markVisited(cardId)
-                setVisited(true)
-              }}
-            >
+            <a className="listen" href={rec.url} target="_blank" rel="noopener noreferrer">
               Bandcamp ↗
             </a>
           )}
-          {visited && <span className="seen-tag">seen</span>}
         </div>
       </div>
     </article>

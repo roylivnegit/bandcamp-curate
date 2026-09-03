@@ -7,11 +7,16 @@
   z-index: 40;
 }
 
+/* Not `.wrap` — that's centered to the content column's max-width, which
+   insets the menu button far from the real corner of the screen on a wide
+   monitor. The header is a top bar, not part of that column: it gets its
+   own small, fixed edge padding so the menu sits at the actual top-left. */
 .apphead-inner {
   display: flex;
   align-items: center;
   gap: var(--s-3);
   height: 58px;
+  padding: 0 var(--s-4);
 }
 
 .brand {

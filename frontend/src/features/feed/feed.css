@@ -431,37 +431,6 @@
   background: var(--surface-2);
 }
 
-.score {
-  flex: none;
-  width: 60px;
-  height: 60px;
-  border-radius: var(--r-lg);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-}
-
-.score b {
-  font-family: var(--mono);
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.score span {
-  font-family: var(--mono);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--faint);
-}
-
 .card-body {
   flex: 1;
   min-width: 0;
@@ -470,7 +439,7 @@
 .card-title {
   margin: 0;
   font-weight: 700;
-  font-size: var(--fs-base);
+  font-size: var(--fs-md);
   line-height: 1.35;
 }
 
@@ -589,6 +558,15 @@
   line-height: 1.3;
 }
 
+/* Feed-card actions specifically, not the compact rows in the Liked/Blocked
+   side panels (which keep the base `.act`/`.listen` size on purpose — a
+   denser list context). */
+.card-actions .act,
+.card-actions .listen {
+  padding: 8px 16px;
+  font-size: var(--fs-base);
+}
+
 .act:disabled {
   opacity: 0.45;
   cursor: default;
@@ -624,13 +602,6 @@
 .listen.sm {
   padding: 3px 9px;
   font-size: var(--fs-tiny);
-}
-
-.seen-tag {
-  color: var(--faint);
-  font-size: var(--fs-tiny);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 /* Liking/blocking a card evaporates it upward rather than snapping it out, so
@@ -803,14 +774,9 @@
     padding: var(--s-3);
   }
 
-  .card-art,
-  .score {
+  .card-art {
     width: 44px;
     height: 44px;
-  }
-
-  .score b {
-    font-size: var(--fs-base);
   }
 
   .card-actions {

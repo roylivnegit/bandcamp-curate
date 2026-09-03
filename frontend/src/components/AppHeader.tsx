@@ -10,7 +10,7 @@ export function AppHeader() {
 
   return (
     <header className="apphead">
-      <div className="wrap apphead-inner">
+      <div className="apphead-inner">
         <Dropdown
           label={
             <>

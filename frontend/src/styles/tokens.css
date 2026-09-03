@@ -27,7 +27,7 @@
   --muted: #99a3b5;
   /* Was #667085 (3.2:1-3.6:1 against --surface/--surface-2 — fails WCAG AA's
    * 4.5:1 for normal text, and --faint carries real text: `.via`'s seed-tag
-   * provenance, `.field-hint`, `.score span`, form placeholders). Same hue,
+   * provenance, `.field-hint`, form placeholders). Same hue,
    * lightened until it clears 4.5:1 on --surface-2 (the lightest background
    * it sits behind) — see contrast.test.ts. */
   --faint: #7e889c;

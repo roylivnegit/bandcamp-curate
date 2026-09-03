@@ -23,16 +23,16 @@ describe('contrastRatio', () => {
 
 describe('--faint token contrast', () => {
   // `--faint` carries real text, not just decoration: `.via`'s seed-tag
-  // provenance, `.field-hint`, `.score span`, `.eyebrow`/`.label`, and input
-  // placeholders. All of those sizes (9-13px) are far under WCAG's "large
-  // text" threshold (18.66px, or 14px bold), so the applicable minimum is
-  // 4.5:1 — not the 3:1 that would apply to large text or non-text UI
-  // components like icon glyphs.
+  // provenance, `.field-hint`, `.eyebrow`/`.label`, and input placeholders.
+  // All of those sizes (9-13px) are far under WCAG's "large text" threshold
+  // (18.66px, or 14px bold), so the applicable minimum is 4.5:1 — not the
+  // 3:1 that would apply to large text or non-text UI components like icon
+  // glyphs.
   const faint = token('faint')
 
   it('clears WCAG AA (4.5:1) against every surface it sits on as text', () => {
-    // --surface2 hosts `.score span` and `.input::placeholder`, and is the
-    // lightest background `--faint` text renders against — the binding case.
+    // --surface2 hosts `.input::placeholder`, and is the lightest background
+    // `--faint` text renders against — the binding case.
     expect(contrastRatio(faint, token('surface-2'))).toBeGreaterThanOrEqual(4.5)
     // --surface hosts `.via`, `.field-hint`, and `.scan-meta .sep`.
     expect(contrastRatio(faint, token('surface'))).toBeGreaterThanOrEqual(4.5)
