@@ -45,7 +45,7 @@ async def _seed(s: AsyncSession) -> User:
     await s.flush()
     a1 = Album(bandcamp_id=11, title="Owned", band_id=b1.id)
     a2 = Album(bandcamp_id=12, title="Recommend Me",
-               url="https://b2.bandcamp.com/album/x", band_id=b2.id)
+               url="https://b2.bandcamp.com/album/x", band_id=b2.id, art_id=99)
     a3 = Album(bandcamp_id=13, title="Followed", band_id=b3.id)
     t2 = Track(bandcamp_id=22, title="A Track", band_id=b4.id)  # own band → survives dedup
     s.add_all([a1, a2, a3, t2])
@@ -125,6 +125,7 @@ async def test_recommendations_feed(client: AsyncClient) -> None:
     top = rows[0]
     assert top["rank"] == 1 and top["reasons"]["co_owners"] == 1
     assert top["url"] == "https://b2.bandcamp.com/album/x"
+    assert top["art_id"] == 99
 
 
 async def test_recommendations_filter_and_paging(client: AsyncClient) -> None:

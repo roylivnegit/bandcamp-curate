@@ -73,6 +73,15 @@ async def test_ingest_populates_graph(session: AsyncSession) -> None:
     assert await _count(session, Album) >= 1
     assert await _count(session, Track) == 1
 
+    # A fan-collection item's own art_id (not the parent album's) lands on the
+    # item's row — parsed straight off Bandcamp's item_art_id, not derived.
+    owned_album = (
+        await session.execute(select(Album).where(Album.bandcamp_id == 4255072328))
+    ).scalar_one()
+    assert owned_album.art_id == 435129856
+    owned_track = (await session.execute(select(Track))).scalar_one()
+    assert owned_track.art_id == 3864705594
+
 
 async def test_ingest_is_idempotent(session: AsyncSession) -> None:
     fc = parse_fan_page(FIXTURE.read_text())
@@ -158,6 +167,7 @@ async def test_ingest_album_populates_graph(session: AsyncSession) -> None:
     assert album.bandcamp_id == 4255072328
     assert album.title == "Panchito"
     assert album.band_id is not None
+    assert album.art_id == 435129856
 
 
 async def test_ingest_album_tags_band_and_tracks(session: AsyncSession) -> None:
@@ -242,6 +252,7 @@ async def test_ingest_track_page_populates_graph(session: AsyncSession) -> None:
     assert track.title == "Return Of The King (Original Mix)"
     assert track.band_id is not None
     assert track.album_id is not None
+    assert track.art_id == 3864705594
 
     album = (await session.execute(select(Album))).scalar_one()
     assert album.bandcamp_id == 1818018872
