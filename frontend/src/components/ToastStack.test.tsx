@@ -49,6 +49,29 @@ describe('ToastStack', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
+  it('renders an action button and runs it, dismissing the toast on click', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+    const onClick = vi.fn()
+
+    act(() => showToast('Could not save that like.', 'alert', TOAST_DURATION_MS, { label: 'Retry', onClick }))
+    const retry = screen.getByRole('button', { name: 'Retry' })
+
+    act(() => retry.click())
+
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('renders no action button when none is given', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() => showToast('Link copied'))
+
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  })
+
   it('stacks multiple toasts, each dismissible independently', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     render(<ToastStack />)

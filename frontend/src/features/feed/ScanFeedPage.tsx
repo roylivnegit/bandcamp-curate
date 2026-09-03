@@ -8,9 +8,10 @@ import { BulkActionBar } from '../../components/BulkActionBar'
 import { DeleteScanButton } from '../../components/DeleteScanButton'
 import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { ShortcutsHelp } from '../../components/ShortcutsHelp'
-import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
+import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, TOAST_DURATION_MS, UNDO_WINDOW_MS } from '../../config'
 import { count, plural } from '../../lib/format'
 import { matchesQuery } from '../../lib/quickFilter'
+import { showToast } from '../../lib/toast'
 import { useDensity } from '../../lib/useDensity'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { ColdStartPanel } from './ColdStartPanel'
@@ -475,7 +476,10 @@ export function ScanFeedPage() {
         await Promise.all([loadLiked(), loadFacets()])
       } catch (err) {
         cancelRetire(rec)
-        setError(err instanceof Error ? err.message : 'Could not save that like.')
+        showToast(err instanceof Error ? err.message : 'Could not save that like.', 'alert', TOAST_DURATION_MS, {
+          label: 'Retry',
+          onClick: () => void like(rec),
+        })
       } finally {
         inFlight.current.delete(key)
         markBusy(key, null)
@@ -496,7 +500,12 @@ export function ScanFeedPage() {
         await Promise.all([loadBlocked(), loadFacets()])
       } catch (err) {
         cancelRetire(rec)
-        setError(err instanceof Error ? err.message : 'Could not block that artist.')
+        showToast(
+          err instanceof Error ? err.message : 'Could not block that artist.',
+          'alert',
+          TOAST_DURATION_MS,
+          { label: 'Retry', onClick: () => void block(rec) },
+        )
       } finally {
         inFlight.current.delete(key)
         markBusy(key, null)
@@ -596,10 +605,15 @@ export function ScanFeedPage() {
    *  restores the card straight into local `rows` at the spot it was removed
    *  from. Deliberately does NOT call `loadFirstPage()` — refetching page 1 to
    *  bring back one card would reset pagination/scroll for every other row
-   *  already on screen. */
-  async function undoRetire() {
-    if (!undo) return
-    const { rec, kind, index } = undo
+   *  already on screen.
+   *
+   *  Takes an explicit `entry` (defaulting to the current `undo` state) so a
+   *  failure's "Retry" action can pass the same `{rec, kind, index}` back in
+   *  directly — by the time Retry is clicked, `undo` state has already been
+   *  cleared below, so reading it again would just see `null`. */
+  async function undoRetire(entry: typeof undo = undo) {
+    if (!entry) return
+    const { rec, kind, index } = entry
     clearUndoTimer()
     setUndo(null)
     try {
@@ -620,7 +634,10 @@ export function ScanFeedPage() {
       setTotal((t) => (t === null ? t : t + 1))
       await loadFacets()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not undo that.')
+      showToast(err instanceof Error ? err.message : 'Could not undo that.', 'alert', TOAST_DURATION_MS, {
+        label: 'Retry',
+        onClick: () => void undoRetire(entry),
+      })
     }
   }
 

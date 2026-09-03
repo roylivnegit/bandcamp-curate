@@ -3,9 +3,16 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CARD_EXIT_MS, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
+import { resetToastsForTests } from '../../lib/toast'
 import { currentLocation, fakeMe, fakeRec, fakeScan, mockFetch, renderApp } from '../../test/renderApp'
 
 const signedIn = () => localStorage.setItem('crate-digger.token', 'tok')
+
+// The toast queue (lib/toast.ts) is module-scope by design, so a toast raised
+// by one test (like/block/undoRetire failures now show one) would otherwise
+// leak into whichever test runs next in this file — same cross-test leakage
+// ToastStack.test.tsx and CopyLinkButton.test.tsx already guard against.
+beforeEach(() => resetToastsForTests())
 
 describe('scan list', () => {
   beforeEach(() => {
@@ -880,6 +887,50 @@ describe('optimistic like/block', () => {
       await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
     })
     expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+  })
+
+  it('offers a Retry action on the failure toast that re-sends the like', async () => {
+    let likeCalls = 0
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes') && method === 'POST') {
+          likeCalls += 1
+          return likeCalls === 1 ? json({}, 500) : json({})
+        }
+        if (url.includes('/api/likes')) return json([])
+        if (url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(likeCalls).toBe(1)
+    // The failed request restored the card; it hasn't retired yet.
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    expect(likeCalls).toBe(2)
+    // The retry succeeded, so this time the optimistic retire completes.
+    expect(screen.queryByText('Eyes of Infinity')).not.toBeInTheDocument()
   })
 
   it('reverts a failed optimistic block after the row was already removed, clearing the Undo it armed', async () => {
