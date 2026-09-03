@@ -1850,3 +1850,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   rows loaded; a click with one row calls `URL.createObjectURL` once with a `text/csv` Blob whose
   text contains the row, clicks the anchor, and revokes the URL). 255/255 frontend tests pass,
   tsc/lint/build clean (route chunk split intact). PR: see git history.
+
+- [x] **Cover art on feed cards.** *(found by the hourly routine, 2026-09-03, via direct code
+  audit — the migration `0014` docstring for `art_id`/`art_url` explicitly names this as its own
+  intended next step: "Building an actual image URL from the id is a one-line format string for a
+  future frontend-facing follow-up")* `GET /api/recommendations` has returned `art_url` per row
+  since `art_id` landed (#111/#109), but nothing in the frontend read it — `Recommendation` had no
+  `art_url` field and `FeedCard` rendered no `<img>` anywhere. A feed of bare score/title/band rows
+  reads as unfinished next to any card-based app with real cover thumbnails.
+  Done: `art_url: string | null` added to `Recommendation` (`api/types.ts`). `FeedCard.tsx` renders
+  a 60×60 (44×44 on mobile, matching `.score`'s existing responsive breakpoint) `.card-art`
+  thumbnail next to the score box when `rec.art_url` is present — same border/radius tokens as the
+  score box, no new visual direction. `alt=""` (decorative — the adjacent title/artist text already
+  identifies the item, so a real alt would be a redundant per-card screen-reader announcement); a
+  failed load (missing `art_id`, a stale/404ing CDN URL) falls back to no image via `onError`,
+  never a broken-image icon. Covered by 3 new tests in `FeedCard.test.tsx`: no image without
+  `art_url`; an image with the right `src`/empty `alt` when present; `onError` removes it. 258/258
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
