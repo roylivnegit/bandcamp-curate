@@ -1222,9 +1222,26 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   intact — `Dropdown` lands in the shared chunk used by both lazy routes, unchanged by this).
   PR: see git history.
 
-(The "rapid likes/blocks can pile up an unbounded toast stack" proposal from this same
-Product/Architect+QA round is being implemented in parallel on a separate branch/PR this run —
-see that PR rather than a duplicate entry here.)
+- [x] **Rapid likes/blocks can pile up an unbounded toast stack.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved)* `showToast` (`lib/toast.ts`) has no cap —
+  repeated clicks or a batch bulk-block finishing queues one toast per action with no upper
+  bound. Cap the queue (e.g. 4), evicting the oldest non-action toast first when a new one
+  arrives (never evict one with a pending `action`, since that'd silently drop an undo). Verify:
+  unit test — call `showToast` 6 times, assert the queue never exceeds the cap and the earliest
+  are gone; a second case pushes an action-toast then 4 plain ones and asserts the action-toast
+  survives.
+  Done exactly as proposed: new `TOAST_STACK_CAP` (4) in `config.ts`. `showToast` now runs every
+  new queue through `evictOverflow()` before storing it — a `while` loop that, as long as the
+  queue is over the cap, drops the oldest toast with no `action` (`findIndex((t) => !t.action)`);
+  if every current toast has a pending action, the loop breaks and the queue is left over cap
+  rather than silently dropping one of them (an edge case rare enough not to need its own
+  policy, per the proposal's own caveat). New `lib/toast.test.ts` — pure logic tests against the
+  module's exported `showToast`/`useToasts`/`resetToastsForTests` (via `renderHook`, no full
+  component render needed): pushing 6 plain toasts leaves exactly the 4 most recent; pushing one
+  action-toast followed by 4 plain ones keeps the action-toast and evicts only from the plain
+  ones. 182/182 frontend tests pass (180 + 2 new), tsc/lint/build clean (no bundle-size concern —
+  `lib/toast.ts` is already in the eagerly-loaded shared chunk via `ToastStack`). PR: see git
+  history.
 
 - [ ] **Signup's Bandcamp URL field has no format feedback until the server rejects it.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)* `SignupPage`'s "Your
