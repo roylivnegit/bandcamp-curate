@@ -234,6 +234,37 @@ describe('scan feed', () => {
     expect(await screen.findByText(/no bandcamp_fan_url set/)).toBeInTheDocument()
   })
 
+  it('collapses the secondary filter controls behind a toggle, off by default', async () => {
+    // Actually hiding `#filterbar-more` is a mobile-only CSS media query
+    // (jsdom doesn't evaluate those, so it isn't meaningfully testable here)
+    // — what IS real component behavior, and what this covers, is the
+    // collapse/expand state itself and which controls it gates.
+    mockFetch(feedRoutes())
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+    await screen.findByText('Eyes of Infinity')
+
+    const toggle = screen.getByRole('button', { name: '▾ More filters' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Always-visible controls are direct children of `.controls`, not gated.
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Filter loaded cards (/)')).toBeInTheDocument()
+    // Gated behind the toggle: present in the DOM (desktop shows them via
+    // `display: contents`, unaffected by this state) but the wrapper isn't
+    // marked open yet.
+    const more = document.getElementById('filterbar-more')
+    expect(more).not.toHaveClass('open')
+    expect(screen.getByRole('button', { name: /Sort ·/ })).toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(screen.getByRole('button', { name: '▲ Fewer filters' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(more).toHaveClass('open')
+  })
+
   it('adds an include pill when a genre chip on a card is clicked', async () => {
     mockFetch(feedRoutes())
     renderApp('/scans/1')

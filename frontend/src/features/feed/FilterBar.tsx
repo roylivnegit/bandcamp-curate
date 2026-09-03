@@ -57,6 +57,12 @@ export function FilterBar({
   exportRows: Recommendation[]
 }) {
   const allSelected = selectableCount > 0 && selectedCount >= selectableCount
+  // Mobile only (see feed.css) — everything below the search box collapses
+  // behind this by default there, since nine full-width, one-per-row
+  // controls ate most of a phone screen before any results were on it.
+  // Irrelevant at desktop widths: `.controls-more` is always visible there
+  // regardless of this state, and the toggle button itself is hidden.
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false)
   return (
     <div className="filterbar">
       <div className="controls">
@@ -83,70 +89,82 @@ export function FilterBar({
           onChange={(e) => onQuickQueryChange(e.target.value)}
         />
 
-        <Dropdown label={`Sort · ${SORTS[filters.sort]} ▾`} width={210}>
-          {(close) => (
-            <div>
-              {(Object.keys(SORTS) as SortKey[]).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={`ddrow${filters.sort === k ? ' sel' : ''}`}
-                  onClick={() => {
-                    filters.setSort(k)
-                    close()
-                  }}
-                >
-                  <span className="tick">✓</span>
-                  <span className="nm">{SORTS[k]}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </Dropdown>
-
-        <GenreDropdown filters={filters} facetTags={facetTags} />
-        <ContainsDropdown filters={filters} />
-
-        <div className="spacer" />
-
         <button
           type="button"
-          className={`btn ghost${selectMode ? ' on' : ''}`}
-          aria-pressed={selectMode}
-          onClick={onToggleSelectMode}
+          className={`btn ghost more-toggle${mobileMoreOpen ? ' on' : ''}`}
+          aria-expanded={mobileMoreOpen}
+          aria-controls="filterbar-more"
+          onClick={() => setMobileMoreOpen((o) => !o)}
         >
-          {selectMode ? '✕ Cancel select' : '☑ Select'}
+          {mobileMoreOpen ? '▲ Fewer filters' : '▾ More filters'}
         </button>
-        {selectMode && selectableCount > 0 && (
-          <button type="button" className="btn ghost" onClick={onSelectAll}>
-            {allSelected ? '✕ Deselect all' : '☑ Select all loaded'}
+
+        <div id="filterbar-more" className={`controls-more${mobileMoreOpen ? ' open' : ''}`}>
+          <Dropdown label={`Sort · ${SORTS[filters.sort]} ▾`} width={210}>
+            {(close) => (
+              <div>
+                {(Object.keys(SORTS) as SortKey[]).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`ddrow${filters.sort === k ? ' sel' : ''}`}
+                    onClick={() => {
+                      filters.setSort(k)
+                      close()
+                    }}
+                  >
+                    <span className="tick">✓</span>
+                    <span className="nm">{SORTS[k]}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Dropdown>
+
+          <GenreDropdown filters={filters} facetTags={facetTags} />
+          <ContainsDropdown filters={filters} />
+
+          <div className="spacer" />
+
+          <button
+            type="button"
+            className={`btn ghost${selectMode ? ' on' : ''}`}
+            aria-pressed={selectMode}
+            onClick={onToggleSelectMode}
+          >
+            {selectMode ? '✕ Cancel select' : '☑ Select'}
           </button>
-        )}
-        <button
-          type="button"
-          className="btn ghost"
-          disabled={exportRows.length === 0}
-          onClick={() => {
-            const csv = formatRecommendationsAsCsv(exportRows)
-            downloadCsv(`bandcamp-feed-${new Date().toISOString().slice(0, 10)}.csv`, csv)
-          }}
-        >
-          ⇩ Export CSV
-        </button>
-        <button
-          type="button"
-          className={`btn ghost${panel === 'liked' ? ' on' : ''}`}
-          onClick={() => onTogglePanel('liked')}
-        >
-          ♥ Liked <span className="num">({likedCount})</span>
-        </button>
-        <button
-          type="button"
-          className={`btn ghost${panel === 'blocked' ? ' on' : ''}`}
-          onClick={() => onTogglePanel('blocked')}
-        >
-          Blocked <span className="num">({blockedCount})</span>
-        </button>
+          {selectMode && selectableCount > 0 && (
+            <button type="button" className="btn ghost" onClick={onSelectAll}>
+              {allSelected ? '✕ Deselect all' : '☑ Select all loaded'}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={exportRows.length === 0}
+            onClick={() => {
+              const csv = formatRecommendationsAsCsv(exportRows)
+              downloadCsv(`bandcamp-feed-${new Date().toISOString().slice(0, 10)}.csv`, csv)
+            }}
+          >
+            ⇩ Export CSV
+          </button>
+          <button
+            type="button"
+            className={`btn ghost${panel === 'liked' ? ' on' : ''}`}
+            onClick={() => onTogglePanel('liked')}
+          >
+            ♥ Liked <span className="num">({likedCount})</span>
+          </button>
+          <button
+            type="button"
+            className={`btn ghost${panel === 'blocked' ? ' on' : ''}`}
+            onClick={() => onTogglePanel('blocked')}
+          >
+            Blocked <span className="num">({blockedCount})</span>
+          </button>
+        </div>
       </div>
 
       <ActivePills filters={filters} />

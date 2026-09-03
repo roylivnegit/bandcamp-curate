@@ -87,6 +87,19 @@
   flex-wrap: wrap;
 }
 
+/* `.more-toggle`/`.controls-more` exist for the mobile collapse below —
+   at this (desktop) width the toggle stays hidden and the wrapper is
+   `display: contents`, so its children (sort, genre, tag-contains, select,
+   export, liked, blocked) lay out exactly as if they were direct children
+   of `.controls`, same as before this existed. */
+.more-toggle {
+  display: none;
+}
+
+.controls-more {
+  display: contents;
+}
+
 .seg {
   display: flex;
   background: var(--surface);
@@ -727,16 +740,41 @@
     gap: var(--s-2);
   }
 
-  .controls > .spacer {
-    display: none;
-  }
-
   .controls > * {
     width: 100%;
   }
 
   .seg button {
     flex: 1;
+  }
+
+  /* Everything past the search box (sort, genre, tag-contains, select,
+     export, liked, blocked — nine controls in total) collapses behind the
+     toggle by default. At full desktop width `.controls-more` is `display:
+     contents` (see the base rule above the media queries) so it's invisible
+     to layout and none of this applies there. */
+  .more-toggle {
+    display: block;
+  }
+
+  .controls-more {
+    display: none;
+  }
+
+  .controls-more.open {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-2);
+    width: 100%;
+  }
+
+  .controls-more > * {
+    width: 100%;
+  }
+
+  .controls-more > .spacer {
+    display: none;
   }
 
   /* `.controls` switched its main axis to vertical above (flex-direction:
