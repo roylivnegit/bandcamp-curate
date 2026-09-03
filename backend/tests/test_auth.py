@@ -6,6 +6,7 @@ never leak one tenant's exclusions (follows/likes/blocks) into another's feed.
 """
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
@@ -157,6 +158,101 @@ async def test_login_returns_token_and_rejects_bad_credentials(client: AsyncClie
     assert bad_pw.status_code == 401
     no_user = await client.post("/api/auth/login", json={"username": "ghost", "password": "x"})
     assert no_user.status_code == 401
+
+
+# ── login lockout ──────────────────────────────────────────────────────────────
+# `_settings()`'s defaults apply here: 5 attempts, 15-minute lockout.
+
+
+async def test_login_locks_out_after_max_failed_attempts(client: AsyncClient) -> None:
+    await _signup(client, "alice")
+    bad = {"username": "alice", "password": "nope"}
+
+    for _ in range(5):
+        r = await client.post("/api/auth/login", json=bad)
+        assert r.status_code == 401
+
+    # The 6th attempt is locked out — even with the CORRECT password, so a
+    # locked-out attacker can't use a 401-vs-429 split to learn anything.
+    r = await client.post(
+        "/api/auth/login", json={"username": "alice", "password": "hunter22"}
+    )
+    assert r.status_code == 429
+
+
+async def test_successful_login_resets_the_failed_attempt_counter(
+    client: AsyncClient, maker,  # noqa: ANN001
+) -> None:
+    await _signup(client, "alice")
+    bad = {"username": "alice", "password": "nope"}
+    ok = {"username": "alice", "password": "hunter22"}
+
+    for _ in range(3):  # below the 5-attempt threshold
+        assert (await client.post("/api/auth/login", json=bad)).status_code == 401
+    assert (await client.post("/api/auth/login", json=ok)).status_code == 200
+
+    async with maker() as s:
+        user = (await s.execute(select(User).where(User.username == "alice"))).scalar_one()
+        assert user.failed_login_attempts == 0
+        assert user.locked_until is None
+
+    # The counter actually reset, not just capped: 3 more failures (not 2)
+    # are needed to reach the threshold again.
+    for _ in range(3):
+        assert (await client.post("/api/auth/login", json=bad)).status_code == 401
+    assert (await client.post("/api/auth/login", json=ok)).status_code == 200  # still not locked
+
+
+async def test_lockout_clears_once_its_window_has_passed(
+    client: AsyncClient, maker,  # noqa: ANN001
+) -> None:
+    await _signup(client, "alice")
+    bad = {"username": "alice", "password": "nope"}
+    for _ in range(5):
+        assert (await client.post("/api/auth/login", json=bad)).status_code == 401
+    assert (await client.post(
+        "/api/auth/login", json={"username": "alice", "password": "hunter22"}
+    )).status_code == 429
+
+    # Same "write a past timestamp directly" convention as
+    # test_expired_blacklist_stops_excluding — no clock mocking.
+    async with maker() as s:
+        user = (await s.execute(select(User).where(User.username == "alice"))).scalar_one()
+        user.locked_until = datetime.now(UTC) - timedelta(seconds=1)
+        await s.commit()
+
+    r = await client.post(
+        "/api/auth/login", json={"username": "alice", "password": "hunter22"}
+    )
+    assert r.status_code == 200 and r.json()["access_token"]
+
+
+async def test_lockout_threshold_comes_from_settings(maker) -> None:  # noqa: ANN001
+    """Not hardcoded: a deployment can tune `auth_login_max_attempts` without a
+    code change."""
+    async def _override():  # noqa: ANN202
+        async with maker() as s:
+            yield s
+
+    def _tight_settings() -> Settings:
+        return Settings(auth_secret_key=SECRET, auth_invite_code=INVITE, auth_login_max_attempts=2)
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_settings] = _tight_settings
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            await _signup(c, "alice")
+            bad = {"username": "alice", "password": "nope"}
+            assert (await c.post("/api/auth/login", json=bad)).status_code == 401
+            assert (await c.post("/api/auth/login", json=bad)).status_code == 401
+            # Locked after just 2, not the usual 5.
+            locked = await c.post(
+                "/api/auth/login", json={"username": "alice", "password": "hunter22"}
+            )
+            assert locked.status_code == 429
+    finally:
+        app.dependency_overrides.clear()
 
 
 # ── token validation ──────────────────────────────────────────────────────────

@@ -209,6 +209,12 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(256))
     fan_id: Mapped[int | None] = mapped_column(ForeignKey("fans.id"), unique=True, index=True)
     bandcamp_fan_url: Mapped[str | None] = mapped_column(String(512))
+    # Login lockout: a failed login increments the counter; hitting
+    # `Settings.auth_login_max_attempts` sets `locked_until` (mirrors
+    # `Blacklist.expires_at` — expiry is a plain timestamp comparison at read
+    # time, no sweeper job needed). A successful login resets both.
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ── Curation & control ───────────────────────────────────────────────────────

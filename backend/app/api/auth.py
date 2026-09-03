@@ -7,6 +7,7 @@ collection-kind branch).
 """
 
 import secrets
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -121,8 +122,34 @@ async def login(
     user = (
         await session.execute(select(User).where(User.username == payload.username.strip()))
     ).scalar_one_or_none()
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if user is None:
         raise invalid
+
+    now = datetime.now(UTC)
+    if user.locked_until is not None:
+        locked_until = (
+            user.locked_until if user.locked_until.tzinfo is not None
+            else user.locked_until.replace(tzinfo=UTC)
+        )
+        if locked_until > now:
+            # Skip verify_password entirely: it's both wasted bcrypt work under
+            # a guessing attempt and, more importantly, a locked account must
+            # not leak whether the password would otherwise have been right.
+            raise HTTPException(
+                status_code=429,
+                detail="too many failed login attempts — try again later",
+            )
+
+    if not verify_password(payload.password, user.password_hash):
+        user.failed_login_attempts += 1
+        if user.failed_login_attempts >= settings.auth_login_max_attempts:
+            user.locked_until = now + timedelta(minutes=settings.auth_login_lockout_minutes)
+        await session.commit()
+        raise invalid
+
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    await session.commit()
     return TokenOut(access_token=create_access_token(user.id, settings))
 
 

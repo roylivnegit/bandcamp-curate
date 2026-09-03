@@ -137,6 +137,13 @@ class Settings(BaseSettings):
     # Shared invite code required at signup (gates who can queue crawls against
     # this deployment's Nimble budget). Empty disables signup entirely.
     auth_invite_code: str = ""
+    # Login lockout: this many failed attempts in a row locks the account out
+    # for this many minutes (see `User.failed_login_attempts`/`locked_until`).
+    # A small invite-only user base doesn't need this tight, just non-zero —
+    # the point is making online password guessing impractical, not
+    # inconveniencing a fat-fingered legitimate login.
+    auth_login_max_attempts: int = 5
+    auth_login_lockout_minutes: int = 15
     # The deployed React app's origin, for CORS (the frontend is a separate service).
     frontend_origin: str = "http://localhost:5173"
 
