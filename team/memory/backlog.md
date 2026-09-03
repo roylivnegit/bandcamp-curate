@@ -1207,14 +1207,9 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   intact — `Dropdown` lands in the shared chunk used by both lazy routes, unchanged by this).
   PR: see git history.
 
-- [ ] **Rapid likes/blocks can pile up an unbounded toast stack.** *(proposed by the hourly
-  routine, 2026-09-03, Architect+QA-approved)* `showToast` (`lib/toast.ts`) has no cap —
-  repeated clicks or a batch bulk-block finishing queues one toast per action with no upper
-  bound. Cap the queue (e.g. 4), evicting the oldest non-action toast first when a new one
-  arrives (never evict one with a pending `action`, since that'd silently drop an undo). Verify:
-  unit test — call `showToast` 6 times, assert the queue never exceeds the cap and the earliest
-  are gone; a second case pushes an action-toast then 4 plain ones and asserts the action-toast
-  survives.
+(The "rapid likes/blocks can pile up an unbounded toast stack" proposal from this same
+Product/Architect+QA round is being implemented in parallel on a separate branch/PR this run —
+see that PR rather than a duplicate entry here.)
 
 - [ ] **Signup's Bandcamp URL field has no format feedback until the server rejects it.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)* `SignupPage`'s "Your
