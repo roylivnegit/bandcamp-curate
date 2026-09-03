@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, MouseEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
 import { bandcampHandle, plural } from '../../lib/format'
@@ -81,12 +81,25 @@ export const FeedCard = memo(function FeedCard({
     }
   }
 
+  const selectable = selectMode && rec.band_id !== null
+
+  /** In select mode, a click anywhere on the card toggles it — except on
+   *  something that already does its own thing when clicked (a button, a
+   *  link, the checkbox itself). `closest` catches those regardless of which
+   *  inner element the click actually landed on. */
+  const onCardClick = (e: MouseEvent<HTMLElement>) => {
+    if (!selectable) return
+    if ((e.target as HTMLElement).closest('button, a, input')) return
+    onToggleSelect(rec)
+  }
+
   return (
     <article
       id={cardId}
-      className={`card${exiting ? ` ${exiting}ing` : ''}`}
+      className={`card${exiting ? ` ${exiting}ing` : ''}${selectable ? ' selectable' : ''}${selected ? ' selected' : ''}`}
       tabIndex={active ? 0 : -1}
       onKeyDown={onCardKeyDown}
+      onClick={onCardClick}
       data-visited={visited ? 'true' : undefined}
     >
       {selectMode && rec.band_id !== null && (
