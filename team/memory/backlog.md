@@ -1551,3 +1551,32 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   non-numeric-string guard. Covered by a new `feed.test.tsx` case opening `/scans/1?label_id=` and
   asserting no artist-filter pill renders and the (unfiltered) feed still shows its row.
   249/249 frontend tests pass, tsc/lint/build clean, both bugs from this round.
+
+- [x] **`GET /api/facets` tag facets drop every genre that only tracks carry.** *(proposed by the
+  hourly routine, 2026-09-03, found via the same "read the actual files" code-audit method, this
+  round pointed at the backend)* `api/feed.py`'s tag-facets query inner-joined `AlbumTag` only, so
+  any recommendation with `item_type == "track"` (`album_id` is `NULL`) could never match — a genre
+  that only tracks carried via `TrackTag` silently never appeared in the facet list, even though
+  `GET /api/recommendations?tag=<that genre>` (via `_has_tag`, which correctly ORs `AlbumTag`/
+  `TrackTag`) would filter on it correctly. The `labels` facet three lines below already handles
+  album/track symmetrically (`outerjoin` + `coalesce`); the tag-facets query was the one place in
+  this file still treating them asymmetrically — the exact class of bug CLAUDE.md's M4 notes already
+  flagged once for curation scoring itself.
+  Done: union the `AlbumTag` and `TrackTag` matches (mirroring `_has_tag`'s OR shape) before
+  aggregating, instead of inner-joining `AlbumTag` alone. Covered by a new
+  `test_facets_include_track_only_tags`, confirmed to fail against the old query (empty tag set)
+  before the fix and pass after.
+
+- [x] **A failed recompute call still consumes the rate-limit cooldown.** *(proposed by the hourly
+  routine, 2026-09-03, same backend code-audit round as above)* `POST /api/recommendations/recompute`
+  wrote `_last_recompute_at[user.id]` before checking the `scan_id` belonged to the caller and
+  before `curate()` could raise — so a legitimate 404 (bad `scan_id`, or a collection not yet
+  crawled) still started the cooldown window, locking an immediately-following *correct* call
+  behind a 429 it didn't deserve.
+  Done: moved the `scan_id` ownership check (a fast, deterministic 404) above the cooldown block
+  entirely, and wrapped the `curate()` call so a `ValueError` restores the previous cooldown
+  timestamp (or clears it if there wasn't one) instead of leaving the just-written one in place.
+  Covered by a new `test_recompute_failure_does_not_consume_the_cooldown` (bad `scan_id` under an
+  enabled cooldown, then an immediate valid call still gets `200`), confirmed to fail against the
+  old ordering (`429`) before the fix. 249/249 backend tests pass, ruff clean, both bugs from this
+  round.
