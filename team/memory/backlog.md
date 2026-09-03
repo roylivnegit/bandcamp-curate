@@ -1759,18 +1759,21 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   head` / `downgrade -1` / `upgrade head` round-trips clean against a fresh sqlite DB. PR: see git
   history.
 
-- [ ] **Cross-tenant guard test for `follows` scoping.** *(proposed by the hourly routine,
+- [x] **Cross-tenant guard test for `follows` scoping.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved — "pure pytest over shared Band/Album rows plus two
   Users/Fans, no live crawl/Docker/browser required ... small — one new test file, a handful of
   assertions")* CLAUDE.md notes `follows` used to leak across tenants until it got per-fan scoping
   (composite unique on `fan_id`+`band_id`), and `build_exclusions` was fixed to query
-  `blacklist`/`likes` per-user — but there's no regression test pinning that two users'
-  `follows`/`blacklist`/`likes` rows stay isolated in curation, so a future edit could silently
-  reintroduce the leak with no red test to catch it. Add
-  `backend/tests/test_curation_tenant_isolation.py`: two `User`+`Fan` rows sharing the same global
-  `Band`/`Album` catalog rows (per the "graph stays global" model), give user A a `follows` row
-  and a `blacklist` row on a band, run `curation.build_exclusions`/`compute_recommendations` for
-  user B, and assert user B's exclusions/recs are unaffected by A's follow/blacklist/like — plus
-  the inverse (A's own exclusions do apply to A). Verify: a new passing `pytest` test that fails
-  (red) if `fan_id`/`user_id` scoping is removed from `build_exclusions` — no visual check needed.
-  Queued — not built this run (task cap / picked the required art_id proposal instead).
+  `blacklist`/`likes` per-user — but there was no regression test pinning that two users'
+  `follows`/`blacklist` rows stay isolated in curation, so a future edit could silently
+  reintroduce the leak with no red test to catch it.
+  Done: new `backend/tests/test_curation_tenant_isolation.py`. Two `User`+`Fan` pairs share the
+  same global `Band` catalog rows (per the "graph stays global" model, the real shape two tenants
+  see in practice) — user A gets a `Follow` row on Band X (fan-scoped) and a `Blacklist` row on
+  Band Y (user-scoped), user B gets neither. Calls `curation.engine.build_exclusions` directly for
+  each and asserts both bands land in A's own `exclusions.band_ids` (the inverse case — A's own
+  exclusions do apply to A) while neither leaks into B's, despite both sharing the same `Band` rows.
+  Confirmed the test actually catches the regression it's meant to, not just a happy-path
+  assertion: temporarily stripped the `Follow.fan_id == me.id` filter from `build_exclusions` and
+  reran — the test went red (`assert 1 not in {1}`) exactly as expected, then reverted. 249/249
+  backend tests pass, ruff clean. PR: see git history.
