@@ -1891,3 +1891,38 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   dismissible when the generation moved on since the recorded visit; silent when it matches;
   persists the current generation so a same-session reload doesn't repeat it. 272/272 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [ ] **Retry button on initial page-load failures.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with a scope correction)* If the first fetch on
+  `ScanListPage` or `ScanFeedPage` fails (network blip, transient 500), the page shows static
+  red error text with no way to recover except a full browser reload — worse than the
+  like/block/undo mutations, which already have a toast "Retry" action.
+  **QA correction, read before building:** `ScanListPage.tsx`'s existing `<p className="err"
+  role="alert">` (~line 101) matches the ticket as originally written — wire a `Retry` button
+  there to re-call the existing `load()` `useCallback`. But `ScanFeedPage.tsx`'s equivalent
+  paragraph (~line 887) is nested inside `{showFeed && (...)}`, which requires `scan !== null`
+  — if the *initial* `loadScan()` call fails, `scan` stays `null` forever and that paragraph
+  never renders at all (the page just sits on `Loading…`), and the retry-poll effect also bails
+  early on `!scan`. Don't copy-paste the ScanListPage fix onto ScanFeedPage: add a separate
+  top-level `{scanError && <p role="alert">…<button>Retry</button></p>}` gated on `scan ===
+  null`, distinct from the existing in-feed `error` state.
+  Verify: RTL test mocks the API to reject once then resolve; asserts the error paragraph + a
+  "Retry" button render; click it; assert the API was called again and on success the error
+  clears and content renders. Do this for both pages' failure paths separately.
+
+- [ ] **Warn before losing an in-progress scan draft.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with two corrections)* A user can paste several seed URLs
+  into `NewScanForm`, then accidentally reload or close the tab, losing the whole unsaved list
+  with no warning — unlike almost every other data-entry flow in the app.
+  **QA corrections, read before building:** (1) set both `event.preventDefault()` **and**
+  `event.returnValue = ''` — some engines still key off `returnValue` alone, and the two are
+  cheap to pair. (2) Don't add a separate "just submitted" flag to gate listener removal —
+  `NewScanForm` already unmounts synchronously on a successful create (`onCreated()` →
+  `ScanListPage`'s `setCreating(false)`), so a plain effect cleanup already handles it. Implement
+  as one `useEffect` keyed on the derived boolean `seeds.length > 0` (not the `seeds` array
+  reference, to avoid tearing down/re-adding the listener on every add/remove).
+  Verify: jsdom test dispatches a synthetic `beforeunload` `Event` on `window` (jsdom doesn't
+  fire it natively, but a manually-dispatched event with a `preventDefault` spy is the standard,
+  correct way to test this — matches how this codebase already tests other window-level
+  listeners like `ShortcutsHelp`'s `?` key) while mounted with `seeds.length > 0`, asserts
+  `preventDefault` was called; a second test with an empty seed list asserts it was not.
