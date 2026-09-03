@@ -48,6 +48,10 @@ export const SCROLL_TOP_THRESHOLD_PX = 600
  *  unbounded over a long-lived account. */
 export const VISITED_CAP = 500
 
+/** How long before a session's JWT `exp` claim lapses that
+ *  `useSessionExpiryWarning` fires its one warning toast, in ms. */
+export const SESSION_EXPIRY_WARNING_MS = 5 * 60 * 1000
+
 /** Above this many selected cards, `<BulkActionBar>` requires a second
  *  confirming click before firing the block calls — undo exists, but a
  *  stray "select all" + block on a large filtered set has a bigger blast

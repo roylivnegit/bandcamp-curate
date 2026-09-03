@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ApiError, api, getToken, setToken, setUnauthorizedHandler } from '../api/client'
 import type { Me } from '../api/types'
 import { showToast } from '../lib/toast'
+import { useSessionExpiryWarning } from '../lib/useSessionExpiryWarning'
 import { AuthContext } from './context'
 
 const SESSION_EXPIRED_MESSAGE = 'Your session expired — please log in again.'
@@ -106,6 +107,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* a 401 already cleared the session via the handler above */
     }
   }, [])
+
+  useSessionExpiryWarning(me !== null ? getToken() : null)
 
   const value = useMemo(
     () => ({ me, loading, authError, login, signup, logout, refresh }),

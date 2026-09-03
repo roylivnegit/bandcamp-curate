@@ -1427,3 +1427,42 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `RelativeTime.test.tsx`: renders a `title` attribute equal to the raw ISO string alongside the
   relative text; a `null` iso still renders nothing (title has nothing to attach to). PR: see git
   history.
+
+- [x] **Warn before the session silently expires.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* A dropped session today just dies — the JWT lapses mid-task and the user
+  only finds out when their next click 401s and drops whatever they were doing (a filter, a bulk
+  selection). A sibling proposal from the same round, a `usePrefersReducedMotion()` hook, was cut
+  before reaching QA: `frontend/src/styles/base.css` already has a global
+  `@media (prefers-reduced-motion: reduce)` block zeroing `animation-duration`/`transition-duration`
+  app-wide, so the hook would have been a full duplicate — logged so a future round doesn't
+  re-propose it (see `tried-and-failed.md`, which already carries the same finding from an earlier
+  round; consolidating both notes there is left for a future pass, not urgent).
+  Done: new `lib/jwt.ts` — `decodeJwtExpMs(token)`, a ~10-line base64url decode of the JWT payload
+  (no library — `atob` plus swapping `-_`→`+/` and re-padding), returning the `exp` claim in ms or
+  `null` for anything that doesn't parse (malformed token, missing/non-numeric claim). This app
+  never verifies the token client-side, only reads expiry for the warning — the server stays the
+  real authority. New `lib/sessionExpiry.ts` — pure `msUntilWarning(token, nowMs)`: `null` for an
+  unreadable or already-expired token (the existing 401 handler covers real expiry), otherwise the
+  delay until `SESSION_EXPIRY_WARNING_MS` (5 minutes, new in `config.ts`) before `exp`, or `0`
+  (warn immediately) if less than that window is already left. New `lib/useSessionExpiryWarning.ts`
+  wraps it in a `useEffect` keyed on `token`: schedules one `setTimeout` calling the existing
+  `showToast(..., 'alert')`, cleared on unmount or token change so a stale timer from a previous
+  login never fires. Wired into `AuthContext.tsx` as `useSessionExpiryWarning(me !== null ?
+  getToken() : null)` — one line, no new state, reusing the token/`me` the provider already tracks.
+  Covered by 5 new tests in `jwt.test.ts` (valid claim, malformed token, bad base64/JSON, missing
+  claim, non-numeric claim), 5 in `sessionExpiry.test.ts` (plenty of time left, less than the
+  window left warns immediately, already-expired returns null, no claim, malformed token), and 5 in
+  `useSessionExpiryWarning.test.ts` under fake timers (fires exactly once at the right offset with
+  the right message/variant; null token schedules nothing; an unreadable token schedules nothing;
+  unmount clears the timer; changing the token cancels the old timer rather than letting it fire
+  late). 236/236 frontend tests pass (221 + 15 new), tsc/lint/build clean (chunk split intact —
+  lands in the shared chunk via `AuthContext`, not a lazy route, which is correct since auth
+  applies everywhere). PR: see git history.
+  **Queued from the same round, not built this task:** surface soon-to-expire blocks in the Blocked
+  side panel — sort by `expires_at` ascending (soonest-expiring first, permanent last) and add a
+  "renew" action on rows expiring within 24h that re-POSTs the same `band_id` with a fresh
+  `expires_at`. Architect+QA confirmed `POST /api/blacklist` (`backend/app/api/blacklist.py`)
+  already upserts by `user_id`+`band_id` — no backend change needed, renew is literally re-posting.
+  Verify: a pure sort-comparator unit test (table of `expires_at` values including `null`) and a
+  component test asserting the renew button only renders under the 24h threshold and posts the
+  right `band_id`. Sound, testable without a live crawl/Docker/browser, ~30-45 min.
