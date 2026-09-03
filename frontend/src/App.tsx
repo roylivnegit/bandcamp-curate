@@ -6,6 +6,7 @@ import type { Scan } from './api/types'
 import { useAuth } from './auth/context'
 import { AppHeader } from './components/AppHeader'
 import { CommandPalette, type CommandAction } from './components/CommandPalette'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { OfflineBanner } from './components/OfflineBanner'
 import { ToastStack } from './components/ToastStack'
 
@@ -88,14 +89,16 @@ export default function App() {
       <OfflineBanner />
       <CommandPalette actions={paletteActions} onOpen={loadScansForPalette} />
       <main id="main-content">
-        <Suspense fallback={<div className="wrap">{Loading}</div>}>
-          <Routes>
-            <Route path="/scans" element={<ScanListPage />} />
-            <Route path="/scans/:scanId" element={<ScanFeedPage />} />
-            {/* Signed in: /login and /signup have nothing left to offer. */}
-            <Route path="*" element={<Navigate to="/scans" replace />} />
-          </Routes>
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<div className="wrap">{Loading}</div>}>
+            <Routes>
+              <Route path="/scans" element={<ScanListPage />} />
+              <Route path="/scans/:scanId" element={<ScanFeedPage />} />
+              {/* Signed in: /login and /signup have nothing left to offer. */}
+              <Route path="*" element={<Navigate to="/scans" replace />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
       </main>
     </>
   )

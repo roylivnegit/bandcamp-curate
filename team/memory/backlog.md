@@ -1970,11 +1970,10 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   unrelated command-palette flake in a single mixed run did not reproduce on rerun or in
   isolation), tsc/lint/build clean (chunk split intact). PR: see git history.
 
-- [~] **Cap the Liked/Blocked side-panel lists.** *(proposed by the hourly routine, 2026-09-03,
+- [x] **Cap the Liked/Blocked side-panel lists.** *(proposed by the hourly routine, 2026-09-03,
   Architect+QA-approved)* `LikedPanel`/`BlockedPanel` (`SidePanels.tsx`) render every liked/
   blocked item with no cap — likes/blocks are per-user and accumulate forever (blocks even
   longer since most have no expiry), so the panel just keeps growing.
-  **PR #127 open, auto-merge enabled — update to `[x]` once CI confirms the merge.**
   A first proposal from the same round — a dedicated "not found" page for a bad/deleted scan
   link — was self-caught as already covered before spending an Architect+QA call:
   `ScanFeedPage.tsx`'s `scanError` state already renders a `role="alert"` message with a Retry
@@ -1987,4 +1986,30 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   neither panel has any dependency of its own): each panel with 30 fake items renders exactly
   20 rows plus a "Show more" button; clicking it reveals all 30 and removes the button; a list
   of 5 items (under one page) never shows the button at all. 274/274 frontend tests pass,
-  tsc/lint/build clean (chunk split intact). PR: see git history.
+  tsc/lint/build clean (chunk split intact). Merged same run (PR #127). PR: see git history.
+
+- [~] **Add a React error boundary.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* Self-found via `grep -rn 'ErrorBoundary|componentDidCatch'` across
+  `frontend/src` — zero hits. The app had no error boundary anywhere: an uncaught render-time
+  exception in any component (a malformed API response causing a null-access, or any other
+  render bug) white-screened the entire app with no fallback, taking down even the
+  `ToastStack`/`OfflineBanner` layer that could otherwise have explained it.
+  Done: new `components/ErrorBoundary.tsx` — a small class component (`getDerivedStateFromError`/
+  `componentDidCatch` have no hook equivalent) rendering a "Something went wrong." message with a
+  `btn` "Reload" button (`window.location.reload()`) on catch; the caught error/info is logged to
+  `console.error` since there's no error-reporting service to send it to. Wraps the signed-in
+  shell's routed `<main>` in `App.tsx`, inside the existing `<Suspense>` boundary — a render error
+  in a lazy-loaded route page is caught the same as one in an already-loaded component. The
+  signed-out shell (login/signup) is left unwrapped: its two pages are simple and already
+  `Suspense`-guarded, and wrapping it would mean a second boundary with no shared benefit.
+  Covered by two new tests in `ErrorBoundary.test.tsx` (standalone RTL render, no router/api
+  mocking needed): a throwing child renders the fallback text and Reload button instead of
+  crashing the test (console.error mocked for these two, since React logs the caught error in
+  addition to calling `componentDidCatch` — jsdom has no dev-server error overlay to swallow it);
+  a non-throwing child renders normally with no fallback shown. 271/271 frontend tests pass
+  (one transient, unrelated command-palette-adjacent flake did not reproduce on rerun, matching
+  the flake already logged against the previous item), tsc/lint/build clean (lands in the
+  eagerly-loaded shared chunk via `App.tsx`, not a lazy route chunk, as expected for a boundary
+  that must exist before either route renders). PR: see git history.
+  **PR #128 open, auto-merge enabled — confirm the merge actually happened before flipping this
+  to `[x]`.**
