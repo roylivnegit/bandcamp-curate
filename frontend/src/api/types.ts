@@ -24,6 +24,10 @@ export interface Recommendation {
   band_id: number | null
   band_name: string | null
   url: string | null
+  /** Bandcamp CDN cover-art URL, or null when the album/track has no stored
+   *  `art_id` yet (not every crawled item has been tag/art-enriched — see
+   *  backend migration 0014). */
+  art_url: string | null
   reasons: Reasons
   /** The scan's recompute_generation at fetch time — every row in one
    *  response shares it (see backend migration 0013). */

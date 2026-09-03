@@ -14,6 +14,7 @@ function rec(overrides: Partial<Recommendation> = {}): Recommendation {
     band_id: 20,
     band_name: 'Some Band',
     url: 'https://someband.bandcamp.com/album/some-album',
+    art_url: null,
     reasons: { co_owners: 2, tag_affinity: 0.5, matched_tags: ['ambient'], seed_tags: [] },
     recompute_generation: 1,
     ...overrides,

@@ -69,6 +69,7 @@ export function fakeRec(over: Partial<Recommendation> = {}): Recommendation {
     band_id: 20,
     band_name: 'Minds of Infinity',
     url: 'https://mindsofinfinity.bandcamp.com/album/eyes-of-infinity',
+    art_url: null,
     reasons: { co_owners: 2, tag_affinity: 9, matched_tags: ['psybient'], seed_tags: ['ambient'] },
     recompute_generation: 1,
     ...over,
