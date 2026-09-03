@@ -14,6 +14,7 @@ import { matchesQuery } from '../../lib/quickFilter'
 import { showToast } from '../../lib/toast'
 import { useDensity } from '../../lib/useDensity'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
+import { useScanFinishedMarker } from '../../lib/useScanFinishedMarker'
 import { EmptyState } from './EmptyState'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
@@ -76,7 +77,8 @@ export function ScanFeedPage() {
   }, [activeTags])
 
   const [scan, setScan] = useState<ScanDetail | null>(null)
-  useDocumentTitle(scan?.name)
+  const justFinished = useScanFinishedMarker(scan?.status)
+  useDocumentTitle(scan?.name ? (justFinished ? `✓ ${scan.name}` : scan.name) : scan?.name)
   const [rows, setRows] = useState<Recommendation[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [facetTags, setFacetTags] = useState<Facet[]>([])
@@ -597,6 +599,26 @@ export function ScanFeedPage() {
     [rows, quickQuery],
   )
 
+  // Only rows with a band can be selected at all — mirrors FeedCard's own
+  // checkbox gate (`rec.band_id !== null`), so "select all" never tries to
+  // select something that never had a checkbox to begin with.
+  const selectableKeys = useMemo(
+    () => visibleRows.filter((r) => r.band_id !== null).map(keyOf),
+    [visibleRows],
+  )
+
+  /** Selects every currently-*visible* row (respecting the active quick
+   *  filter/genre filters — never the full server-side result set). A
+   *  second click, once everything selectable is already selected, clears
+   *  the selection back to none — the common toggle shape, not a one-way
+   *  action. */
+  const selectAllLoaded = useCallback(() => {
+    setSelected((prev) => {
+      const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => prev.has(k))
+      return allSelected ? new Set() : new Set(selectableKeys)
+    })
+  }, [selectableKeys])
+
   // Clamped at render time (not in an effect) so a like/block that removes the
   // currently-active row — one card fewer, no `loadFirstPage` involved — never
   // leaves `activeIndex` pointing past the end of the rendered set.
@@ -786,6 +808,9 @@ export function ScanFeedPage() {
             quickFilterRef={quickFilterRef}
             selectMode={selectMode}
             onToggleSelectMode={toggleSelectMode}
+            selectedCount={selected.size}
+            selectableCount={selectableKeys.length}
+            onSelectAll={selectAllLoaded}
           />
 
           <BulkActionBar

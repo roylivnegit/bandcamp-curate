@@ -390,6 +390,12 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   and `crawl_fan_collection`'s collection/wishlist/follows pagination plus `crawl_album`/
   `crawl_track`'s supporters pagination now pass their `scan_id`. The cap no longer undercounts
   collection-heavy scans. See `CLAUDE.md` "Immediate next steps" #2. PR: see git history.
+  **Superseded (2026-09-02, Roy's own request):** both this per-user cap and the original global
+  `crawl_max_requests` are gone, replaced by a single per-scan budget
+  (`crawl_max_requests_per_scan`, default 1000) — simpler, and it's what Roy actually wanted:
+  every scan starts at zero and never inherits spend from another scan or user. Also dropped
+  level-3 crawling (`crawl_max_depth` default 3→2) in the same change, spending the freed budget
+  on more rounds of level-2 paging instead. See `CLAUDE.md`'s crawl depth/budget bullet.
 
 - [x] **A secondary budget cap** — max total frontier size, or max fetches per run, on top of
   the depth bound. Depth 3 on a popular album still fans out very wide. Same source.
@@ -1603,15 +1609,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   old ordering (`429`) before the fix. 249/249 backend tests pass, ruff clean, both bugs from this
   round.
 
-- [ ] **Announce the updated match count after "Load more."** *(proposed by the hourly routine,
+- [x] **Announce the updated match count after "Load more."** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved: "sound, testable, small. Ship it.")* `ScanFeedPage.tsx`'s
   `.countline` paragraph ("N recs match your filters") updates visibly when "Load more" resolves,
   but it's a plain `<p>` with no `aria-live`, so a screen-reader user gets no confirmation that
   more rows actually loaded. Add `role="status" aria-live="polite"` to it. Verify: RTL test
   asserting the countline has `role="status"` and its text reflects the new count after
   `loadMore` resolves — no visual check needed.
+  Done: added `role="status" aria-live="polite"` to the countline. In practice `total` (what the
+  countline shows) doesn't change on "Load more" itself — it's the server-side match count, not a
+  loaded-so-far tally — so the announceable case is really any `total` change (a like/block
+  decrementing it, a filter narrowing it, etc.), which this covers identically. Also fixed three
+  existing "auto-prune stale tag filters" tests that used a bare `*ByRole('status')` to detect a
+  toast — now ambiguous since the countline shares that role — by scoping to the toast's own
+  `.toast` class instead. Covered by a new test in `feed.test.tsx`: the countline has
+  `role="status"` and its text updates from "1 results" to "0 results" after a like resolves.
+  250/250 frontend tests pass, tsc/lint/build clean. PR: see git history.
 
-- [ ] **"Select all loaded" for bulk-select.** *(proposed by the hourly routine, 2026-09-03,
+- [x] **"Select all loaded" for bulk-select.** *(proposed by the hourly routine, 2026-09-03,
   Architect+QA-approved — "testable if confined to a pure state-derivation function; must read
   from the already-filtered `visibleRows`, not raw data")* Bulk-select only toggles one card at a
   time, so clearing a genre's worth of recs from a large scan still means clicking every checkbox.
@@ -1620,8 +1635,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   result set), toggling back to none on a second click. Verify: unit test — with N visible rows
   and select mode on, one click makes the selection size equal `visibleRows.length` and every
   card show `selected=true`; a second click clears it back to zero.
+  Done: `ScanFeedPage.tsx` derives `selectableKeys` from `visibleRows` filtered to `band_id !==
+  null` (mirrors `FeedCard`'s own checkbox gate — nothing is offered for selection that never had
+  a checkbox), and a new `selectAllLoaded()` toggles the selection between "every selectable key"
+  and empty, based on whether every one is already selected (not a plain boolean flip — clicking
+  it after individually checking some, but not all, rows completes the selection rather than
+  clearing it). `FilterBar.tsx` renders a "☑ Select all loaded" / "✕ Deselect all" button next to
+  the select-mode toggle, shown only in select mode and only when there's at least one selectable
+  row. Covered by 2 new tests in `feed.test.tsx`'s "bulk select" block: clicking it checks every
+  card and a second click clears them all (scoped against the bulk bar's own count via `within`,
+  not a bare `findByText`, since the feed's countline can coincidentally show the same digit as
+  the unfiltered total); a quick-filtered view offers only the narrowed set. 252/252 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
-- [ ] **Tab-title status marker for a finished scan.** *(proposed by the hourly routine,
+- [x] **Tab-title status marker for a finished scan.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved with a caveat: "sound in isolation but riskiest of the three —
   keep the effect isolated to one small hook so the test doesn't need the whole ScanFeedPage tree,
   and watch for `document.title`/`document.hidden` mock cleanup polluting other test suites")* A
@@ -1631,3 +1658,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   clearing the prefix on refocus. Verify: a hook-level unit test (not a full-page render) driving
   a mocked status transition plus `document.hidden`, asserting the title gains the prefix on the
   transition and loses it on simulated refocus.
+  Done, per QA's caveat: new standalone `lib/useScanFinishedMarker.ts` — a pure `boolean` hook,
+  no `document.title` formatting inside it (that's still `useDocumentTitle`'s job; the two compose
+  in `ScanFeedPage.tsx` rather than merging). `marked` only flips true on an observed `running`→
+  `done` transition (a `useRef` holds the previous status) while `document.hidden` at the moment
+  of that transition — a scan already `done` on mount, or one that finishes while the tab is
+  visible, is correctly left unmarked (nothing "just finished" from the reader's perspective in
+  either case). A second effect, alive only while `marked`, clears it on the next
+  `visibilitychange` where `document.hidden` is false. `ScanFeedPage.tsx` calls
+  `useDocumentTitle(scan?.name ? (justFinished ? \`✓ ${scan.name}\` : scan.name) : scan?.name)`.
+  Covered by 5 new tests in `useScanFinishedMarker.test.ts` (`renderHook`, no page mount needed):
+  marks true on the transition while hidden; clears on a simulated `visibilitychange` to visible;
+  a scan already `done` on mount is never marked; a transition while the tab is visible is never
+  marked; a `visibilitychange` event with nothing marked is a no-op — each test resets
+  `document.hidden` in `afterEach` per QA's cleanup caveat. One new integration test in
+  `feed.test.tsx`'s "document title" block drives a real scan-status poll (`SCAN_POLL_MS`) under
+  fake timers with `document.hidden` stubbed true throughout, confirming the full path end to end:
+  `document.title` gains the `"✓ "` prefix once the poll observes `done`, and loses it once a
+  `visibilitychange` event fires with `document.hidden` false. 258/258 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.

@@ -48,8 +48,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["supporters_client"] = sup
     ctx["seed_url"] = settings.bandcamp_fan_url
     ctx["max_depth"] = settings.crawl_max_depth
-    ctx["max_requests"] = settings.crawl_max_requests
-    ctx["max_requests_per_user"] = settings.crawl_max_requests_per_user
+    ctx["max_requests_per_scan"] = settings.crawl_max_requests_per_scan
     ctx["concurrency"] = settings.crawl_concurrency
     ctx["slice_seconds"] = settings.crawl_slice_seconds
     ctx["entry_seconds"] = settings.crawl_entry_seconds
@@ -82,10 +81,13 @@ async def crawl_next(ctx: dict[str, Any], scan_id: int) -> bool:
 
     `scan_id` names the queue to drain — the operator chain owns its entries like
     any scan does, since the frontier has no unowned rows."""
-    max_requests = ctx.get("max_requests")
+    max_requests_per_scan = ctx.get("max_requests_per_scan")
     async with ctx["sessionmaker"]() as session:
-        if await runner.budget_exhausted(session, max_requests):
-            logger.info("request budget reached (%s); halting crawl chain", max_requests)
+        if await runner.scan_budget_exhausted(session, scan_id, max_requests_per_scan):
+            logger.info(
+                "scan %s's request budget reached (%s); halting crawl chain",
+                scan_id, max_requests_per_scan,
+            )
             return False
         try:
             outcome = await runner.process_one(
@@ -98,7 +100,7 @@ async def crawl_next(ctx: dict[str, Any], scan_id: int) -> bool:
         except Exception:  # noqa: BLE001 — already recorded on the frontier
             outcome = None
         remaining = await frontier.pending_count(session, scan_id=scan_id)
-        over_budget = await runner.budget_exhausted(session, max_requests)
+        over_budget = await runner.scan_budget_exhausted(session, scan_id, max_requests_per_scan)
 
     if remaining > 0 and not over_budget:
         await ctx["redis"].enqueue_job("crawl_next", scan_id)
@@ -123,8 +125,8 @@ async def run_scan(ctx: dict[str, Any], scan_id: int) -> str:
             collection_client=ctx.get("collection_client"),
             follows_client=ctx.get("follows_client"),
             supporters_client=ctx.get("supporters_client"),
-            max_depth=ctx.get("max_depth"), max_requests=ctx.get("max_requests"),
-            max_requests_per_user=ctx.get("max_requests_per_user"),
+            max_depth=ctx.get("max_depth"),
+            max_requests_per_scan=ctx.get("max_requests_per_scan"),
             concurrency=ctx.get("concurrency", 1),
             slice_seconds=ctx.get("slice_seconds"),
             entry_seconds=ctx.get("entry_seconds"),
