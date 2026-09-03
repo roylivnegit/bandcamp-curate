@@ -1273,3 +1273,35 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   account", and confirms `fetch` is never called; a well-formed URL shows no alert and leaves
   submit enabled. 202/202 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see
   git history.
+
+- [x] **Confirm step for large bulk-block actions.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound, easily mockable in RTL, small; genuinely new since bulk-block
+  currently has no size guard or confirm step at all")* Bulk-select + bulk-block already exists
+  with no size guard — undo covers a single mis-click, but a stray "select a run of cards" + block
+  on a large filtered set has a bigger blast radius than the click that caused it, with no
+  confirmation in between. (Two sibling proposals from the same Product/Architect+QA round were
+  cut: a `?sort=` control turned out to already exist — `SortKey`/`useFeedFilters`/`FilterBar`
+  already sort by score/neighbours/affinity, just not by the newest/A-Z keys Product assumed; a
+  generic `EmptyState`-by-cause component turned out to mostly duplicate the already-shipped
+  "Clear filters" empty state and `ColdStartPanel`, and QA's one narrowed slice —
+  "filters-active-but-band-blocked" — wasn't concretely a distinct reachable state worth building
+  blind, so left unqueued rather than built on a guess.)
+  Done: new `BULK_CONFIRM_THRESHOLD` (5) and `BULK_CONFIRM_WINDOW_MS` (4000, same window as
+  `DeleteScanButton`'s) in `config.ts`. `components/BulkActionBar.tsx` gets the exact same
+  two-click, auto-reverting confirm shape `DeleteScanButton` already uses — no native `confirm()`,
+  this app doesn't use those anywhere. At or below the threshold, clicking "Block selected" still
+  fires `onBlock` immediately (today's behavior, unchanged — covered by the pre-existing test at
+  `count={3}`). Above it, the same click arms a `Block N bands?` / `Cancel` pair instead
+  (`.btn.ghost.danger`, reusing `DeleteScanButton`'s existing danger-button styling — no new CSS);
+  a second click on `Block N bands?` fires `onBlock`, `Cancel` reverts without calling it, and the
+  arm reverts on its own after `BULK_CONFIRM_WINDOW_MS` if neither is clicked. A `useEffect` on
+  `[count]` also clears any pending confirm/timer the moment the selection size changes — armed
+  against a stale N (e.g. a card deselected while the bar is up) would silently block the wrong
+  count. Covered by 4 new tests in `BulkActionBar.test.tsx`'s new "confirm step above the
+  threshold" block: a first click above the threshold doesn't call `onBlock` and shows the
+  `Block N bands?` prompt, a second click does; at/below the threshold there's no prompt at all
+  (pre-existing behavior, re-asserted at the threshold boundary itself); `Cancel` inside the
+  confirm step calls neither `onBlock` nor the outer `onCancel` and returns to the normal bar;
+  the armed prompt auto-reverts after `BULK_CONFIRM_WINDOW_MS` under fake timers. 206/206 frontend
+  tests pass (202 + 4 new), tsc/lint/build clean (chunk split intact — `BulkActionBar` lands inside
+  the `ScanFeedPage` chunk, its only importer). PR: see git history.
