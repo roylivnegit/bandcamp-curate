@@ -235,11 +235,14 @@ export const api = {
 
   listBlocked: () => request<Blocked[]>('/api/blacklist'),
   /** `expiresAt` (an ISO string) makes this a temporary block; omit or pass
-   *  `null` for the existing permanent behavior. */
-  block: (bandId: number, expiresAt?: string | null) =>
+   *  `null` for the existing permanent behavior. `reason` is optional free
+   *  text (the backend only overwrites an existing row's reason when it's
+   *  non-empty, so omitting it on a renew/reason-only call never wipes one
+   *  out). */
+  block: (bandId: number, expiresAt?: string | null, reason?: string | null) =>
     request<Blocked>('/api/blacklist', {
       method: 'POST',
-      body: { band_id: bandId, expires_at: expiresAt ?? null },
+      body: { band_id: bandId, expires_at: expiresAt ?? null, reason: reason ?? null },
     }),
   unblock: (bandId: number) =>
     request<{ unblocked: number }>(`/api/blacklist/${bandId}/unblock`, { method: 'POST' }),
