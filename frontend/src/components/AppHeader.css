@@ -48,6 +48,10 @@
   gap: 4px;
   width: 18px;
   height: 14px;
+  /* The trigger is a plain (non-flex) <button>, so this inline-flex icon
+     aligns by baseline by default — which reads as "stuck near the top" of
+     the button's full height, not centered in it. */
+  vertical-align: middle;
 }
 
 .menu-icon span {

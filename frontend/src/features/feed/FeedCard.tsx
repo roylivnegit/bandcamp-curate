@@ -2,7 +2,7 @@ import { memo, useState } from 'react'
 import type { KeyboardEvent, MouseEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
-import { bandcampHandle, plural } from '../../lib/format'
+import { bandcampHandle } from '../../lib/format'
 
 /** `exiting` drives the evaporate animation the old UI had: a liked/blocked card
  *  dissolves upward instead of vanishing, so you can see what you just acted on.
@@ -53,7 +53,6 @@ export const FeedCard = memo(function FeedCard({
   onToggleSelect: (rec: Recommendation) => void
 }) {
   const busy = busyAction !== null
-  const co = rec.reasons.co_owners ?? 0
   const handle = bandcampHandle(rec.url)
   const tags = rec.reasons.matched_tags ?? []
   // Some crawled items have no stored art_id yet (see api/types.ts), and a
@@ -143,9 +142,6 @@ export const FeedCard = memo(function FeedCard({
         )}
 
         <div className="card-meta">
-          <span className="chip signal" title="Taste-neighbours who own this">
-            ◈ {co} {plural(co, 'neighbour')} {co === 1 ? 'owns' : 'own'} this
-          </span>
           {tags.map((t) => (
             <button key={t} type="button" className="chip tag" onClick={() => onTagClick(t)}>
               {t}

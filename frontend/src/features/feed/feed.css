@@ -464,7 +464,7 @@
   padding: 0;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-base);
   margin-top: 3px;
   cursor: pointer;
   text-align: left;
@@ -521,14 +521,6 @@
 .chip.tag:hover {
   border-color: var(--accent-dim);
   background: var(--accent-wash);
-}
-
-.chip.signal {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-wash);
-  font-weight: 600;
-  font-family: var(--mono);
 }
 
 .via {
