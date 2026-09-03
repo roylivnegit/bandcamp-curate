@@ -21,6 +21,7 @@
  * (same-site cookies) is an architecture change, not a patch.
  */
 
+import { REQUEST_TIMEOUT_MS } from '../config'
 import type {
   Blocked,
   Facets,
@@ -89,17 +90,30 @@ async function request<T>(
   if (token) headers.Authorization = `Bearer ${token}`
   if (body !== undefined) headers['Content-Type'] = 'application/json'
 
+  // Without this, a hung connection (accepted but never responding — distinct
+  // from the outright rejection the catch block below handles) left the
+  // caller's loading state stuck forever with no feedback and no way to
+  // recover short of a full page reload.
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
     })
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(0, 'The request timed out. Please try again.')
+    }
     // Network-level failure: the API is asleep (Render free tier cold-starts) or
     // unreachable. Say something a person can act on.
     throw new ApiError(0, "Can't reach the server. It may be waking up — try again in a moment.")
+  } finally {
+    window.clearTimeout(timeoutId)
   }
 
   if (res.status === 401 && !CREDENTIAL_PATHS.includes(path)) {

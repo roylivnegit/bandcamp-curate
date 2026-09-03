@@ -30,6 +30,13 @@ export const COPY_LINK_FEEDBACK_MS = 2000
 /** How long a toast (see lib/toast.ts) stays up before auto-dismissing, in ms. */
 export const TOAST_DURATION_MS = 4000
 
+/** How long `api/client.ts`'s `request()` waits before aborting a hung fetch,
+ *  in ms. Deliberately well above the Render free tier's documented cold-start
+ *  window (`AuthContext.tsx`: "~30-60s") — a shorter timeout would misfire as
+ *  a false "request timed out" during an ordinary cold start, the exact case
+ *  the existing network-failure message already explains correctly. */
+export const REQUEST_TIMEOUT_MS = 90000
+
 /** Max toasts kept in the stack at once (see lib/toast.ts) — a burst of
  *  rapid likes/blocks, or a bulk-block finishing, would otherwise queue one
  *  toast per action with no upper bound. The oldest toast with no pending
