@@ -2013,14 +2013,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   that must exist before either route renders). Merged same run (PR #128, after a merge conflict
   with #127 in this same file — resolved by keeping both entries). PR: see git history.
 
-- [ ] **Duplicate seed URL gives no feedback.** *(proposed by the hourly routine, 2026-09-03,
-  Architect+QA-approved)* `features/scans/NewScanForm.tsx`'s `addSeed()` (line 44-54) calls
-  `setError('')` and `setSeedUrl('')` unconditionally even when `seeds.includes(u)` is already
-  true — re-adding a URL already in the list silently no-ops, so it looks like the Add click
-  didn't register. Fix: when the URL is already in the list, `setError('Already in your seed
-  list.')` and skip clearing `seedUrl` so the offending text stays visible. Test: add a seed via
-  the Add button, add the identical URL again, assert `role="alert"` shows the message and the
-  seed list is still length 1. **In flight on a separate branch/PR this same run — see PR #129.**
+- [x] **Duplicate seed URL gives no feedback.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* `features/scans/NewScanForm.tsx`'s `addSeed()` (line 44-54) called
+  `setError('')` and `setSeedUrl('')` unconditionally even when `seeds.includes(u)` was already
+  true — re-adding a URL already in the list silently no-opped, so it looked like the Add click
+  didn't register.
+  Done: `addSeed()` now checks `seeds.includes(u)` before the dedupe-and-add, and on a hit calls
+  `setError('Already in your seed list.')` and returns without touching `seedUrl` — the
+  offending text stays in the input instead of being silently cleared. The multi-line paste path
+  (`onSeedPaste`) is untouched; it already dedupes silently by design with its own test coverage,
+  and this fix only changes the single-URL Add/Enter path.
+  Covered by a new test in `NewScanForm.test.tsx`'s "seed URL validation" block: add a seed via
+  the Add button, add the identical URL again, assert `role="alert"` shows "Already in your seed
+  list." and the seed list is still exactly one `listitem`. 277/277 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). Merged PR #129.
 
 - [x] **Command palette arrow-key nav doesn't scroll the active row into view.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)*
@@ -2036,4 +2042,4 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   Covered by a new test in `CommandPalette.test.tsx`: stubs `Element.prototype.scrollIntoView`
   with `vi.fn()`, opens the palette (clearing the initial mount call for row 0), presses
   ArrowDown, and asserts the mock was called with `{ block: 'nearest' }`. 277/277 frontend tests
-  pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+  pass, tsc/lint/build clean (chunk split intact). PR #130 (this change).

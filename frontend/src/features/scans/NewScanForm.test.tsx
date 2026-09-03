@@ -54,6 +54,17 @@ describe('NewScanForm seed URL validation', () => {
     expect(screen.getByText('https://artist.bandcamp.com/track/some-song')).toBeInTheDocument()
   })
 
+  it('shows an alert and keeps the list at one entry when re-adding the same URL', () => {
+    renderForm()
+    addViaButton('https://artist.bandcamp.com/album/some-release')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    addViaButton('https://artist.bandcamp.com/album/some-release')
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Already in your seed list.')
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+  })
+
   it('also rejects an invalid URL submitted via Enter', () => {
     renderForm()
     const input = screen.getByLabelText('Seed releases')

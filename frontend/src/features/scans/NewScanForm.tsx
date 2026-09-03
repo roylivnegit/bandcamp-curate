@@ -48,8 +48,12 @@ export function NewScanForm({
       setError('That doesn’t look like a Bandcamp album or track URL (e.g. https://artist.bandcamp.com/album/name).')
       return
     }
+    if (seeds.includes(u)) {
+      setError('Already in your seed list.')
+      return
+    }
     setError('')
-    setSeeds((prev) => (prev.includes(u) ? prev : [...prev, u]))
+    setSeeds((prev) => [...prev, u])
     setSeedUrl('')
   }
 
