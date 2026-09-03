@@ -14,7 +14,7 @@ import { matchesQuery } from '../../lib/quickFilter'
 import { showToast } from '../../lib/toast'
 import { useDensity } from '../../lib/useDensity'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
-import { ColdStartPanel } from './ColdStartPanel'
+import { EmptyState } from './EmptyState'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
 import { BlockedPanel, LikedPanel } from './SidePanels'
@@ -876,19 +876,11 @@ export function ScanFeedPage() {
             )}
 
             {rows.length === 0 && !loading && !error && (
-              <>
-                <p className="empty">
-                  {filters.anyActive
-                    ? 'Nothing matches these filters — try clearing one.'
-                    : 'No recommendations in this scan yet.'}
-                </p>
-                {filters.anyActive && (
-                  <button type="button" className="btn ghost" onClick={filters.reset}>
-                    Clear filters
-                  </button>
-                )}
-                {!filters.anyActive && <ColdStartPanel coldStart={stats?.cold_start} />}
-              </>
+              <EmptyState
+                anyActive={filters.anyActive}
+                coldStart={stats?.cold_start}
+                onClearFilters={filters.reset}
+              />
             )}
 
             {/* Distinct from the true-empty message above: the server-side

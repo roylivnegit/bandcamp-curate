@@ -1342,7 +1342,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   213/213 frontend tests pass (212 + 1 new), tsc/lint/build clean (chunk split intact). PR: see
   git history.
 
-- [ ] **Extract existing empty-state logic into a shared `EmptyState` component.**
+- [x] **Extract existing empty-state logic into a shared `EmptyState` component.**
   *(proposed by the hourly routine, 2026-09-03)* Product pitched this as three new empty-state
   variants (no scan yet / filtered-to-zero / genuinely empty); Architect+QA checked the actual
   code first and found all three already exist (`ColdStartPanel` for the cold-start cases, the
@@ -1350,6 +1350,27 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   existing branches in one component with a `data-testid` per variant, no new behavior. Small,
   testable (RTL asserts the right testid for each mock combo), but lower value than net-new work
   since nothing user-visible changes — left queued behind the item below.
+  **Scoped down further on build:** Product's three named variants (no-scan / filtered-to-zero /
+  genuinely-empty) don't cleanly exist as three *renderable* states in the actual code — a
+  "no scan yet" moment is just `ColdStartPanel` rendering `null` while `coldStart` hasn't loaded,
+  not a distinct branch with its own copy. Built the two real, distinguishable causes instead of
+  inventing a third to match the pitch: `filtered-empty` (an active filter narrowed the
+  server-side result set to nothing) and `cold-start` (no filter at all — `ColdStartPanel`'s own
+  existing internal branches, unchanged, explain the rest).
+  Done: new `features/feed/EmptyState.tsx` — `{anyActive, coldStart, onClearFilters}` in, the
+  exact same markup `ScanFeedPage.tsx`'s inline block already rendered, each variant now wrapped
+  in a `div` carrying `data-testid="empty-filtered"`/`"empty-cold-start"`. `ScanFeedPage.tsx`'s
+  `rows.length === 0 && !loading && !error` block is now one `<EmptyState ... />` call; no
+  wording, styling, or behavior changed, so the pre-existing text-based assertions in
+  `feed.test.tsx` (`findByText('Nothing matches these filters…')`,
+  `findByText('No recommendations in this scan yet.')`) needed no changes and still pass
+  unmodified — direct evidence the swap was behavior-preserving. Covered by 3 new tests in
+  `EmptyState.test.tsx` (a standalone RTL render, no router/api mocking needed): `anyActive`
+  renders `empty-filtered` with a working Clear-filters button and no cold-start testid; no active
+  filter with `coldStart: null` renders `empty-cold-start` with no button; a loaded `coldStart`
+  renders through to `ColdStartPanel`'s own diagnostics text. 221/221 frontend tests pass (218 +
+  3 new), tsc/lint/build clean (chunk split intact — the new file lands in the `ScanFeedPage`
+  chunk, its only importer). PR: see git history.
 
 - [x] **Auto-prune URL-persisted filters that no longer exist in facets.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved as genuinely new)* After a
