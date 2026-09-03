@@ -839,7 +839,7 @@ export function ScanFeedPage() {
            *  nested landmark here would be invalid and confuse assistive tech. */}
           <div>
             {total !== null && (
-              <p className="countline">
+              <p className="countline" role="status" aria-live="polite">
                 <b className="num">{count(total)}</b> {kindWord}
                 {filters.anyActive ? ' match your filters' : ''}
               </p>
