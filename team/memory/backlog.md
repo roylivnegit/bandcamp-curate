@@ -2045,18 +2045,37 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   pass, tsc/lint/build clean (chunk split intact). PR #130 (this change).
 
 - [x] **Block reason has no UI.** *(proposed by the hourly routine, 2026-09-03,
-  Architect+QA-approved)* `Blacklist.reason` was wired through the backend and typed on the
-  frontend (`Blocked.reason: string | null`) but nothing ever set or displayed it — dead
-  plumbing. Found after two duplicate Product proposals this run (free-text search, already
-  `lib/quickFilter.ts`; "snooze a rec", already `blacklist.expires_at`'s auto-expiry) — both
-  logged in `tried-and-failed.md`.
-  Done, entirely frontend: `client.ts`'s `block()` gained an optional `reason` param;
-  `BlockedPanel` (`SidePanels.tsx`) shows an existing reason next to the expiry and a compact
-  input to add/change one, saved on Enter; `ScanFeedPage.tsx`'s new `setBlockReason()` mirrors
-  `renew()`'s shape, reading the row's current `expires_at` back out of state so setting a
-  reason never silently converts a temporary block into a permanent one (the backend overwrites
-  `expires_at` unconditionally on every `POST /api/blacklist`). 282/282 frontend tests pass,
-  tsc/lint/build clean. PR #131.
+  Architect+QA-approved — "sound and small; the backend contract (`Blacklist.reason` /
+  `POST /api/blacklist` / `Blocked.reason`) already exists end-to-end and is tested, this is
+  purely additive frontend wiring")* Found via direct code audit after two prior Product
+  proposals this run turned out to be duplicates on inspection (free-text search — already
+  `lib/quickFilter.ts`'s `matchesQuery`; "snooze a rec" — already the `blacklist.expires_at`
+  auto-expiry mechanism; both logged in `tried-and-failed.md`). `Blacklist.reason` was wired
+  through the backend and typed on the frontend (`Blocked.reason: string | null`) but nothing
+  ever set or displayed it — dead plumbing. A companion "pre-block confirm on a single card"
+  proposal from the same round was cut by Architect+QA: the existing 6s Undo banner already
+  covers the same mis-click failure mode for a single card with less friction than a confirm
+  dialog would add to every correct block.
+  Done, entirely frontend (no backend/migration needed — the API already accepts and returns
+  `reason`): `client.ts`'s `block()` gained an optional third `reason` param, folded into the
+  existing POST body. `SidePanels.tsx`'s `BlockedPanel` gained a new `onSetReason` prop and,
+  per row, a compact `input.reason` (`feed.css`, fixed 140px width — a dense row already packs
+  band name/expiry/renew/unblock, so the full-width `.input` base wouldn't fit) prefilled with
+  any existing reason, saved on Enter (mirroring the seed-URL/genre-add Enter-to-submit
+  convention elsewhere in the app); an existing reason also renders inline next to the expiry
+  text. `ScanFeedPage.tsx`'s new `setBlockReason(bandId, reason)` mirrors the existing `renew()`
+  shape exactly, including its one necessary wrinkle: `POST /api/blacklist` overwrites
+  `expires_at` unconditionally on every call, so setting a reason on an already-temporarily-
+  blocked band reads its current `expires_at` back out of `blocked` state and passes it straight
+  through — otherwise attaching a reason would silently convert a temporary block into a
+  permanent one. Backend only overwrites an existing row's `reason` when the new value is
+  non-empty (`blacklist.py`'s `if payload.reason:`), so a blank/unchanged Enter is a no-op on
+  the frontend side too rather than firing a wasted request. Covered by four new tests in
+  `SidePanels.test.tsx`'s "BlockedPanel reason" block: an existing reason renders next to the
+  band; an empty reason shows an empty, correctly-labeled input; typing a new reason and
+  pressing Enter calls `onSetReason` with the trimmed text; Enter with unchanged or
+  whitespace-only text does not call it. 282/282 frontend tests pass, tsc/lint/build clean
+  (chunk split intact — lands in the existing `ScanFeedPage` chunk). PR: see git history.
 
 - [x] **Login has no lockout/rate-limit.** *(proposed by the hourly routine, 2026-09-03, via the
   same Explore-backed Product round that found the block-reason gap above — Architect+QA-approved

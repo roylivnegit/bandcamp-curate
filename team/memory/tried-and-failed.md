@@ -88,3 +88,42 @@ caught earlier in the run. Two-for-two on self-caught duplicates today suggests 
 backlog is now past the point where a summary-fed Product call reliably finds real gaps — future
 rounds may want to lead with a targeted grep for the proposed feature before invoking `claude -p`
 at all, rather than after.
+
+## 2026-09-03 — hourly routine, another run: two more self-caught duplicates, one real gap found
+
+Product's first-round proposals, again fed a component/lib inventory rather than a bare summary:
+
+- **"Free-text search across recommendations."** Already fully built as `lib/quickFilter.ts`'s
+  `matchesQuery()` — a case-insensitive substring match against title/band name, wired into a
+  search input in `FilterBar.tsx` with its own keyboard-shortcut focus ref
+  (`ScanFeedPage.tsx`'s `quickFilterRef`). Do not re-propose without a concrete gap in that
+  existing implementation (e.g. it doesn't search `reasons`/tags — say which field is missing).
+- **"Snooze a recommendation" (time-boxed dismissal, auto-reappears later).** Already fully
+  built as the `blacklist.expires_at` mechanism (the "Blacklist is all-or-nothing forever" item
+  above): `POST /api/blacklist` takes an optional `expires_at`, `build_exclusions` filters to
+  `expires_at IS NULL OR expires_at > now()`, so a temporary block auto-expires with no cleanup
+  job. Functionally identical to "snooze" under a different name — do not re-propose this under
+  any other name (snooze, mute, hide-for-now, temporary-dismiss) without checking this mechanism
+  first.
+
+Caught both before spending an Architect+QA call by reading the actual source
+(`grep`/`Read` on `quickFilter.ts` and `blacklist.py`), not trusting the proposal's framing.
+
+A second, more targeted Product round (fed the two rejections explicitly, asked to justify any
+further idea against source) used its own Explore subagent and surfaced one genuine, previously
+unproposed gap: `Blacklist.reason` was wired end-to-end in the backend and typed on the frontend
+(`Blocked.reason`) but no UI ever set or displayed it — confirmed by grep before it reached
+Architect+QA. Built this run — see "Block reason has no UI" above. The same round's other idea,
+a pre-block confirm dialog on a single card, was correctly cut by Architect+QA: the existing 6s
+Undo banner already covers the identical mis-click failure mode with less friction than a
+confirm step would add to every correct block, so a confirm would be redundant safety rather
+than a real improvement.
+
+Also noticed in passing (not this run's task, just recorded so it isn't mistaken for a live
+feature later): `FeedCard.tsx`'s doc comment and `config.ts`'s `BLOCK_DURATIONS` reference a
+"block for… ▾" duration picker that no longer exists anywhere in the current JSX — `FeedCard`'s
+block button just calls `onBlock(rec)` with no `expiresAt`, and `BulkActionBar` has no duration
+UI either. Only `SidePanels.tsx`'s "renew ▾" dropdown (for a block already about to lapse) still
+uses `BLOCK_DURATIONS`. Looks like stale documentation/dead code left over from a card-layout
+cleanup pass, not a regression from this run's change — worth a future small "resurrect or
+delete the duration-picker-at-block-time UI" cleanup item, but out of scope for today's task.

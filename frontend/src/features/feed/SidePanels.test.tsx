@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { Blocked, Liked } from '../../api/types'
 import { SIDEPANEL_PAGE_SIZE } from '../../config'
@@ -60,6 +60,7 @@ describe('BlockedPanel row cap', () => {
         items={makeBlocked(30)}
         onUnblock={() => {}}
         onRenew={() => {}}
+        onSetReason={() => {}}
         busy={() => false}
       />,
     )
@@ -74,6 +75,7 @@ describe('BlockedPanel row cap', () => {
         items={makeBlocked(30)}
         onUnblock={() => {}}
         onRenew={() => {}}
+        onSetReason={() => {}}
         busy={() => false}
       />,
     )
@@ -82,5 +84,66 @@ describe('BlockedPanel row cap', () => {
 
     expect(screen.getAllByRole('button', { name: 'unblock' })).toHaveLength(30)
     expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
+  })
+})
+
+describe('BlockedPanel reason', () => {
+  it('shows an existing reason next to the band name', () => {
+    const items = makeBlocked(1)
+    items[0].reason = 'too much noise'
+    render(
+      <BlockedPanel items={items} onUnblock={() => {}} onRenew={() => {}} onSetReason={() => {}} busy={() => false} />,
+    )
+
+    expect(screen.getByText(/too much noise/)).toBeInTheDocument()
+  })
+
+  it('shows no reason text when none is set', () => {
+    render(
+      <BlockedPanel
+        items={makeBlocked(1)}
+        onUnblock={() => {}}
+        onRenew={() => {}}
+        onSetReason={() => {}}
+        busy={() => false}
+      />,
+    )
+
+    expect(screen.getByLabelText('Reason for blocking Band 0')).toHaveValue('')
+  })
+
+  it('saves a typed reason on Enter', () => {
+    const onSetReason = vi.fn()
+    render(
+      <BlockedPanel
+        items={makeBlocked(1)}
+        onUnblock={() => {}}
+        onRenew={() => {}}
+        onSetReason={onSetReason}
+        busy={() => false}
+      />,
+    )
+
+    const input = screen.getByLabelText('Reason for blocking Band 0')
+    fireEvent.change(input, { target: { value: 'too repetitive' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSetReason).toHaveBeenCalledWith(0, 'too repetitive')
+  })
+
+  it('does not save on Enter when the text is unchanged or blank', () => {
+    const items = makeBlocked(1)
+    items[0].reason = 'too much noise'
+    const onSetReason = vi.fn()
+    render(
+      <BlockedPanel items={items} onUnblock={() => {}} onRenew={() => {}} onSetReason={onSetReason} busy={() => false} />,
+    )
+
+    const input = screen.getByLabelText('Reason for blocking Band 0')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSetReason).not.toHaveBeenCalled()
   })
 })
