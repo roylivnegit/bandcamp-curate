@@ -208,6 +208,7 @@ describe('auth flow', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
     expect(await screen.findByText('Your scans')).toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: 'Menu' }))
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()

@@ -52,29 +52,10 @@
   background: currentColor;
 }
 
-.whoami {
-  font-size: var(--fs-tiny);
-  color: var(--muted);
-  padding: 3px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: var(--surface);
-}
-
-.signout {
-  padding: 7px 13px;
-  font-size: var(--fs-tiny);
-}
-
-/* "bandcamp music finder" is a lot longer than the old wordmark — without
-   this it truncates behind the username pill and Sign out button on a phone.
-   The username is decorative here (Sign out alone is enough to act on), so
-   it's the one that gives way first. */
-@media (max-width: 480px) {
-  .whoami {
-    display: none;
-  }
-
+/* "bandcamp music finder" is a lot longer than the old wordmark — the
+   username and Sign out now live in the menu instead of sitting next to it,
+   but a very narrow phone can still be tight on its own. */
+@media (max-width: 380px) {
   .brand-name {
     font-size: var(--fs-sm);
   }
