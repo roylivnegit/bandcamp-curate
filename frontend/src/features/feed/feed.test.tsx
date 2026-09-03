@@ -105,15 +105,15 @@ describe('scan feed', () => {
       ['/api/blacklist', []],
     ] as Array<[string, unknown, number?]>
 
-  it('renders a recommendation with its artist and reasons, but no visible score', async () => {
+  it('renders a recommendation with its artist, but no visible score or co-owner chip', async () => {
     mockFetch(feedRoutes())
     renderApp('/scans/1')
 
     expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
     expect(screen.getByText('Minds of Infinity')).toBeInTheDocument()
-    expect(screen.getByText(/2 neighbours own this/)).toBeInTheDocument()
     // The score still drives ranking/sorting server-side — it's just not shown.
     expect(screen.queryByText('3.3')).not.toBeInTheDocument()
+    expect(screen.queryByText(/neighbours? own this/)).not.toBeInTheDocument()
   })
 
   it('auto-loads the next page when the sentinel scrolls into view, with no button', async () => {
