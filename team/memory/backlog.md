@@ -1305,3 +1305,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   the armed prompt auto-reverts after `BULK_CONFIRM_WINDOW_MS` under fake timers. 206/206 frontend
   tests pass (202 + 4 new), tsc/lint/build clean (chunk split intact — `BulkActionBar` lands inside
   the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **Blocked panel never shows a temporary block's expiry.** *(found by the hourly routine,
+  2026-09-03, via direct code audit)* The backend's `Blacklist.expires_at` (added by the earlier
+  "Blacklist is all-or-nothing forever" item) is already returned end-to-end —
+  `BlacklistOut.expires_at` on `GET /api/blacklist` — but the frontend `Blocked` type never
+  declared the field and `BlockedPanel` (`SidePanels.tsx`) never rendered it: a temporarily-blocked
+  band showed identically to a permanently-blocked one, with no way to tell it'll come back.
+  (Adding UI to *set* an expiry from the block button is bigger scope — a duration picker on
+  `FeedCard`'s ⊘ button — and left for a separate item; this is the smaller, purely-display slice:
+  surface the expiry the API already sends.)
+  Done: `Blocked.expires_at: string | null` added to `api/types.ts`. New `expiresLabel(iso)` in
+  `lib/format.ts` — `''` for `null` (permanent) or an already-lapsed timestamp (the backend's own
+  `expires_at > now()` filter keeps a lapsed row out of the response in the first place, so this
+  is a display nicety, not the enforcement), else `"expires in Xm/Xh/Xd"` at the same granularity
+  `ago()` already uses for the past. `BlockedPanel` renders it as a third `· `-joined hint segment
+  next to `band_url`, only when non-empty. Covered by 5 new unit tests in `format.test.ts` under
+  fake system time (null → empty, lapsed → empty, same-day → hours, sub-hour rounds up to at least
+  1m, multi-day → days) and 1 new integration test in `feed.test.tsx`'s "unlike/unblock from the
+  side panels" block: opening the Blocked panel with one temporary and one permanent entry shows
+  `expires in Nh` on the temporary row's `<li>` and nothing matching `/expires in/` on the
+  permanent one's. 212/212 frontend tests pass (206 + 6 new), tsc/lint/build clean (chunk split
+  intact). PR: see git history.

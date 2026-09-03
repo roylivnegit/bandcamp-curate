@@ -996,7 +996,14 @@ describe('unlike/unblock from the side panels', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   const fakeLiked = { id: 1, item_type: 'album', album_id: 9, track_id: null, title: 'Liked One', band_name: 'A Band', url: null } as const
-  const fakeBlocked = { id: 1, band_id: 5, band_name: 'Blocked Band', band_url: null, reason: null } as const
+  const fakeBlocked = {
+    id: 1,
+    band_id: 5,
+    band_name: 'Blocked Band',
+    band_url: null,
+    reason: null,
+    expires_at: null,
+  } as const
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -1067,6 +1074,31 @@ describe('unlike/unblock from the side panels', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/nope/i)
     // Not left stuck busy after the failure — the row is clickable again.
     expect(screen.getByRole('button', { name: 'unblock' })).not.toBeDisabled()
+  })
+
+  it('shows an expiry label on a temporary block, and none on a permanent one', async () => {
+    const soon = new Date(Date.now() + 3 * 3600 * 1000).toISOString()
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/blacklist', [{ ...fakeBlocked, expires_at: soon }, { ...fakeBlocked, id: 2, band_id: 6, band_name: 'Forever Blocked', expires_at: null }]],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+
+    const temporaryRow = (await screen.findByText('Blocked Band')).closest('li')
+    expect(temporaryRow).not.toBeNull()
+    expect(temporaryRow).toHaveTextContent(/expires in \d+h/)
+
+    const permanentRow = screen.getByText('Forever Blocked').closest('li')
+    expect(permanentRow).not.toBeNull()
+    expect(permanentRow).not.toHaveTextContent(/expires in/)
   })
 
   it('ignores a second click on the same row while the first unlike is still in flight', async () => {

@@ -1,4 +1,5 @@
 import type { Blocked, Liked } from '../../api/types'
+import { expiresLabel } from '../../lib/format'
 
 /** Liked and blocked are per-user but shared across all of that user's scans —
  *  the copy says so, since it's otherwise surprising. */
@@ -90,11 +91,13 @@ export function BlockedPanel({
           <ul className="rows">
             {items.map((b) => {
               const rowBusy = busy(b.band_id)
+              const expiry = expiresLabel(b.expires_at)
               return (
                 <li className="row" key={b.id}>
                   <span className="row-main">
                     <b>{b.band_name || `band ${b.band_id}`}</b>
                     {b.band_url && <span className="hint"> {b.band_url}</span>}
+                    {expiry && <span className="hint"> · {expiry}</span>}
                   </span>
                   <button
                     type="button"
