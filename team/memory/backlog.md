@@ -1969,3 +1969,29 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   call is unaffected. 269/269 frontend tests pass (stable across repeated runs — one transient,
   unrelated command-palette flake in a single mixed run did not reproduce on rerun or in
   isolation), tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [~] **Add a React error boundary.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* Self-found via `grep -rn 'ErrorBoundary|componentDidCatch'` across
+  `frontend/src` — zero hits. The app had no error boundary anywhere: an uncaught render-time
+  exception in any component (a malformed API response causing a null-access, or any other
+  render bug) white-screened the entire app with no fallback, taking down even the
+  `ToastStack`/`OfflineBanner` layer that could otherwise have explained it.
+  Done: new `components/ErrorBoundary.tsx` — a small class component (`getDerivedStateFromError`/
+  `componentDidCatch` have no hook equivalent) rendering a "Something went wrong." message with a
+  `btn` "Reload" button (`window.location.reload()`) on catch; the caught error/info is logged to
+  `console.error` since there's no error-reporting service to send it to. Wraps the signed-in
+  shell's routed `<main>` in `App.tsx`, inside the existing `<Suspense>` boundary — a render error
+  in a lazy-loaded route page is caught the same as one in an already-loaded component. The
+  signed-out shell (login/signup) is left unwrapped: its two pages are simple and already
+  `Suspense`-guarded, and wrapping it would mean a second boundary with no shared benefit.
+  Covered by two new tests in `ErrorBoundary.test.tsx` (standalone RTL render, no router/api
+  mocking needed): a throwing child renders the fallback text and Reload button instead of
+  crashing the test (console.error mocked for these two, since React logs the caught error in
+  addition to calling `componentDidCatch` — jsdom has no dev-server error overlay to swallow it);
+  a non-throwing child renders normally with no fallback shown. 271/271 frontend tests pass
+  (one transient, unrelated command-palette-adjacent flake did not reproduce on rerun, matching
+  the flake already logged against the previous item), tsc/lint/build clean (lands in the
+  eagerly-loaded shared chunk via `App.tsx`, not a lazy route chunk, as expected for a boundary
+  that must exist before either route renders). PR: see git history.
+  **PR open, auto-merge enabled — confirm the merge actually happened before flipping this to
+  `[x]`.**
