@@ -1524,3 +1524,30 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   standing instruction not to resolve that call unilaterally. Docs-only change; no tests apply, but
   `npm test`/`tsc`/`lint`/`build` were re-run to confirm nothing else was touched. PR: see git
   history.
+- [x] **`expiresLabel` rounds across its own bucket boundary.** *(proposed by the hourly routine,
+  2026-09-03, found via direct code audit — a repeat of the same "read the actual files, don't
+  brainstorm features" approach that found the two bugs above)* `lib/format.ts` chose the
+  minutes/hours/days bucket from the *raw* seconds (`s < 3600`) but rounded the *displayed* number
+  independently, so a value in the last ~30s before an hour (or ~30min before a day) rounded up
+  past its own bucket: 59m50s left rendered "expires in 60m", 23h45m left rendered "expires in
+  24h" — exactly the nonsensical labels the bucketing exists to avoid. Real-world trigger: a block
+  renewed for `1 day` (the "renew ▾"/"block for… ▾" pickers) shows "expires in 24h" for its last
+  half hour.
+  Done: bucket on the *rounded* value instead, falling through to the next unit when rounding
+  overflows the current one (`minutes = Math.round(s/60); if (minutes < 60) …`, then hours, then
+  days). Covered by a new `format.test.ts` case asserting both boundary inputs now render `1h`/`1d`
+  instead of `60m`/`24h`.
+
+- [x] **An empty `label_id` in a bookmarked feed URL silently filters to a nonexistent band.**
+  *(proposed by the hourly routine, 2026-09-03, same code-audit round as above)* `useFeedFilters.ts`
+  parsed the artist filter as `Number(searchParams.get('label_id'))`, and `Number('')` is `0` —
+  which `Number.isInteger` accepts — so `?label_id=` (present but empty: a hand-edited or
+  partially-stripped bookmarked/shared URL, the exact input this hook's own "shareable/bookmarkable"
+  docstring commits to tolerating) parsed as a real filter on band id 0 instead of "no filter",
+  silently zeroing the feed instead of showing it unfiltered. `itemType`/`sort` in the same file
+  already guard this shape correctly via an explicit allow-list (`isItemType`/`isSortKey`); the
+  label parse was the one path trusting a loose numeric coercion instead.
+  Done: treat `id === ''` the same as `id === null` (no filter), alongside the existing
+  non-numeric-string guard. Covered by a new `feed.test.tsx` case opening `/scans/1?label_id=` and
+  asserting no artist-filter pill renders and the (unfiltered) feed still shows its row.
+  249/249 frontend tests pass, tsc/lint/build clean, both bugs from this round.

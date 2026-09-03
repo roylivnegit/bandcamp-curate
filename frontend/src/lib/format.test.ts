@@ -70,4 +70,11 @@ describe('expiresLabel', () => {
   it('formats a multi-day expiry in days', () => {
     expect(expiresLabel('2026-09-06T00:00:00Z')).toBe('expires in 3d')
   })
+
+  it('rolls over to the next unit instead of rounding onto its own bucket boundary', () => {
+    // 59m50s left rounds to "60m", which reads as a full hour under the wrong
+    // unit; 23h45m rounds to "24h" the same way at the day boundary.
+    expect(expiresLabel('2026-09-03T00:59:50Z')).toBe('expires in 1h')
+    expect(expiresLabel('2026-09-03T23:45:00Z')).toBe('expires in 1d')
+  })
 })

@@ -49,8 +49,14 @@ export function expiresLabel(iso: string | null): string {
   const ms = new Date(iso).getTime() - Date.now()
   if (ms <= 0) return ''
   const s = ms / 1000
-  if (s < 3600) return `expires in ${Math.max(1, Math.round(s / 60))}m`
-  if (s < 86400) return `expires in ${Math.round(s / 3600)}h`
+  // Bucket on the *rounded* value, not the raw seconds — rounding 59m50s up to
+  // 60m (or 23h45m up to 24h) while still in the minutes/hours bucket produced
+  // a nonsensical "60m"/"24h" label right at the boundary; falling through to
+  // the next unit when rounding overflows the bucket keeps every label sane.
+  const minutes = Math.round(s / 60)
+  if (minutes < 60) return `expires in ${Math.max(1, minutes)}m`
+  const hours = Math.round(s / 3600)
+  if (hours < 24) return `expires in ${hours}h`
   return `expires in ${Math.round(s / 86400)}d`
 }
 
