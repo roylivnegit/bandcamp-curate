@@ -30,6 +30,12 @@ export const COPY_LINK_FEEDBACK_MS = 2000
 /** How long a toast (see lib/toast.ts) stays up before auto-dismissing, in ms. */
 export const TOAST_DURATION_MS = 4000
 
+/** Max toasts kept in the stack at once (see lib/toast.ts) — a burst of
+ *  rapid likes/blocks, or a bulk-block finishing, would otherwise queue one
+ *  toast per action with no upper bound. The oldest toast with no pending
+ *  `action` is evicted first when a new one would exceed this. */
+export const TOAST_STACK_CAP = 4
+
 /** How often `<RelativeTime>` re-renders itself to keep "Xm ago" text current
  *  on a page that isn't otherwise polling. */
 export const RELATIVE_TIME_REFRESH_MS = 30000
