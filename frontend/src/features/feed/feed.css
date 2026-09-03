@@ -111,7 +111,9 @@
 }
 
 .quickfilter {
-  width: 190px;
+  flex: 1 1 190px;
+  min-width: 0;
+  max-width: 260px;
   font-size: var(--fs-sm);
   padding: var(--s-2) 10px;
 }
@@ -518,6 +520,7 @@
 .card-actions {
   margin-top: var(--s-3);
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s-2);
   align-items: center;
   justify-content: flex-end;
@@ -666,4 +669,64 @@
 
 .coldstart p {
   margin: var(--s-1) 0;
+}
+
+/* ── narrow viewports ────────────────────────────────────────────────────
+   Nothing on this page had a mobile pass before: `.controls` filled a row of
+   fixed-ish widths (a 3-way segment, a 190px search box, three dropdown
+   triggers, four ghost buttons) that had nowhere to go below ~700px, and
+   `.card` kept its 60px score box beside the body at full size, crowding the
+   title/actions into a sliver of the remaining width. */
+@media (max-width: 640px) {
+  .wrap {
+    padding: 0 var(--s-3);
+  }
+
+  .feednav {
+    flex-wrap: wrap;
+  }
+
+  .filterbar {
+    top: 0; /* the app header itself already scrolls out of a narrow view */
+  }
+
+  .controls {
+    gap: var(--s-2);
+  }
+
+  .controls > .spacer {
+    flex-basis: 100%;
+    height: 0;
+  }
+
+  .seg {
+    flex: 1 1 100%;
+  }
+
+  .seg button {
+    flex: 1;
+  }
+
+  .quickfilter {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .card {
+    gap: var(--s-3);
+    padding: var(--s-3);
+  }
+
+  .score {
+    width: 44px;
+    height: 44px;
+  }
+
+  .score b {
+    font-size: var(--fs-base);
+  }
+
+  .card-actions {
+    justify-content: flex-start;
+  }
 }

@@ -122,39 +122,11 @@ describe('FeedCard pending-state microcopy', () => {
   })
 })
 
-describe('FeedCard block-duration picker', () => {
-  it('offers a temporary-block duration for a card with a band', () => {
-    renderCard()
-    expect(screen.getByRole('button', { name: 'block for… ▾' })).toBeInTheDocument()
-  })
-
-  it('offers no duration picker for a card with no band', () => {
-    renderCard({ bandId: null })
-    expect(screen.queryByRole('button', { name: 'block for… ▾' })).not.toBeInTheDocument()
-  })
-
-  it('hides the duration picker while either action is in flight', () => {
-    renderCard({ busyAction: 'like' })
-    expect(screen.queryByRole('button', { name: 'block for… ▾' })).not.toBeInTheDocument()
-  })
-
-  it('calls onBlock with an expiry computed from the chosen duration, then closes', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-09-03T00:00:00.000Z'))
+describe('FeedCard block button', () => {
+  it('has no card-level duration picker — "⊘ block" is an immediate, permanent block', () => {
     const { onBlock, rec } = renderCard()
 
-    fireEvent.click(screen.getByRole('button', { name: 'block for… ▾' }))
-    fireEvent.click(screen.getByRole('button', { name: '1 week' }))
-
-    expect(onBlock).toHaveBeenCalledTimes(1)
-    expect(onBlock).toHaveBeenCalledWith(rec, '2026-09-10T00:00:00.000Z')
-    expect(screen.queryByRole('button', { name: '1 week' })).not.toBeInTheDocument()
-    vi.useRealTimers()
-  })
-
-  it('leaves the plain "⊘ block" button as an immediate, permanent block', () => {
-    const { onBlock, rec } = renderCard()
-
+    expect(screen.queryByRole('button', { name: 'block for… ▾' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '⊘ block' }))
 
     expect(onBlock).toHaveBeenCalledTimes(1)

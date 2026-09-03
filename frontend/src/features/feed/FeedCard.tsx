@@ -2,8 +2,6 @@ import { memo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
-import { Dropdown } from '../../components/Dropdown'
-import { BLOCK_DURATIONS } from '../../config'
 import { bandcampHandle, plural } from '../../lib/format'
 import { isVisited, markVisited } from '../../lib/visited'
 
@@ -59,7 +57,6 @@ export const FeedCard = memo(function FeedCard({
   const co = rec.reasons.co_owners ?? 0
   const handle = bandcampHandle(rec.url)
   const tags = rec.reasons.matched_tags ?? []
-  const seedTags = rec.reasons.seed_tags ?? []
   // `cardId` is already a stable per-item key (see ScanFeedPage's `cardIdOf`),
   // so it doubles as the "seen" storage key with nothing extra to compute.
   // Local state (not a prop) because clicking "Bandcamp ↗" only changes what
@@ -135,13 +132,6 @@ export const FeedCard = memo(function FeedCard({
           ))}
         </div>
 
-        {seedTags.length > 0 && (
-          <p className="via" title="Genres of your own releases that surfaced this">
-            via {seedTags.slice(0, 5).join(', ')}
-            {seedTags.length > 5 ? ` +${seedTags.length - 5}` : ''}
-          </p>
-        )}
-
         <div className="card-actions">
           <button
             type="button"
@@ -162,27 +152,6 @@ export const FeedCard = memo(function FeedCard({
             >
               {busyAction === 'block' ? 'Blocking…' : '⊘ block'}
             </button>
-          )}
-          {rec.band_id !== null && !busy && (
-            <Dropdown label="block for… ▾" width={140}>
-              {(close) => (
-                <div>
-                  {BLOCK_DURATIONS.map((d) => (
-                    <button
-                      key={d.label}
-                      type="button"
-                      className="ddrow"
-                      onClick={() => {
-                        onBlock(rec, new Date(Date.now() + d.ms).toISOString())
-                        close()
-                      }}
-                    >
-                      <span className="nm">{d.label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Dropdown>
           )}
           {rec.url && (
             <a
