@@ -163,6 +163,8 @@ async def get_or_create_track(
     band: Band | None = None,
     album: Album | None = None,
     art_id: int | None = None,
+    track_num: int | None = None,
+    duration: float | None = None,
 ) -> Track:
     stmt = select(Track).where(Track.bandcamp_id == bandcamp_id)
     track = (await session.execute(stmt)).scalar_one_or_none()
@@ -173,13 +175,17 @@ async def get_or_create_track(
                 bandcamp_id=bandcamp_id, url=url, title=title,
                 band_id=band.id if band else None,
                 album_id=album.id if album else None,
-                art_id=art_id,
+                art_id=art_id, track_num=track_num, duration=duration,
             ),
         )
     if url and not track.url:
         track.url = url
     if title and not track.title:
         track.title = title
+    if track_num and not track.track_num:
+        track.track_num = track_num
+    if duration and not track.duration:
+        track.duration = duration
     if band and not track.band_id:
         track.band_id = band.id
     if album and not track.album_id:
@@ -400,7 +406,7 @@ async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCou
         tracks.append(
             await get_or_create_track(
                 session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title,
-                band=band, album=album,
+                band=band, album=album, track_num=pt.track_num, duration=pt.duration,
             )
         )
 

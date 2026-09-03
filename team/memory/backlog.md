@@ -1804,3 +1804,27 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   with actual visual verification (a `run`/screenshot pass or Roy watching), per this routine's
   own "never pick a change whose only 'done' signal is visual taste" constraint. PR: see git
   history.
+
+- [x] **Persist `Track.track_num` / `Track.duration`.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved — "sound, well-scoped, one-sitting change ... every claim in
+  the brief checks out against the code")* Same shape as the `art_id` gap fixed earlier this run:
+  `ParsedTrack` (an entry in an album page's `trackinfo[]`) has always parsed `track_num` and
+  `duration`, but `Track` had no matching columns and `mapper.py` never read either field.
+  Done: `track_num: int | None` and `duration: float | None` (Float) added to `Track`
+  (`app/db/models.py`); migration `0015_track_num_duration.py` (guarded like 0002-0014, `tracks`
+  table only — these are per-track, an album has no single duration). `get_or_create_track`
+  gained `track_num`/`duration` kwargs (same set-if-null backfill idiom as `art_id`); threaded
+  from `ingest_album`'s track loop only (`pt.track_num`, `pt.duration`) — deliberately **not**
+  `ingest_track_page`, since `ParsedTrackPage` (the standalone `/track/<slug>` parse) carries
+  neither field at all; Bandcamp doesn't expose a tracklist position/duration off-album, so
+  there's nothing to thread there.
+  **Deliberately schema-only this sitting, per Product's own scoping call (QA agreed)**: NOT added
+  to `RecommendationOut`/`GET /api/recommendations`, unlike `art_id`→`art_url` earlier this run —
+  the recs feed lists individual ranked items, not a rendered tracklist-with-position context, and
+  no frontend surface currently reads either field. `art_id` got its API field alongside a real
+  consumer (`art_url`) in the same sitting; these should wait for theirs (e.g. a track detail
+  view, or duration-based curation weighting) rather than growing the API speculatively.
+  Verified against the real fixture, not invented values: `tests/fixtures/album_page.html`'s one
+  track is `track_num=1`, `duration=486.761`. Extended `test_ingest_album_populates_graph` with
+  both assertions. 252/252 backend tests pass, ruff clean; `alembic upgrade head` / `downgrade -1`
+  / `upgrade head` round-trips clean. PR: see git history.
