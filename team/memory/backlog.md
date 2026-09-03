@@ -2131,3 +2131,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   mock's `requests_used: 40` collides with its own `cold_start.excluded_wishlisted: 40` as an
   exact-text match, so the assertion checks the whole sentence instead of a standalone `'40'`).
   283/283 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Stale comments claimed `FeedCard` has a block-duration picker.** *(found by the hourly
+  routine, 2026-09-03, via direct code audit)* `FeedCard.tsx`'s `onBlock` prop doc and `config.ts`'s
+  `BLOCK_DURATIONS` doc both described a "block for… ▾" picker on the feed card itself — but that
+  picker was deliberately removed from `FeedCard` in #103 (a real product decision, not a
+  regression; only `SidePanels`' "renew ▾" action on an already-temporary block still uses
+  `BLOCK_DURATIONS`/`expiresAt`). Already flagged as a stale-doc risk in
+  `team/memory/tried-and-failed.md` — left uncorrected, a future round could mistakenly re-propose
+  "resurrecting" a feature Roy explicitly rejected.
+  Done: reworded both comments to describe the current, real wiring. Comment-only change; 287/287
+  frontend tests pass, tsc/lint/build clean. Merged (#134).
+
+- [~] **Dead `COPY_LINK_FEEDBACK_MS` constant + `ShortcutsHelp` missing the Ctrl/Cmd+K row.**
+  *(found by the hourly routine, 2026-09-03, via direct code audit)* `config.ts`'s
+  `COPY_LINK_FEEDBACK_MS` was orphaned when `CopyLinkButton`/`CopyMarkdownButton` were removed in
+  #107 — confirmed via a repo-wide grep, its only remaining reference was its own declaration.
+  Separately, `ShortcutsHelp`'s panel lists `l`/`b`/arrows/Home/End/`/`/`?` but never mentioned
+  `Ctrl`/`Cmd`+`K`, even though `CommandPalette` is mounted globally and live on the same page.
+  Done: deleted the dead constant; added the missing shortcuts row plus a test assertion. 287/287
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR #135 open with auto-merge
+  enabled, not yet confirmed merged as of this note.
