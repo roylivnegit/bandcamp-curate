@@ -40,4 +40,32 @@ describe('PasswordInput', () => {
     render(<PasswordInput id="pw2" autoComplete="new-password" value="" onChange={vi.fn()} />)
     expect(document.getElementById('pw2')).toHaveAttribute('autocomplete', 'new-password')
   })
+
+  it('shows no Caps Lock warning by default', () => {
+    renderWith()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(document.getElementById('pw')).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('shows a Caps Lock warning while it is on, wired via aria-describedby, and hides it once released', () => {
+    renderWith()
+    const input = document.getElementById('pw') as HTMLInputElement
+
+    // jsdom's KeyboardEvent constructor drops non-standard init fields like
+    // getModifierState, so it has to be stubbed onto the event instance directly.
+    const down = new KeyboardEvent('keydown', { key: 'a', bubbles: true })
+    Object.defineProperty(down, 'getModifierState', { value: () => true })
+    fireEvent(input, down)
+
+    const warning = screen.getByRole('status')
+    expect(warning).toHaveTextContent(/caps lock is on/i)
+    expect(input.getAttribute('aria-describedby')).toBe(warning.id)
+
+    const up = new KeyboardEvent('keyup', { key: 'a', bubbles: true })
+    Object.defineProperty(up, 'getModifierState', { value: () => false })
+    fireEvent(input, up)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(input).not.toHaveAttribute('aria-describedby')
+  })
 })
