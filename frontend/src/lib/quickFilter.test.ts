@@ -14,6 +14,7 @@ function rec(overrides: Partial<Recommendation> = {}): Recommendation {
     band_id: 1,
     band_name: 'Psybient Collective',
     url: null,
+    art_url: null,
     reasons: { co_owners: 1, tag_affinity: 0, matched_tags: [], seed_tags: [] },
     recompute_generation: 1,
     ...overrides,

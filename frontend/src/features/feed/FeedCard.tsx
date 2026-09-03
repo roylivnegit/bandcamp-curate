@@ -62,6 +62,12 @@ export const FeedCard = memo(function FeedCard({
   // Local state (not a prop) because clicking "Bandcamp ↗" only changes what
   // this one card knows — nothing the parent tracks.
   const [visited, setVisited] = useState(() => isVisited(cardId))
+  // Some crawled items have no stored art_id yet (see api/types.ts), and a
+  // URL that resolves fine at crawl time can still 404 later (Bandcamp CDN
+  // churn) — either way, fall back to the plain score box rather than a
+  // broken-image icon.
+  const [artFailed, setArtFailed] = useState(false)
+  const showArt = Boolean(rec.art_url) && !artFailed
 
   /** Triaging a long feed is mouse-only otherwise. Scoped to the card via a
    *  single listener on the article — any focused element inside it (a chip,
@@ -109,6 +115,20 @@ export const FeedCard = memo(function FeedCard({
           aria-label={`Select ${rec.title || 'this recommendation'}`}
           checked={selected}
           onChange={() => onToggleSelect(rec)}
+        />
+      )}
+
+      {showArt && (
+        // Decorative: the title/artist text right next to it already carries
+        // the identifying information, so an empty alt avoids a screen
+        // reader announcing a redundant "cover art for <title>" on every
+        // single card in a feed of hundreds.
+        <img
+          className="card-art"
+          src={rec.art_url ?? undefined}
+          alt=""
+          loading="lazy"
+          onError={() => setArtFailed(true)}
         />
       )}
 

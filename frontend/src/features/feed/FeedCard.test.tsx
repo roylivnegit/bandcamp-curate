@@ -10,9 +10,13 @@ function renderCard(
     bandId?: number | null
     selectMode?: boolean
     selected?: boolean
+    artUrl?: string | null
   } = {},
 ) {
-  const rec = fakeRec(over.bandId === undefined ? {} : { band_id: over.bandId })
+  const rec = fakeRec({
+    ...(over.bandId === undefined ? {} : { band_id: over.bandId }),
+    ...(over.artUrl === undefined ? {} : { art_url: over.artUrl }),
+  })
   const onLike = vi.fn()
   const onBlock = vi.fn()
   const onTagClick = vi.fn()
@@ -232,5 +236,33 @@ describe('FeedCard bulk select', () => {
     fireEvent.click(screen.getByText(rec.title!))
 
     expect(onToggleSelect).not.toHaveBeenCalled()
+  })
+})
+
+describe('FeedCard cover art', () => {
+  it('renders no image when the item has no art_url', () => {
+    renderCard({ artUrl: null })
+
+    expect(document.querySelector('.card-art')).toBeNull()
+  })
+
+  it('renders a decorative image with the art_url as its src when present', () => {
+    renderCard({ artUrl: 'https://f4.bcbits.com/img/a10_10.jpg' })
+
+    const img = document.querySelector('.card-art') as HTMLImageElement
+    expect(img).not.toBeNull()
+    expect(img.src).toBe('https://f4.bcbits.com/img/a10_10.jpg')
+    // Decorative — the title/artist text right next to it already identifies
+    // the item, so an empty alt avoids a redundant screen-reader announcement.
+    expect(img.alt).toBe('')
+  })
+
+  it('falls back to no image once the art URL fails to load, instead of a broken-image icon', () => {
+    renderCard({ artUrl: 'https://f4.bcbits.com/img/a10_10.jpg' })
+
+    const img = document.querySelector('.card-art') as HTMLImageElement
+    fireEvent.error(img)
+
+    expect(document.querySelector('.card-art')).toBeNull()
   })
 })

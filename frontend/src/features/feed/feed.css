@@ -402,6 +402,16 @@
   opacity: 0.9;
 }
 
+.card-art {
+  flex: none;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  object-fit: cover;
+  background: var(--surface-2);
+}
+
 .score {
   flex: none;
   width: 60px;
@@ -749,6 +759,7 @@
     padding: var(--s-3);
   }
 
+  .card-art,
   .score {
     width: 44px;
     height: 44px;
