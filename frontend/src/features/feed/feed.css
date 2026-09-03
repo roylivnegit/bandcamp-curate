@@ -325,6 +325,19 @@
   box-shadow: var(--shadow-card);
 }
 
+/* Select mode: the whole card is a click target (see FeedCard's onClick —
+   anywhere that isn't a button/link/the checkbox itself toggles it), so it
+   needs to look clickable and a selected one needs to be tellable apart from
+   the rest at a glance, not just by its tiny checkbox. */
+.card.selectable {
+  cursor: pointer;
+}
+
+.card.selected {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(94, 234, 212, 0.07), transparent 40%), var(--surface);
+}
+
 .card-select {
   flex: none;
   width: 18px;

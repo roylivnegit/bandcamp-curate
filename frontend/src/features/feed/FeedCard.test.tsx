@@ -197,4 +197,40 @@ describe('FeedCard bulk select', () => {
     expect(onToggleSelect).toHaveBeenCalledTimes(1)
     expect(onToggleSelect).toHaveBeenCalledWith(rec)
   })
+
+  it('toggles selection on a click anywhere on the card, not just the checkbox', () => {
+    const { onToggleSelect, rec } = renderCard({ selectMode: true })
+
+    // The title is plain card real estate — no button, link, or checkbox of
+    // its own — so a click there has nothing else to do but select the card.
+    fireEvent.click(screen.getByText(rec.title!))
+
+    expect(onToggleSelect).toHaveBeenCalledTimes(1)
+    expect(onToggleSelect).toHaveBeenCalledWith(rec)
+  })
+
+  it('does not toggle selection when the click hits an actual control', () => {
+    const { onLike, onToggleSelect } = renderCard({ selectMode: true })
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+
+    expect(onLike).toHaveBeenCalledTimes(1)
+    expect(onToggleSelect).not.toHaveBeenCalled()
+  })
+
+  it('does not turn a plain click into a selection outside select mode', () => {
+    const { onToggleSelect, rec } = renderCard()
+
+    fireEvent.click(screen.getByText(rec.title!))
+
+    expect(onToggleSelect).not.toHaveBeenCalled()
+  })
+
+  it('offers no click-to-select for a card with no band, same as its missing checkbox', () => {
+    const { onToggleSelect, rec } = renderCard({ selectMode: true, bandId: null })
+
+    fireEvent.click(screen.getByText(rec.title!))
+
+    expect(onToggleSelect).not.toHaveBeenCalled()
+  })
 })
