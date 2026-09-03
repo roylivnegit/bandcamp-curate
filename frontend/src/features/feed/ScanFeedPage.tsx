@@ -64,7 +64,16 @@ export function ScanFeedPage() {
   /* Destructured so the handlers below can depend on the individual stable
    * callbacks. `filters` itself is a fresh object every render, so depending on
    * it would defeat the point. */
-  const { includeTag, setLabel } = filters
+  const { includeTag, setLabel, tags: activeTags, pruneTags } = filters
+  /* Read imperatively inside `loadFacets` rather than as a dependency — a tag
+   * toggle would otherwise re-create `loadFacets` and re-fire the effect that
+   * calls it (below) on every filter click, not just on a scan/recompute
+   * change. Same "ref for an imperative read, not a re-render trigger" shape
+   * as `AuthContext`'s `meRef`. */
+  const activeTagsRef = useRef(activeTags)
+  useEffect(() => {
+    activeTagsRef.current = activeTags
+  }, [activeTags])
 
   const [scan, setScan] = useState<ScanDetail | null>(null)
   useDocumentTitle(scan?.name)
@@ -222,8 +231,24 @@ export function ScanFeedPage() {
   const loadLiked = useCallback(async () => setLiked(await api.listLikes()), [])
   const loadBlocked = useCallback(async () => setBlocked(await api.listBlocked()), [])
   const loadFacets = useCallback(async () => {
-    setFacetTags((await api.facets(scanId)).tags)
-  }, [scanId])
+    const data = await api.facets(scanId)
+    setFacetTags(data.tags)
+    // A tag the URL is filtering "by" (include mode) that no longer appears
+    // anywhere in the scan's current recommendations (e.g. a recompute moved
+    // it out) would otherwise silently keep matching nothing forever, with no
+    // clue why — auto-drop it and say what was removed. An `exclude`-mode tag
+    // absent from this same list is left alone: excluding something that
+    // isn't there is a harmless no-op, not a stuck filter.
+    const validTags = new Set(data.tags.map((t) => t.value))
+    const stale = Object.entries(activeTagsRef.current)
+      .filter(([tag, mode]) => mode === 'by' && !validTags.has(tag))
+      .map(([tag]) => tag)
+    if (stale.length > 0) {
+      pruneTags(stale)
+      const what = stale.length === 1 ? `the "${stale[0]}" filter` : `${stale.length} genre filters`
+      showToast(`Removed ${what} — no longer in your recommendations.`, 'status')
+    }
+  }, [scanId, pruneTags])
   const loadStats = useCallback(async () => {
     if (scanId === null) return
     setStats(await api.stats(scanId))

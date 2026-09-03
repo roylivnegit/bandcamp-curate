@@ -1346,6 +1346,104 @@ describe('feed reflow notice', () => {
   })
 })
 
+describe('auto-prune stale tag filters', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+  /** A running scan whose recommendation count and facets tags are both
+   *  controlled by the two out-of-band flags, so a test can change what the
+   *  *next* poll turns up (mimicking a recompute that dropped a genre from
+   *  every current rec) before advancing the clock. */
+  function mockScanWhoseFacetsChange(state: { recCount: number; hasPsybient: boolean }) {
+    return vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1')) {
+        return json({ ...fakeScan, status: 'running', stats: { recommendations: state.recCount }, seeds: [] })
+      }
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) {
+        return json({
+          tags: state.hasPsybient ? [{ value: 'psybient', label: 'psybient', count: 1 }] : [],
+          labels: [],
+          seed_tags: [],
+        })
+      }
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('drops an include-mode tag filter once it is gone from facets, with a toast naming it', async () => {
+    const state = { recCount: 1, hasPsybient: true }
+    vi.stubGlobal('fetch', mockScanWhoseFacetsChange(state))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1?tag=psybient')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(currentLocation().search).toContain('tag=psybient')
+
+    // The recompute that dropped this genre from every current rec.
+    state.hasPsybient = false
+    state.recCount = 2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    await waitFor(() => expect(currentLocation().search).not.toContain('tag=psybient'))
+    expect(await screen.findByRole('status')).toHaveTextContent(/psybient/)
+  })
+
+  it('leaves an exclude-mode tag filter alone even once it is absent from facets', async () => {
+    const state = { recCount: 1, hasPsybient: false }
+    vi.stubGlobal('fetch', mockScanWhoseFacetsChange(state))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1?exclude_tag=psybient')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(currentLocation().search).toContain('exclude_tag=psybient')
+
+    state.recCount = 2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    await waitFor(() => expect(screen.getByText(fakeRec().title!)).toBeInTheDocument())
+    // An excluded value that's already absent is a no-op, not a stuck filter —
+    // nothing to auto-clear, so the param and no toast should appear.
+    expect(currentLocation().search).toContain('exclude_tag=psybient')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('keeps a still-valid tag filter untouched across a recompute', async () => {
+    const state = { recCount: 1, hasPsybient: true }
+    vi.stubGlobal('fetch', mockScanWhoseFacetsChange(state))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1?tag=psybient')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+
+    state.recCount = 2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    await waitFor(() => expect(screen.getByText(fakeRec().title!)).toBeInTheDocument())
+    expect(currentLocation().search).toContain('tag=psybient')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+})
+
 describe('resume scroll position', () => {
   beforeEach(() => {
     localStorage.clear()

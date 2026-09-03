@@ -1351,7 +1351,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   testable (RTL asserts the right testid for each mock combo), but lower value than net-new work
   since nothing user-visible changes — left queued behind the item below.
 
-- [ ] **Auto-prune URL-persisted filters that no longer exist in facets.**
+- [x] **Auto-prune URL-persisted filters that no longer exist in facets.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved as genuinely new)* After a
   recompute or crawl, a `tag`/`label_id` filter carried in the URL can point at a facet that no
   longer exists, silently rendering an empty feed with no explanation why. When `GET /api/facets`
@@ -1362,6 +1362,33 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   feeding a mock facets response missing the current filter into `useFeedFilters` asserts the
   param is removed and the toast fires with the dropped value's name — pure logic, no visual
   check needed.
+  **Scoped down on build, beyond what Product/Architect+QA sanity-checked:** `label_id` is NOT
+  pruned. `GET /api/facets`'s `labels` rows are `.limit(200)` server-side (`app/api/feed.py`), so
+  a scan with more than 200 distinct bands in its recs (this app's own `CLAUDE.md` records a live
+  curate producing 1,600) would see a perfectly valid `label_id` filter fall outside that top-200
+  window and get wrongly "pruned" as stale — a false positive the original proposal didn't
+  account for. `tags` has no such limit, so only `tag=`/`exclude_tag=` were in scope for real.
+  Within that, only **include**-mode (`tag=`) entries are dropped: an `exclude_tag=` for a value
+  that's currently absent from every rec is a harmless no-op (excluding something that isn't
+  there changes nothing), not the "silently matches nothing" bug this item is actually about, so
+  leaving it alone avoids surprising a reader by clearing an exclusion they set on purpose.
+  Done: `useFeedFilters.ts` gains `pruneTags(stale: string[])` — removes one or more `by`-mode
+  `tag=` entries from the URL in a single `setSearchParams` update (reuses the same
+  `readModes`/`writeModes` helpers every other tag setter already goes through). `ScanFeedPage.
+  tsx`'s `loadFacets()` now diffs the freshly-fetched `tags` facet against the currently active
+  `by`-mode tags (read via a new `activeTagsRef`, kept in sync by a `[activeTags]` effect — an
+  imperative read inside `loadFacets`, the same `meRef`-style shape `AuthContext` already uses, so
+  toggling a tag filter doesn't itself re-create `loadFacets` and cause an extra facets refetch on
+  every click); any that are missing get `pruneTags`'d and a `showToast(..., 'status')` names what
+  was removed. `loadFacets` already re-runs on every `recCount` change (a recompute), which is
+  exactly the trigger that can make a tag disappear, so no new call site was needed. Covered by 3
+  new integration tests in `feed.test.tsx`'s new "auto-prune stale tag filters" block, driving a
+  scan poll like the existing "feed reflow notice" tests do: a `tag=psybient` filter is dropped
+  from the URL with a toast naming it once a simulated recompute's facets response stops
+  containing that tag; an `exclude_tag=psybient` filter is left untouched and no toast appears
+  under the identical facets change (proving the include/exclude asymmetry above); a still-valid
+  `tag=psybient` filter survives a recompute unchanged with no toast. 218/218 frontend tests pass
+  (215 + 3 new), tsc/lint/build clean (chunk split intact). PR: see git history.
 
 - [x] **Add an accessible ISO-time fallback to `RelativeTime`.** *(proposed by the hourly
   routine, 2026-09-03, Architect+QA-approved with a correction)* Product pitched a new
