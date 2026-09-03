@@ -1777,3 +1777,30 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   assertion: temporarily stripped the `Follow.fan_id == me.id` filter from `build_exclusions` and
   reran — the test went red (`assert 1 not in {1}`) exactly as expected, then reverted. 249/249
   backend tests pass, ruff clean. PR: see git history.
+
+- [x] **Construct `art_url` and expose it on `GET /api/recommendations`.** *(proposed by the
+  hourly routine, 2026-09-03, Architect+QA-approved — "sound, pure function, one field wired
+  through an existing query that already selects the underlying column, small"; a paired
+  frontend-rendering proposal from the same round was explicitly CUT by QA — see below)* Direct
+  follow-up to the `art_id` persistence item above, which deliberately stopped short of building a
+  usable URL. `Album.art_id`'s own docstring in `app/db/models.py` already spelled out the
+  formula (`f"https://f4.bcbits.com/img/a{art_id}_10.jpg"`) as the next step.
+  Done: new `app/bandcamp/art.py::art_url(art_id: int | None) -> str | None`, an `art_id is None`
+  check (not falsy — QA flagged that a hypothetical `art_id=0` must still build a URL, not be
+  silently dropped like `None`). `RecommendationOut` gained `art_url: str | None`
+  (`app/api/feed.py`), computed from the row's already-selected `art_id` at response-construction
+  time — no new query/column, `art_id` was already coalesced from `Album`/`Track` by the prior
+  item. Covered by 3 new tests in `test_bandcamp_art.py` (`None`→`None`, a real id→the expected
+  URL, `0`→a URL, not `None`) and one assertion added to `test_api.py`'s existing
+  `test_recommendations_feed` (already seeds `art_id=99`) confirming `art_url` on the response
+  row. 252/252 backend tests pass, ruff clean.
+  **Deliberately NOT done this run — frontend rendering, cut by QA**: a paired proposal to add
+  `art_url` to `frontend/src/api/types.ts` and render an `<img>` in `FeedCard.tsx` was rejected —
+  not because the conditional-render logic itself is untestable (RTL can confirm an `img` with the
+  right `src` is present or absent), but because Bandcamp's `_10` art size is a large square with
+  no existing sizing/`object-fit`/layout rule anywhere in the frontend to constrain it, so an
+  unstyled `<img>` risks visibly breaking `FeedCard`'s existing flex layout — a real CSS/design
+  decision with no objective pass/fail this browser-less sandbox can check. Left for a session
+  with actual visual verification (a `run`/screenshot pass or Roy watching), per this routine's
+  own "never pick a change whose only 'done' signal is visual taste" constraint. PR: see git
+  history.
