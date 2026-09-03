@@ -1937,3 +1937,35 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   boolean where real browsers keep the assigned string); does not warn with an empty seed list;
   stops warning once the last seed is removed. 276/276 frontend tests pass, tsc/lint/build clean
   (chunk split intact). PR: see git history.
+
+- [x] **Add a request timeout to `api/client.ts`.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with a value correction)* `request()` — the single
+  chokepoint every API call goes through — called `fetch()` with no `AbortController`/timeout at
+  all. The existing `catch` block only fires on outright fetch rejection (DNS/connection
+  failure); a hung-but-accepted connection (a dead proxy, a backend that accepts the TCP
+  connection but never responds) never rejects on its own, so it left the caller's loading state
+  stuck forever with zero feedback — not even helped by this run's own Retry button, since
+  nothing ever reaches its catch block to show it.
+  **QA correction, applied:** QA's own suggested 30-45s timeout would still have been too short —
+  `AuthContext.tsx`'s existing comment documents the Render free tier's cold-start window as
+  "~30-60s," so a 45s timeout could still misfire as a false "request timed out" during an
+  ordinary cold start, the exact case the pre-existing network-failure message already explains
+  correctly. Used `REQUEST_TIMEOUT_MS = 90000` (new in `config.ts`) instead, comfortably above the
+  documented window.
+  Done: `request()` creates an `AbortController` per call, passes `signal` to `fetch()`, and
+  `window.setTimeout`s an abort at `REQUEST_TIMEOUT_MS` — cleared in a `finally` block on every
+  path (QA's other correction: an uncleared timer leaks on every successful/normal-error request,
+  not just a timed-out one). The `catch` block now checks for `DOMException`/`AbortError`
+  specifically and throws a distinct `ApiError(0, 'The request timed out. Please try again.')`
+  before falling through to the existing generic "can't reach the server" message. No caller
+  runs deliberately long over this chokepoint to worry about: confirmed `POST
+  /api/scans/{id}/run` just flips status and returns immediately (the crawl itself runs
+  out-of-band via the ARQ poller), and recompute is a DB-bound scoring pass, not a scrape.
+  Covered by two new tests in `client.test.ts`'s "request timeout" block: a `fetch` mock that
+  only rejects once it observes the passed `signal`'s `abort` event (a bare never-resolving mock
+  would just hang forever under fake timers, per QA's note — this one actually exercises the
+  abort wiring) confirms the call rejects with the timeout message only after `vi.
+  advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS)`; a second test confirms a normally-resolving
+  call is unaffected. 269/269 frontend tests pass (stable across repeated runs — one transient,
+  unrelated command-palette flake in a single mixed run did not reproduce on rerun or in
+  isolation), tsc/lint/build clean (chunk split intact). PR: see git history.
