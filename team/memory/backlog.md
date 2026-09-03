@@ -2043,3 +2043,29 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   with `vi.fn()`, opens the palette (clearing the initial mount call for row 0), presses
   ArrowDown, and asserts the mock was called with `{ block: 'nearest' }`. 277/277 frontend tests
   pass, tsc/lint/build clean (chunk split intact). PR #130 (this change).
+
+- [x] **Cold-start panel doesn't show the crawl budget.** *(found by the hourly routine,
+  2026-09-03, via direct code audit — same "wired backend field, no frontend consumer" pattern
+  that turned up "Block reason has no UI" this run, see PR #131)* `GET /api/stats`'s
+  `requests_used`/`request_budget` were typed on the frontend (`Stats.requests_used`/
+  `.request_budget`) and already fetched — but only in the one case where `ScanFeedPage` calls
+  `loadStats()` at all: `total === 0` (the cold-start/empty-feed case, see "Cold-start feeds give
+  no reason, just emptiness" above) — and never rendered. That's exactly the situation where
+  knowing "the crawl has used 743 of 1,000 requests this scan" is most useful: it tells a reader
+  looking at an empty feed whether the crawl is still running (budget has room) or has already
+  used up what it's allowed to spend (budget exhausted), instead of just looking sparse with no
+  explanation.
+  Done: `ColdStartPanel` gained two optional props, `requestsUsed`/`requestBudget`, rendering a
+  "N of M crawl requests used this scan." line (reusing the same `count()`/`.num` formatting as
+  its existing counts) on both branches (no-neighbours-yet and the exclusion-breakdown case) when
+  both are present and the budget is nonzero; absent/zero renders nothing extra, so an unrelated
+  caller (or a test) that doesn't pass them is unaffected. Threaded straight through
+  `EmptyState`'s existing `coldStart` pass-through prop, from `ScanFeedPage`'s already-fetched
+  `stats.requests_used`/`stats.request_budget` — no new fetch, no new API surface. Covered by 4
+  new tests in `ColdStartPanel.test.tsx`'s "crawl-budget line" block (renders on both branches
+  when provided; absent when the values are missing or the budget is zero), 1 new test in
+  `EmptyState.test.tsx` (pass-through), and an extension of the existing cold-start integration
+  test in `feed.test.tsx` (asserts the full rendered budget line's text, not a bare number — the
+  mock's `requests_used: 40` collides with its own `cold_start.excluded_wishlisted: 40` as an
+  exact-text match, so the assertion checks the whole sentence instead of a standalone `'40'`).
+  283/283 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.

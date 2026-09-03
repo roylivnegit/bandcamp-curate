@@ -1004,6 +1004,8 @@ export function ScanFeedPage() {
               <EmptyState
                 anyActive={filters.anyActive}
                 coldStart={stats?.cold_start}
+                requestsUsed={stats?.requests_used}
+                requestBudget={stats?.request_budget}
                 onClearFilters={filters.reset}
               />
             )}

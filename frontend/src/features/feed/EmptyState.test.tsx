@@ -45,4 +45,26 @@ describe('EmptyState', () => {
     expect(screen.getByText('40')).toBeInTheDocument()
     expect(screen.getByText(/candidates/)).toBeInTheDocument()
   })
+
+  it('passes requestsUsed/requestBudget through to ColdStartPanel', () => {
+    render(
+      <EmptyState
+        anyActive={false}
+        coldStart={{
+          neighbour_count: 5,
+          candidates: 40,
+          excluded_owned: 10,
+          excluded_wishlisted: 5,
+          excluded_followed: 20,
+          excluded_blacklisted: 5,
+        }}
+        requestsUsed={99}
+        requestBudget={1000}
+        onClearFilters={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('99')).toBeInTheDocument()
+    expect(screen.getByText(/crawl requests used/)).toBeInTheDocument()
+  })
 })
