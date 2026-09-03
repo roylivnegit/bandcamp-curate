@@ -1193,6 +1193,104 @@ describe('unlike/unblock from the side panels', () => {
       ),
     )
   })
+
+  it('offers "renew" only on a block expiring within a day, and lists soonest-expiring first', async () => {
+    const soon = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+    const later = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString()
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/blacklist',
+        [
+          { ...fakeBlocked, id: 3, band_id: 7, band_name: 'Forever Blocked', expires_at: null },
+          { ...fakeBlocked, id: 2, band_id: 6, band_name: 'Later Band', expires_at: later },
+          { ...fakeBlocked, id: 1, band_id: 5, band_name: 'Blocked Band', expires_at: soon },
+        ],
+      ],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+    await screen.findByText('Blocked Band')
+
+    // Only the row expiring soon gets a renew action, even though "Later
+    // Band" also has a (non-imminent) expiry.
+    expect(screen.getAllByRole('button', { name: 'renew ▾' })).toHaveLength(1)
+
+    const rows = screen.getAllByRole('listitem').map((li) => li.textContent)
+    expect(rows[0]).toMatch(/Blocked Band/)
+    expect(rows[1]).toMatch(/Later Band/)
+    expect(rows[2]).toMatch(/Forever Blocked/)
+  })
+
+  it('renewing a soon-to-expire block posts a fresh expires_at for the same band', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2026-09-03T00:00:00.000Z'))
+    const soon = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+    const fetchMock = mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/blacklist', [{ ...fakeBlocked, expires_at: soon }]],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'renew ▾' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 week' }))
+
+    await waitFor(() => {
+      const renewCall = fetchMock.mock.calls.find(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      })
+      expect(renewCall).toBeDefined()
+      const body = JSON.parse(String(renewCall?.[1]?.body))
+      expect(body.band_id).toBe(5)
+      const expiresAtMs = new Date(body.expires_at).getTime()
+      const expectedMs = new Date('2026-09-03T00:00:00.000Z').getTime() + 7 * 24 * 3600 * 1000
+      expect(Math.abs(expiresAtMs - expectedMs)).toBeLessThan(5000)
+    })
+
+    vi.useRealTimers()
+  })
+
+  it('does not offer renew on a block expiring in several days, or a permanent one', async () => {
+    const later = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString()
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/blacklist',
+        [
+          { ...fakeBlocked, expires_at: later },
+          { ...fakeBlocked, id: 2, band_id: 6, band_name: 'Forever Blocked', expires_at: null },
+        ],
+      ],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+    await screen.findByText('Blocked Band')
+
+    expect(screen.queryByRole('button', { name: 'renew ▾' })).not.toBeInTheDocument()
+  })
 })
 
 describe('feed while the scan is still running', () => {

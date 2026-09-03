@@ -699,6 +699,25 @@ export function ScanFeedPage() {
     }
   }
 
+  // The band is already excluded from the feed, so only the Blocked list
+  // itself needs to reflect the fresh expiry — no `loadFirstPage`/`loadFacets`
+  // round trip, unlike a fresh block/unblock.
+  async function renew(bandId: number, expiresAt: string) {
+    const key = blockedKeyOf(bandId)
+    if (inFlight.current.has(key)) return
+    inFlight.current.add(key)
+    markPanelBusy(key, true)
+    try {
+      await api.block(bandId, expiresAt)
+      await loadBlocked()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not renew that block.')
+    } finally {
+      inFlight.current.delete(key)
+      markPanelBusy(key, false)
+    }
+  }
+
   // ── render ───────────────────────────────────────────────────────────────
   const kindWord = filters.itemType
     ? filters.itemType === 'album'
@@ -787,6 +806,7 @@ export function ScanFeedPage() {
             <BlockedPanel
               items={blocked}
               onUnblock={(id) => void unblock(id)}
+              onRenew={(id, expiresAt) => void renew(id, expiresAt)}
               busy={(id) => blockedKeyOf(id) in panelBusy}
             />
           )}
