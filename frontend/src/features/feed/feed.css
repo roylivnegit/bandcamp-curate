@@ -334,23 +334,6 @@
   cursor: pointer;
 }
 
-/* ── density toggle ──────────────────────────────────────────────────────── */
-/* `data-density` is set on `.cardlist` by ScanFeedPage; `compact` tightens
-   the space between/inside rows for someone paging through a long feed. The
-   attribute selector only ever touches `.card` here — everything else
-   (`content-visibility`, hover motion) stays shared. */
-
-[data-density='compact'] .card {
-  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
-  margin-bottom: 6px;
-  gap: var(--s-3);
-}
-
-[data-density='compact'] .score {
-  width: 44px;
-  height: 44px;
-}
-
 .card.skeleton:hover {
   border-color: var(--line);
   transform: none;
@@ -644,11 +627,6 @@
   box-shadow: 0 0 0 1px var(--danger);
 }
 
-.more {
-  display: block;
-  margin: var(--s-4) auto 0;
-}
-
 /* ── side panels ─────────────────────────────────────────────────────────── */
 
 .sidepanel {
@@ -734,7 +712,14 @@
     flex: 1;
   }
 
+  /* `.controls` switched its main axis to vertical above (flex-direction:
+     column), so the base rule's `flex: 1 1 190px` stopped meaning "grow
+     horizontally, 190px-wide floor" and started meaning "grow to fill
+     leftover vertical space, 190px tall" — the search box was stretching to
+     fill most of the screen. `flex: none` opts back out to its natural
+     (single-line) height. */
   .quickfilter {
+    flex: none;
     max-width: none;
   }
 

@@ -25,6 +25,14 @@ export function AppHeader() {
         >
           {(close) => (
             <div>
+              {me && (
+                <>
+                  <div className="ddhead">
+                    Signed in as <b>{me.username}</b>
+                  </div>
+                  <div className="ddsep" />
+                </>
+              )}
               <Link to="/scans" className="ddrow" onClick={close}>
                 <span className="nm">Scans</span>
               </Link>
@@ -46,17 +54,6 @@ export function AppHeader() {
         <Link to="/scans" className="brand">
           <span className="brand-name">{APP_NAME}</span>
         </Link>
-        <div className="spacer" />
-        {me && (
-          <>
-            <span className="whoami num" title="Signed in">
-              {me.username}
-            </span>
-            <button type="button" className="btn ghost signout" onClick={logout}>
-              Sign out
-            </button>
-          </>
-        )}
       </div>
     </header>
   )

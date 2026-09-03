@@ -12,7 +12,6 @@ import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, TOAST_DURATION_MS, UNDO_WIN
 import { count } from '../../lib/format'
 import { matchesQuery } from '../../lib/quickFilter'
 import { showToast } from '../../lib/toast'
-import { useDensity } from '../../lib/useDensity'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { useScanFinishedMarker } from '../../lib/useScanFinishedMarker'
 import { EmptyState } from './EmptyState'
@@ -61,7 +60,6 @@ export function ScanFeedPage() {
   const scanId = Number.isInteger(parsed) && parsed > 0 ? parsed : null
   const location = useLocation()
   const filters = useFeedFilters(scanId)
-  const [density, toggleDensity] = useDensity()
   /* Destructured so the handlers below can depend on the individual stable
    * callbacks. `filters` itself is a fresh object every render, so depending on
    * it would defeat the point. */
@@ -334,6 +332,40 @@ export function ScanFeedPage() {
       if (feedSeq.current === req) setLoading(false)
     }
   }
+
+  /* `loadMore` is a plain function (recreated every render, closing over the
+   * current `rows`/`filters`), so the observer effect below reads it through
+   * a ref rather than depending on it directly — otherwise every row append
+   * would tear down and recreate the IntersectionObserver. */
+  const loadMoreRef = useRef(loadMore)
+  loadMoreRef.current = loadMore
+
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null)
+
+  // Auto-load-more: the sentinel sits after the last card, and a 600px
+  // rootMargin fires the fetch well before the reader actually reaches the
+  // bottom, so the next page is usually already there by the time they get
+  // there. Stops observing once `done` — nothing left to fetch.
+  //
+  // Depends on `rows.length`, not just `done`: the sentinel only renders once
+  // `rows.length > 0` (see the JSX below), so on the very first render — rows
+  // still empty, `done` still false — the ref is null and there's nothing to
+  // observe yet. Without this dependency the effect runs exactly once at that
+  // moment and never again, so it never actually attaches to the sentinel
+  // once real rows (and the sentinel) exist.
+  useEffect(() => {
+    if (done) return
+    const el = loadMoreSentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) void loadMoreRef.current()
+      },
+      { rootMargin: '600px 0px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [done, rows.length])
 
   // ── like / block ─────────────────────────────────────────────────────────
   /* Every handler below is dependency-free (functional setState + the in-flight
@@ -796,13 +828,10 @@ export function ScanFeedPage() {
           <FilterBar
             filters={filters}
             facetTags={facetTags}
-            rows={rows}
             likedCount={liked.length}
             blockedCount={blocked.length}
             panel={panel}
             onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
-            density={density}
-            onToggleDensity={toggleDensity}
             quickQuery={quickQuery}
             onQuickQueryChange={setQuickQuery}
             quickFilterRef={quickFilterRef}
@@ -896,7 +925,7 @@ export function ScanFeedPage() {
                 `visibleRows`, not `rows` — the quick filter narrows what's
                 rendered without re-fetching. */}
             {visibleRows.length > 0 && (
-              <div className="cardlist" data-density={density} onKeyDown={onCardListKeyDown}>
+              <div className="cardlist" onKeyDown={onCardListKeyDown}>
                 {visibleRows.map((r, i) => {
                   const key = keyOf(r)
                   return (
@@ -917,7 +946,20 @@ export function ScanFeedPage() {
                     />
                   )
                 })}
+                {/* Auto-load-more: no button. Skeletons are real grid items so
+                    they slot in wherever the next row would go, rather than a
+                    separate full-width block under a multi-column grid. */}
+                {loading && SKELETON_KEYS.slice(0, 2).map((k) => <FeedCardSkeleton key={k} />)}
               </div>
+            )}
+            {/* The IntersectionObserver's target — full-width, zero-height,
+                below the grid so it never affects card layout. */}
+            {!done && rows.length > 0 && (
+              <div
+                ref={loadMoreSentinelRef}
+                role="status"
+                aria-label={loading ? 'Loading more…' : undefined}
+              />
             )}
 
             {rows.length === 0 && !loading && !error && (
@@ -936,11 +978,6 @@ export function ScanFeedPage() {
               <p className="empty">No loaded cards match “{quickQuery.trim()}”.</p>
             )}
 
-            {!done && rows.length > 0 && (
-              <button type="button" className="btn ghost more" onClick={loadMore} disabled={loading}>
-                {loading ? 'Loading…' : 'Load more'}
-              </button>
-            )}
           </div>
         </>
       )}

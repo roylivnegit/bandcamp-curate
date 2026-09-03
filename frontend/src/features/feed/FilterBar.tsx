@@ -1,12 +1,9 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 import type { RefObject } from 'react'
 
-import type { Facet, Recommendation, SortKey } from '../../api/types'
-import { CopyLinkButton } from '../../components/CopyLinkButton'
-import { CopyMarkdownButton } from '../../components/CopyMarkdownButton'
+import type { Facet, SortKey } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { RemoveButton } from '../../components/RemoveButton'
-import type { Density } from '../../lib/density'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
 
@@ -25,13 +22,10 @@ const TYPES: Array<{ value: '' | 'album' | 'track'; label: string }> = [
 export function FilterBar({
   filters,
   facetTags,
-  rows,
   likedCount,
   blockedCount,
   panel,
   onTogglePanel,
-  density,
-  onToggleDensity,
   quickQuery,
   onQuickQueryChange,
   quickFilterRef,
@@ -43,13 +37,10 @@ export function FilterBar({
 }: {
   filters: FeedFilters
   facetTags: Facet[]
-  rows: Recommendation[]
   likedCount: number
   blockedCount: number
   panel: 'liked' | 'blocked' | null
   onTogglePanel: (p: 'liked' | 'blocked') => void
-  density: Density
-  onToggleDensity: () => void
   quickQuery: string
   onQuickQueryChange: (q: string) => void
   quickFilterRef: RefObject<HTMLInputElement | null>
@@ -114,14 +105,6 @@ export function FilterBar({
 
         <button
           type="button"
-          className={`btn ghost${density === 'compact' ? ' on' : ''}`}
-          aria-pressed={density === 'compact'}
-          onClick={onToggleDensity}
-        >
-          {density === 'compact' ? '☰ Compact' : '☰ Comfortable'}
-        </button>
-        <button
-          type="button"
           className={`btn ghost${selectMode ? ' on' : ''}`}
           aria-pressed={selectMode}
           onClick={onToggleSelectMode}
@@ -133,8 +116,6 @@ export function FilterBar({
             {allSelected ? '✕ Deselect all' : '☑ Select all loaded'}
           </button>
         )}
-        <CopyLinkButton />
-        <CopyMarkdownButton rows={rows} />
         <button
           type="button"
           className={`btn ghost${panel === 'liked' ? ' on' : ''}`}

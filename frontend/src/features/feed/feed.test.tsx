@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CARD_EXIT_MS, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
+import { triggerIntersections } from '../../test/intersectionObserver'
 import { resetToastsForTests } from '../../lib/toast'
 import { currentLocation, fakeMe, fakeRec, fakeScan, mockFetch, renderApp } from '../../test/renderApp'
 
@@ -11,7 +12,7 @@ const signedIn = () => localStorage.setItem('crate-digger.token', 'tok')
 // The toast queue (lib/toast.ts) is module-scope by design, so a toast raised
 // by one test (like/block/undoRetire failures now show one) would otherwise
 // leak into whichever test runs next in this file — same cross-test leakage
-// ToastStack.test.tsx and CopyLinkButton.test.tsx already guard against.
+// ToastStack.test.tsx already guards against.
 beforeEach(() => resetToastsForTests())
 
 describe('scan list', () => {
@@ -114,24 +115,39 @@ describe('scan feed', () => {
     expect(screen.getByText(/2 neighbours own this/)).toBeInTheDocument()
   })
 
-  it('labels the pagination button "Load more", not a pluralized page size', async () => {
-    // A full page (LIMIT=50 items) with more available server-side (count >
-    // page length) is what puts the button on screen at all (`done` is
-    // `page.length < LIMIT`) — regression coverage for a label bug, not the
-    // pagination mechanics themselves.
-    const fullPage = Array.from({ length: 50 }, (_, i) => fakeRec({ album_id: i + 1, title: `Album ${i + 1}` }))
-    mockFetch([
+  it('auto-loads the next page when the sentinel scrolls into view, with no button', async () => {
+    // A full first page (LIMIT=50 items) with more available server-side
+    // (count > page length) is what keeps `done` false and the sentinel
+    // mounted at all (`done` is `page.length < LIMIT`).
+    const firstPage = Array.from({ length: 50 }, (_, i) => fakeRec({ album_id: i + 1, title: `Album ${i + 1}` }))
+    const secondPage = [fakeRec({ album_id: 51, title: 'Album 51' })]
+    const fetchMock = mockFetch([
       ['/api/auth/me', fakeMe],
       ['/api/scans/1', { ...fakeScan, seeds: [] }],
-      ['/api/recommendations/count', { count: 60 }],
-      ['/api/recommendations', fullPage],
+      ['/api/recommendations/count', { count: 51 }],
+      ['/api/recommendations', firstPage],
       ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
       ['/api/likes', []],
       ['/api/blacklist', []],
     ])
     renderApp('/scans/1')
+    await screen.findByText('Album 1')
 
-    expect(await screen.findByRole('button', { name: 'Load more' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('Album 51')).not.toBeInTheDocument()
+
+    // The next fetch (the second page) resolves with `secondPage` — swap the
+    // mock's routing for /api/recommendations before triggering the sentinel.
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url.includes('/api/recommendations')) return json(secondPage)
+      throw new Error(`no mock route for ${url}`)
+    })
+    triggerIntersections()
+
+    expect(await screen.findByText('Album 51')).toBeInTheDocument()
   })
 
   it('announces the match count to screen readers, and it updates as the count changes', async () => {
@@ -1770,62 +1786,6 @@ describe('scroll-to-top button', () => {
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
     expect(screen.getByRole('heading', { name: /My collection/ })).toHaveFocus()
-  })
-})
-
-describe('density toggle', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    signedIn()
-  })
-  afterEach(() => vi.unstubAllGlobals())
-
-  it('defaults to comfortable, toggles the cardlist attribute, and persists the choice', async () => {
-    mockFetch([
-      ['/api/auth/me', fakeMe],
-      ['/api/scans/1', { ...fakeScan, seeds: [] }],
-      ['/api/recommendations/count', { count: 1 }],
-      ['/api/recommendations', [fakeRec()]],
-      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
-      ['/api/likes', []],
-      ['/api/blacklist', []],
-    ])
-    renderApp('/scans/1')
-    await screen.findByText('Eyes of Infinity')
-
-    const toggle = screen.getByRole('button', { name: '☰ Comfortable' })
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    // The density attribute lives on the cardlist wrapper, not on any
-    // queryable role/text, so this reads the DOM directly rather than via RTL.
-    const cardlist = document.querySelector('.cardlist')
-    expect(cardlist).toHaveAttribute('data-density', 'comfortable')
-
-    fireEvent.click(toggle)
-
-    const toggledOn = await screen.findByRole('button', { name: '☰ Compact' })
-    expect(toggledOn).toHaveAttribute('aria-pressed', 'true')
-    expect(cardlist).toHaveAttribute('data-density', 'compact')
-    expect(localStorage.getItem('crate-digger.density')).toBe('compact')
-  })
-
-  it('starts compact when that was the last persisted choice', async () => {
-    localStorage.setItem('crate-digger.density', 'compact')
-    mockFetch([
-      ['/api/auth/me', fakeMe],
-      ['/api/scans/1', { ...fakeScan, seeds: [] }],
-      ['/api/recommendations/count', { count: 1 }],
-      ['/api/recommendations', [fakeRec()]],
-      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
-      ['/api/likes', []],
-      ['/api/blacklist', []],
-    ])
-    renderApp('/scans/1')
-    await screen.findByText('Eyes of Infinity')
-
-    expect(await screen.findByRole('button', { name: '☰ Compact' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
   })
 })
 
