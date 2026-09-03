@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
+import { PasswordInput } from '../components/PasswordInput'
 import { isValidFanUrl } from '../lib/format'
 import { AuthLayout } from './AuthLayout'
 import { useAuth } from './context'
@@ -91,10 +92,8 @@ export function SignupPage() {
           <label className="label" htmlFor="su-password">
             Password
           </label>
-          <input
+          <PasswordInput
             id="su-password"
-            className="input"
-            type="password"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
