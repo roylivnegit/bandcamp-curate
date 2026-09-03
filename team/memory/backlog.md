@@ -1639,7 +1639,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   the unfiltered total); a quick-filtered view offers only the narrowed set. 252/252 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
-- [ ] **Tab-title status marker for a finished scan.** *(proposed by the hourly routine,
+- [x] **Tab-title status marker for a finished scan.** *(proposed by the hourly routine,
   2026-09-03, Architect+QA-approved with a caveat: "sound in isolation but riskiest of the three —
   keep the effect isolated to one small hook so the test doesn't need the whole ScanFeedPage tree,
   and watch for `document.title`/`document.hidden` mock cleanup polluting other test suites")* A
@@ -1649,3 +1649,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   clearing the prefix on refocus. Verify: a hook-level unit test (not a full-page render) driving
   a mocked status transition plus `document.hidden`, asserting the title gains the prefix on the
   transition and loses it on simulated refocus.
+  Done, per QA's caveat: new standalone `lib/useScanFinishedMarker.ts` — a pure `boolean` hook,
+  no `document.title` formatting inside it (that's still `useDocumentTitle`'s job; the two compose
+  in `ScanFeedPage.tsx` rather than merging). `marked` only flips true on an observed `running`→
+  `done` transition (a `useRef` holds the previous status) while `document.hidden` at the moment
+  of that transition — a scan already `done` on mount, or one that finishes while the tab is
+  visible, is correctly left unmarked (nothing "just finished" from the reader's perspective in
+  either case). A second effect, alive only while `marked`, clears it on the next
+  `visibilitychange` where `document.hidden` is false. `ScanFeedPage.tsx` calls
+  `useDocumentTitle(scan?.name ? (justFinished ? \`✓ ${scan.name}\` : scan.name) : scan?.name)`.
+  Covered by 5 new tests in `useScanFinishedMarker.test.ts` (`renderHook`, no page mount needed):
+  marks true on the transition while hidden; clears on a simulated `visibilitychange` to visible;
+  a scan already `done` on mount is never marked; a transition while the tab is visible is never
+  marked; a `visibilitychange` event with nothing marked is a no-op — each test resets
+  `document.hidden` in `afterEach` per QA's cleanup caveat. One new integration test in
+  `feed.test.tsx`'s "document title" block drives a real scan-status poll (`SCAN_POLL_MS`) under
+  fake timers with `document.hidden` stubbed true throughout, confirming the full path end to end:
+  `document.title` gains the `"✓ "` prefix once the poll observes `done`, and loses it once a
+  `visibilitychange` event fires with `document.hidden` false. 258/258 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
