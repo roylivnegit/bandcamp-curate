@@ -220,8 +220,13 @@ export const api = {
   }),
 
   listBlocked: () => request<Blocked[]>('/api/blacklist'),
-  block: (bandId: number) =>
-    request<Blocked>('/api/blacklist', { method: 'POST', body: { band_id: bandId } }),
+  /** `expiresAt` (an ISO string) makes this a temporary block; omit or pass
+   *  `null` for the existing permanent behavior. */
+  block: (bandId: number, expiresAt?: string | null) =>
+    request<Blocked>('/api/blacklist', {
+      method: 'POST',
+      body: { band_id: bandId, expires_at: expiresAt ?? null },
+    }),
   unblock: (bandId: number) =>
     request<{ unblocked: number }>(`/api/blacklist/${bandId}/unblock`, { method: 'POST' }),
 }

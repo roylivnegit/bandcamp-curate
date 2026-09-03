@@ -1459,7 +1459,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   lands in the shared chunk via `AuthContext`, not a lazy route, which is correct since auth
   applies everywhere). PR: see git history.
 
-- [~] **Surface soon-to-expire blocks in the Blocked side panel, with a renew action.**
+- [x] **Surface soon-to-expire blocks in the Blocked side panel, with a renew action.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved, then found blocked on
   build)* A sibling proposal from the same Product/Architect+QA round as the session-expiry
   warning above. Sort the Blocked panel by `expires_at` ascending (soonest-expiring first,
@@ -1475,10 +1475,26 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   rows to act on. Worse, "renew for how long" has no established convention anywhere in the
   codebase to reuse (no default-duration constant, no duration picker) — picking one here would
   be inventing UI/UX unilaterally, not the "mechanical, no design call" change QA sanity-checked.
-  **Left open, rescoped:** the real prerequisite is a duration picker on the block action itself
-  (already flagged as its own, bigger-scope item by the earlier "Blocked panel never shows a
-  temporary block's expiry" entry above) — build that first, which also gives "renew" an obvious
-  answer to "how long" (repeat the same duration). Do not build "renew" alone before that lands.
+  **Rescoped and the prerequisite is now built (2026-09-03):** the real gap was the missing
+  duration picker on the block action itself (also flagged separately by the "Blocked panel
+  never shows a temporary block's expiry" entry above). `FeedCard`'s `⊘ block` button is
+  untouched (still an immediate, permanent block — no test or keyboard-shortcut behavior
+  changed) and a new "block for… ▾" `Dropdown` sits next to it, offering `1 day` / `1 week` /
+  `1 month` (`BLOCK_DURATIONS` in `config.ts`); picking one computes `expires_at` as
+  `Date.now() + duration` and calls the same `onBlock(rec, expiresAt)` path, now threaded
+  through `ScanFeedPage.tsx`'s `block()` callback to `api.block(bandId, expiresAt)` (backend
+  unchanged, already accepted `expires_at`). The picker hides while either action on that card
+  is in flight, mirroring the existing busy-disables-both-buttons convention. "Renew" itself
+  (the originally-proposed side-panel action) is still not built — left for a follow-up now that
+  it has a real default duration to reuse, per the original rescoping note.
+  Covered by 5 new tests in `FeedCard.test.tsx` (picker present/absent by band/busy state,
+  computes the correct ISO expiry from a fixed system clock and closes the panel, the plain
+  block button is still an immediate untouched call) and one integration test in
+  `feed.test.tsx` ("blocking via the duration picker sends the computed expires_at and blocks
+  the card": drives the real dropdown + `POST /api/blacklist` body end to end under fake
+  timers). 242/242 frontend tests pass, tsc/lint/build clean (chunk split intact — the new
+  `Dropdown` import lands inside the existing `ScanFeedPage` chunk, which already imports
+  `Dropdown` via `FilterBar`). PR: see git history.
 
 - [x] **`frontend/CLAUDE.md`'s "Known conflicts and deferred items" section was stale.**
   *(found by the hourly routine, 2026-09-03, via direct code audit)* Four of its five listed gaps
