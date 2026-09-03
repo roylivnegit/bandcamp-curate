@@ -103,6 +103,8 @@ export interface Blocked {
   band_name: string | null
   band_url: string | null
   reason: string | null
+  /** Set for a temporary block (see backend `Blacklist.expires_at`); `null` blocks forever. */
+  expires_at: string | null
 }
 
 export interface Liked {

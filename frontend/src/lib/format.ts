@@ -40,6 +40,20 @@ export function isValidFanUrl(url: string): boolean {
   return FAN_URL_RE.test(url.trim())
 }
 
+/** "expires in Xm/Xh/Xd" for a temporary block's `expires_at`, or '' for a
+ *  permanent one (`null`) or one that's already lapsed — the backend's own
+ *  `expires_at > now()` filter keeps a lapsed row out of `GET /api/blacklist`
+ *  in the first place, so this is a display nicety, not the enforcement. */
+export function expiresLabel(iso: string | null): string {
+  if (!iso) return ''
+  const ms = new Date(iso).getTime() - Date.now()
+  if (ms <= 0) return ''
+  const s = ms / 1000
+  if (s < 3600) return `expires in ${Math.max(1, Math.round(s / 60))}m`
+  if (s < 86400) return `expires in ${Math.round(s / 3600)}h`
+  return `expires in ${Math.round(s / 86400)}d`
+}
+
 export function plural(n: number, one: string, many = `${one}s`): string {
   return n === 1 ? one : many
 }

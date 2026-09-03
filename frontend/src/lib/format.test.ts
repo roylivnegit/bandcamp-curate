@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { isValidFanUrl } from './format'
+import { expiresLabel, isValidFanUrl } from './format'
 
 describe('isValidFanUrl', () => {
   it('accepts a plain bandcamp.com fan URL', () => {
@@ -39,5 +39,35 @@ describe('isValidFanUrl', () => {
 
   it('rejects an empty string', () => {
     expect(isValidFanUrl('')).toBe(false)
+  })
+})
+
+describe('expiresLabel', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-03T00:00:00Z'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('returns empty for a permanent block (null)', () => {
+    expect(expiresLabel(null)).toBe('')
+  })
+
+  it('returns empty for a lapsed expiry (already in the past)', () => {
+    expect(expiresLabel('2026-09-02T00:00:00Z')).toBe('')
+  })
+
+  it('formats a same-day expiry in hours', () => {
+    expect(expiresLabel('2026-09-03T05:00:00Z')).toBe('expires in 5h')
+  })
+
+  it('formats a sub-hour expiry in minutes, rounding up to at least 1m', () => {
+    expect(expiresLabel('2026-09-03T00:00:10Z')).toBe('expires in 1m')
+  })
+
+  it('formats a multi-day expiry in days', () => {
+    expect(expiresLabel('2026-09-06T00:00:00Z')).toBe('expires in 3d')
   })
 })
