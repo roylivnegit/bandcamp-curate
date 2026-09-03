@@ -6,6 +6,7 @@ import type { Scan } from './api/types'
 import { useAuth } from './auth/context'
 import { AppHeader } from './components/AppHeader'
 import { CommandPalette, type CommandAction } from './components/CommandPalette'
+import { OfflineBanner } from './components/OfflineBanner'
 import { ToastStack } from './components/ToastStack'
 
 /* Split on the auth boundary. The two branches below never render together, so
@@ -61,6 +62,7 @@ export default function App() {
          * (AuthContext) — this instance must exist to pick up that toast, not
          * just the signed-in shell's. */}
         <ToastStack />
+        <OfflineBanner />
         <Suspense fallback={<div className="wrap">{Loading}</div>}>
           <Routes>
             <Route path="/signup" element={<SignupPage />} />
@@ -83,6 +85,7 @@ export default function App() {
       </a>
       <AppHeader />
       <ToastStack />
+      <OfflineBanner />
       <CommandPalette actions={paletteActions} onOpen={loadScansForPalette} />
       <main id="main-content">
         <Suspense fallback={<div className="wrap">{Loading}</div>}>

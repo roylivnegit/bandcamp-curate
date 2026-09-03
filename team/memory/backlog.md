@@ -1160,7 +1160,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   signs in, clicks "Sign out", and asserts no alert appeared. 177/177 frontend tests pass, tsc/lint/
   build clean (chunk split intact). PR: see git history.
 
-- [ ] **"You're offline" banner.** *(proposed by the hourly routine, 2026-09-03, Architect+QA:
+- [x] **"You're offline" banner.** *(proposed by the hourly routine, 2026-09-03, Architect+QA:
   the `useOnlineStatus()` hook is sound and small, but the original toast-based design is not —
   see correction)* If wifi drops, every subsequent like/block/scan-create just fails with a generic
   error — nothing tells the user it's connectivity, not a bug.
@@ -1174,3 +1174,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   Verify: a hook test dispatches `window` `offline`/`online` events and asserts the returned value
   flips (jsdom lets `navigator.onLine` be stubbed directly, no judgment call); a component test
   asserts the banner text appears/disappears with those same events.
+  Done, built exactly to the QA correction: new `lib/useOnlineStatus.ts` — `useState(() =>
+  navigator.onLine)` plus a mount-only effect (`[]` deps) registering `window` `online`/`offline`
+  listeners. New `components/OfflineBanner.tsx` — a standalone `.banner.error` (reuses the
+  existing error-banner tokens, no new color) rendered `role="status"`, returning `null` while
+  online; no toast/timer plumbing at all, avoiding the `Infinity`-duration bug QA flagged. New
+  `.offlinebanner` rule in `styles/base.css` makes it `position: sticky; top: 0` so it stays
+  visible while scrolled, reusing existing spacing/radius tokens rather than inventing new ones —
+  a layout/behavioral change, not a visual-taste one. Mounted in `App.tsx` in *both* branches
+  (signed-in shell and the `!me`/login-or-signup branch, next to each `<ToastStack />`) since a
+  dropped connection during sign-in is exactly as real as one mid-session, and the codebase
+  already duplicates `ToastStack` the same way for the same reason. Covered by 2 new tests in
+  `useOnlineStatus.test.ts` (initial value reads `navigator.onLine`; flips on `offline`/`online`
+  events) and 3 in `OfflineBanner.test.tsx` (nothing rendered while online; appears/disappears
+  with `offline`/`online` events; starts visible when the page mounts already offline — covering
+  the "wifi was already down on load" case, not just the transition). 185/185 frontend tests pass
+  (177 + 8 new), tsc/lint/build clean (chunk split intact — lands in the eagerly-loaded shared
+  chunk via `App.tsx`, same as `ToastStack`, not a lazy route chunk). PR: see git history.
