@@ -532,6 +532,49 @@ describe('scan feed', () => {
     ).toBe(false)
   })
 
+  it('"Select all loaded" checks every visible card, and a second click clears them all', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    expect(screen.queryByRole('button', { name: /select all loaded/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /select all loaded/i }))
+
+    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    expect(checkboxes).toHaveLength(3)
+    expect(checkboxes.every((cb) => cb.checked)).toBe(true)
+    // The feed's own countline also reads "3" here (unfiltered total), so
+    // scope the count assertion to the bulk bar rather than a bare
+    // `findByText('3')`, which would ambiguously match both.
+    const bulkBar = await screen.findByText('selected')
+    expect(within(bulkBar.closest('.bulkbar')!).getByText('3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /deselect all/i }))
+
+    expect(screen.getAllByRole('checkbox').every((cb) => !(cb as HTMLInputElement).checked)).toBe(true)
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+  })
+
+  it('"Select all loaded" only offers what quick-filter narrowed to', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.type(screen.getByPlaceholderText('Filter loaded cards (/)'), 'Second')
+    await screen.findByText('Second album')
+    expect(screen.queryByText('First album')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    await user.click(screen.getByRole('button', { name: /select all loaded/i }))
+
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1)
+    expect(await screen.findByText('1')).toBeInTheDocument()
+  })
+
   it('blocking via the duration picker sends the computed expires_at and blocks the card', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.setSystemTime(new Date('2026-09-03T00:00:00.000Z'))
