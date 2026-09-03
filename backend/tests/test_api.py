@@ -21,6 +21,7 @@ from app.db.models import (
     Scan,
     Tag,
     Track,
+    TrackTag,
     User,
 )
 from app.db.session import get_session
@@ -209,6 +210,35 @@ async def test_recompute_rate_limited_when_cooldown_enabled(
         monkeypatch.setattr(feed_module, "_now", lambda: t0 + timedelta(seconds=31))
         r3 = await client.post("/api/recommendations/recompute")
         assert r3.status_code == 200
+    finally:
+        del app.dependency_overrides[get_settings]
+        feed_module._reset_recompute_cooldown_for_tests()
+
+
+async def test_recompute_failure_does_not_consume_the_cooldown(
+    client: AsyncClient, monkeypatch
+) -> None:
+    # A 404 (bad scan_id) recorded the cooldown timestamp just like a real
+    # recompute, so a legitimate follow-up call was wrongly rate-limited
+    # (429) instead of succeeding — the cooldown must only start counting
+    # from a recompute that actually ran.
+    import app.api.feed as feed_module
+    from app.config import Settings, get_settings
+    from app.main import app
+
+    feed_module._reset_recompute_cooldown_for_tests()
+    app.dependency_overrides[get_settings] = lambda: Settings(recompute_cooldown_seconds=30)
+    try:
+        t0 = datetime(2026, 1, 1, tzinfo=UTC)
+        monkeypatch.setattr(feed_module, "_now", lambda: t0)
+
+        r1 = await client.post("/api/recommendations/recompute?scan_id=999999")
+        assert r1.status_code == 404
+
+        # Immediately after — same clock reading, which would still be inside
+        # the cooldown if the failed call above had consumed it.
+        r2 = await client.post("/api/recommendations/recompute")
+        assert r2.status_code == 200
     finally:
         del app.dependency_overrides[get_settings]
         feed_module._reset_recompute_cooldown_for_tests()
@@ -461,6 +491,51 @@ async def test_facets(client: AsyncClient) -> None:
     rec_bands = {r["band_id"] for r in (await client.get("/api/recommendations")).json()}
     facet_bands = {int(x["value"]) for x in f["labels"]}
     assert rec_bands <= facet_bands
+
+
+async def test_facets_include_track_only_tags() -> None:
+    # A genre that only shows up via TrackTag (never AlbumTag) must still
+    # surface as a facet — the tag-facets query used to inner-join AlbumTag
+    # only, so a track recommendation (album_id is NULL) could never match.
+    engine = create_async_engine(
+        "sqlite+aiosqlite://", poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        b = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
+        user = User(username="me", password_hash="!")
+        s.add_all([b, user])
+        await s.flush()
+        scan = Scan(user_id=user.id, name="c", kind=str(ScanKind.COLLECTION), status="done")
+        s.add(scan)
+        await s.flush()
+        track = Track(bandcamp_id=200, title="Track Only", band_id=b.id)
+        tag = Tag(name="dnb")
+        s.add_all([track, tag])
+        await s.flush()
+        s.add_all([
+            Recommendation(scan_id=scan.id, item_type=ItemType.TRACK, track_id=track.id, score=1.0),
+            TrackTag(track_id=track.id, tag_id=tag.id),
+        ])
+        await s.commit()
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with maker() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            facets = (await c.get("/api/facets")).json()
+        assert "dnb" in {t["value"] for t in facets["tags"]}
+    finally:
+        app.dependency_overrides.clear()
+        await engine.dispose()
 
 
 async def test_recompute_accepts_seed_tag_exclusion(client: AsyncClient) -> None:

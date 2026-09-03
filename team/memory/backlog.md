@@ -1459,7 +1459,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   lands in the shared chunk via `AuthContext`, not a lazy route, which is correct since auth
   applies everywhere). PR: see git history.
 
-- [~] **Surface soon-to-expire blocks in the Blocked side panel, with a renew action.**
+- [x] **Surface soon-to-expire blocks in the Blocked side panel, with a renew action.**
   *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved, then found blocked on
   build)* A sibling proposal from the same Product/Architect+QA round as the session-expiry
   warning above. Sort the Blocked panel by `expires_at` ascending (soonest-expiring first,
@@ -1475,10 +1475,40 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   rows to act on. Worse, "renew for how long" has no established convention anywhere in the
   codebase to reuse (no default-duration constant, no duration picker) — picking one here would
   be inventing UI/UX unilaterally, not the "mechanical, no design call" change QA sanity-checked.
-  **Left open, rescoped:** the real prerequisite is a duration picker on the block action itself
-  (already flagged as its own, bigger-scope item by the earlier "Blocked panel never shows a
-  temporary block's expiry" entry above) — build that first, which also gives "renew" an obvious
-  answer to "how long" (repeat the same duration). Do not build "renew" alone before that lands.
+  **Rescoped and the prerequisite is now built (2026-09-03):** the real gap was the missing
+  duration picker on the block action itself (also flagged separately by the "Blocked panel
+  never shows a temporary block's expiry" entry above). `FeedCard`'s `⊘ block` button is
+  untouched (still an immediate, permanent block — no test or keyboard-shortcut behavior
+  changed) and a new "block for… ▾" `Dropdown` sits next to it, offering `1 day` / `1 week` /
+  `1 month` (`BLOCK_DURATIONS` in `config.ts`); picking one computes `expires_at` as
+  `Date.now() + duration` and calls the same `onBlock(rec, expiresAt)` path, now threaded
+  through `ScanFeedPage.tsx`'s `block()` callback to `api.block(bandId, expiresAt)` (backend
+  unchanged, already accepted `expires_at`). The picker hides while either action on that card
+  is in flight, mirroring the existing busy-disables-both-buttons convention. "Renew" itself
+  (the originally-proposed side-panel action) is still not built — left for a follow-up now that
+  it has a real default duration to reuse, per the original rescoping note.
+  Covered by 5 new tests in `FeedCard.test.tsx` (picker present/absent by band/busy state,
+  computes the correct ISO expiry from a fixed system clock and closes the panel, the plain
+  block button is still an immediate untouched call) and one integration test in
+  `feed.test.tsx` ("blocking via the duration picker sends the computed expires_at and blocks
+  the card": drives the real dropdown + `POST /api/blacklist` body end to end under fake
+  timers). 242/242 frontend tests pass, tsc/lint/build clean (chunk split intact — the new
+  `Dropdown` import lands inside the existing `ScanFeedPage` chunk, which already imports
+  `Dropdown` via `FilterBar`). PR: see git history.
+  **Renew follow-up landed (2026-09-03):** `SidePanels.tsx`'s `BlockedPanel` now sorts rows by
+  `expires_at` ascending (soonest-expiring first, permanent last, via
+  `byExpirySoonestFirst`), and a row within `RENEW_WINDOW_MS` (24h, new in `config.ts`) of
+  lapsing gets a "renew ▾" `Dropdown` reusing the same `BLOCK_DURATIONS` options as the block
+  picker — picking one calls a new `ScanFeedPage.tsx` `renew(bandId, expiresAt)` (mirrors
+  `unblock`'s shape: same `blockedKeyOf`/`panelBusy`/`inFlight` guards) which re-POSTs
+  `/api/blacklist` with the same `band_id` and only reloads the Blocked list (the band is
+  already excluded from the feed, so no `loadFirstPage`/`loadFacets` round trip like a fresh
+  block needs). Covered by 3 new tests in `feed.test.tsx`: renew appears only on the
+  soon-to-expire row and the list sorts soonest-first; picking a renew duration posts the
+  correct `band_id` and a `expires_at` ~1 week out; a block expiring in several days or a
+  permanent one gets no renew action. 245/245 frontend tests pass, tsc/lint/build clean (chunk
+  split intact — `Dropdown`/`BLOCK_DURATIONS` were already imported into the `ScanFeedPage`
+  chunk). PR: see git history.
 
 - [x] **`frontend/CLAUDE.md`'s "Known conflicts and deferred items" section was stale.**
   *(found by the hourly routine, 2026-09-03, via direct code audit)* Four of its five listed gaps
@@ -1494,3 +1524,59 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   standing instruction not to resolve that call unilaterally. Docs-only change; no tests apply, but
   `npm test`/`tsc`/`lint`/`build` were re-run to confirm nothing else was touched. PR: see git
   history.
+- [x] **`expiresLabel` rounds across its own bucket boundary.** *(proposed by the hourly routine,
+  2026-09-03, found via direct code audit — a repeat of the same "read the actual files, don't
+  brainstorm features" approach that found the two bugs above)* `lib/format.ts` chose the
+  minutes/hours/days bucket from the *raw* seconds (`s < 3600`) but rounded the *displayed* number
+  independently, so a value in the last ~30s before an hour (or ~30min before a day) rounded up
+  past its own bucket: 59m50s left rendered "expires in 60m", 23h45m left rendered "expires in
+  24h" — exactly the nonsensical labels the bucketing exists to avoid. Real-world trigger: a block
+  renewed for `1 day` (the "renew ▾"/"block for… ▾" pickers) shows "expires in 24h" for its last
+  half hour.
+  Done: bucket on the *rounded* value instead, falling through to the next unit when rounding
+  overflows the current one (`minutes = Math.round(s/60); if (minutes < 60) …`, then hours, then
+  days). Covered by a new `format.test.ts` case asserting both boundary inputs now render `1h`/`1d`
+  instead of `60m`/`24h`.
+
+- [x] **An empty `label_id` in a bookmarked feed URL silently filters to a nonexistent band.**
+  *(proposed by the hourly routine, 2026-09-03, same code-audit round as above)* `useFeedFilters.ts`
+  parsed the artist filter as `Number(searchParams.get('label_id'))`, and `Number('')` is `0` —
+  which `Number.isInteger` accepts — so `?label_id=` (present but empty: a hand-edited or
+  partially-stripped bookmarked/shared URL, the exact input this hook's own "shareable/bookmarkable"
+  docstring commits to tolerating) parsed as a real filter on band id 0 instead of "no filter",
+  silently zeroing the feed instead of showing it unfiltered. `itemType`/`sort` in the same file
+  already guard this shape correctly via an explicit allow-list (`isItemType`/`isSortKey`); the
+  label parse was the one path trusting a loose numeric coercion instead.
+  Done: treat `id === ''` the same as `id === null` (no filter), alongside the existing
+  non-numeric-string guard. Covered by a new `feed.test.tsx` case opening `/scans/1?label_id=` and
+  asserting no artist-filter pill renders and the (unfiltered) feed still shows its row.
+  249/249 frontend tests pass, tsc/lint/build clean, both bugs from this round.
+
+- [x] **`GET /api/facets` tag facets drop every genre that only tracks carry.** *(proposed by the
+  hourly routine, 2026-09-03, found via the same "read the actual files" code-audit method, this
+  round pointed at the backend)* `api/feed.py`'s tag-facets query inner-joined `AlbumTag` only, so
+  any recommendation with `item_type == "track"` (`album_id` is `NULL`) could never match — a genre
+  that only tracks carried via `TrackTag` silently never appeared in the facet list, even though
+  `GET /api/recommendations?tag=<that genre>` (via `_has_tag`, which correctly ORs `AlbumTag`/
+  `TrackTag`) would filter on it correctly. The `labels` facet three lines below already handles
+  album/track symmetrically (`outerjoin` + `coalesce`); the tag-facets query was the one place in
+  this file still treating them asymmetrically — the exact class of bug CLAUDE.md's M4 notes already
+  flagged once for curation scoring itself.
+  Done: union the `AlbumTag` and `TrackTag` matches (mirroring `_has_tag`'s OR shape) before
+  aggregating, instead of inner-joining `AlbumTag` alone. Covered by a new
+  `test_facets_include_track_only_tags`, confirmed to fail against the old query (empty tag set)
+  before the fix and pass after.
+
+- [x] **A failed recompute call still consumes the rate-limit cooldown.** *(proposed by the hourly
+  routine, 2026-09-03, same backend code-audit round as above)* `POST /api/recommendations/recompute`
+  wrote `_last_recompute_at[user.id]` before checking the `scan_id` belonged to the caller and
+  before `curate()` could raise — so a legitimate 404 (bad `scan_id`, or a collection not yet
+  crawled) still started the cooldown window, locking an immediately-following *correct* call
+  behind a 429 it didn't deserve.
+  Done: moved the `scan_id` ownership check (a fast, deterministic 404) above the cooldown block
+  entirely, and wrapped the `curate()` call so a `ValueError` restores the previous cooldown
+  timestamp (or clears it if there wasn't one) instead of leaving the just-written one in place.
+  Covered by a new `test_recompute_failure_does_not_consume_the_cooldown` (bad `scan_id` under an
+  enabled cooldown, then an immediate valid call still gets `200`), confirmed to fail against the
+  old ordering (`429`) before the fix. 249/249 backend tests pass, ruff clean, both bugs from this
+  round.

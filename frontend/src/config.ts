@@ -52,6 +52,22 @@ export const VISITED_CAP = 500
  *  `useSessionExpiryWarning` fires its one warning toast, in ms. */
 export const SESSION_EXPIRY_WARNING_MS = 5 * 60 * 1000
 
+/** Options offered by `FeedCard`'s "block for… ▾" duration picker — a
+ *  temporary block, as opposed to the plain "⊘ block" button's permanent one.
+ *  `ms` is added to `Date.now()` to produce the `expires_at` sent to
+ *  `POST /api/blacklist`. */
+export const BLOCK_DURATIONS: { label: string; ms: number }[] = [
+  { label: '1 day', ms: 24 * 60 * 60 * 1000 },
+  { label: '1 week', ms: 7 * 24 * 60 * 60 * 1000 },
+  { label: '1 month', ms: 30 * 24 * 60 * 60 * 1000 },
+]
+
+/** Below this much time left, a temporary block in the Blocked panel gets a
+ *  "renew ▾" action (reusing `BLOCK_DURATIONS`) instead of just an expiry
+ *  label — the point at which it's actually about to lapse, not merely
+ *  temporary. */
+export const RENEW_WINDOW_MS = 24 * 60 * 60 * 1000
+
 /** Above this many selected cards, `<BulkActionBar>` requires a second
  *  confirming click before firing the block calls — undo exists, but a
  *  stray "select all" + block on a large filtered set has a bigger blast
