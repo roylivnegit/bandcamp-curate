@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-import { TOAST_DURATION_MS, TOAST_STACK_CAP } from '../config'
+import { TOAST_DURATION_MS } from '../config'
 
 export interface Toast {
   id: number
@@ -46,24 +46,9 @@ export function showToast(
   action?: Toast['action'],
 ) {
   const id = nextId++
-  toasts = evictOverflow([...toasts, { id, message, variant, action }])
+  toasts = [...toasts, { id, message, variant, action }]
   emitChange()
   window.setTimeout(() => dismissToast(id), durationMs)
-}
-
-/** Drops the oldest toast with no pending `action` until the queue is back
- *  at the cap — an action carries something the reader would lose silently
- *  (e.g. an Undo), so it's never the one evicted. If every current toast has
- *  one, the queue is left over cap rather than dropping any of them; that's
- *  an edge case rare enough not to need its own policy. */
-function evictOverflow(list: Toast[]): Toast[] {
-  let next = list
-  while (next.length > TOAST_STACK_CAP) {
-    const idx = next.findIndex((t) => !t.action)
-    if (idx === -1) break
-    next = [...next.slice(0, idx), ...next.slice(idx + 1)]
-  }
-  return next
 }
 
 /** Removes one toast immediately (the auto-dismiss timer above, or a reader
