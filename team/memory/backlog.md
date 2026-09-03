@@ -1988,7 +1988,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   of 5 items (under one page) never shows the button at all. 274/274 frontend tests pass,
   tsc/lint/build clean (chunk split intact). Merged same run (PR #127). PR: see git history.
 
-- [~] **Add a React error boundary.** *(proposed by the hourly routine, 2026-09-03,
+- [x] **Add a React error boundary.** *(proposed by the hourly routine, 2026-09-03,
   Architect+QA-approved)* Self-found via `grep -rn 'ErrorBoundary|componentDidCatch'` across
   `frontend/src` — zero hits. The app had no error boundary anywhere: an uncaught render-time
   exception in any component (a malformed API response causing a null-access, or any other
@@ -2010,6 +2010,5 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   (one transient, unrelated command-palette-adjacent flake did not reproduce on rerun, matching
   the flake already logged against the previous item), tsc/lint/build clean (lands in the
   eagerly-loaded shared chunk via `App.tsx`, not a lazy route chunk, as expected for a boundary
-  that must exist before either route renders). PR: see git history.
-  **PR #128 open, auto-merge enabled — confirm the merge actually happened before flipping this
-  to `[x]`.**
+  that must exist before either route renders). Merged same run (PR #128, after a merge conflict
+  with #127 in this same file — resolved by keeping both entries). PR: see git history.
