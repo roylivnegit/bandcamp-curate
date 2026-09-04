@@ -2143,15 +2143,14 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   Done: reworded both comments to describe the current, real wiring. Comment-only change; 287/287
   frontend tests pass, tsc/lint/build clean. Merged (#134).
 
-- [~] **Dead `COPY_LINK_FEEDBACK_MS` constant + `ShortcutsHelp` missing the Ctrl/Cmd+K row.**
+- [x] **Dead `COPY_LINK_FEEDBACK_MS` constant + `ShortcutsHelp` missing the Ctrl/Cmd+K row.**
   *(found by the hourly routine, 2026-09-03, via direct code audit)* `config.ts`'s
   `COPY_LINK_FEEDBACK_MS` was orphaned when `CopyLinkButton`/`CopyMarkdownButton` were removed in
   #107 — confirmed via a repo-wide grep, its only remaining reference was its own declaration.
   Separately, `ShortcutsHelp`'s panel lists `l`/`b`/arrows/Home/End/`/`/`?` but never mentioned
   `Ctrl`/`Cmd`+`K`, even though `CommandPalette` is mounted globally and live on the same page.
   Done: deleted the dead constant; added the missing shortcuts row plus a test assertion. 287/287
-  frontend tests pass, tsc/lint/build clean (chunk split intact). PR #135 open with auto-merge
-  enabled, not yet confirmed merged as of this note.
+  frontend tests pass, tsc/lint/build clean (chunk split intact). Merged (#135).
 
 - [x] **Collection-scan neighbour seeding ignores owned standalone tracks.** *(found by the hourly
   routine, 2026-09-04, via direct code audit)* `_seed_ids()` (`app/curation/engine.py`) only pulled
