@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useState } from 'react'
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { Navigate, Route, Routes, useMatch, useNavigate } from 'react-router-dom'
 
 import { api } from './api/client'
 import type { Scan } from './api/types'
@@ -8,6 +8,7 @@ import { AppHeader } from './components/AppHeader'
 import { CommandPalette, type CommandAction } from './components/CommandPalette'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { OfflineBanner } from './components/OfflineBanner'
+import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { ToastStack } from './components/ToastStack'
 
 /* Split on the auth boundary. The two branches below never render together, so
@@ -29,6 +30,10 @@ export default function App() {
   const { me, loading } = useAuth()
   const navigate = useNavigate()
   const [scans, setScans] = useState<Scan[]>([])
+  // Only the feed page has cards/quick-filter/menus for the feed-only rows in
+  // ShortcutsHelp's list to describe — everywhere else in the signed-in shell
+  // gets the palette/panel-toggle rows only.
+  const onFeedPage = useMatch('/scans/:scanId') !== null
 
   // The command palette only ever needs a fresh scan list while it's open —
   // refetching on every render (or on a poll) would be wasted work the rest
@@ -88,6 +93,7 @@ export default function App() {
       <ToastStack />
       <OfflineBanner />
       <CommandPalette actions={paletteActions} onOpen={loadScansForPalette} />
+      <ShortcutsHelp feedShortcuts={onFeedPage} />
       <main id="main-content">
         <ErrorBoundary>
           <Suspense fallback={<div className="wrap">{Loading}</div>}>

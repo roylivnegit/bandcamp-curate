@@ -2,14 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 
 import './ShortcutsHelp.css'
 
-const SHORTCUTS: Array<{ keys: string; description: string }> = [
-  { keys: 'l', description: 'Like the focused recommendation' },
-  { keys: 'b', description: "Block the focused recommendation's artist" },
-  { keys: '↑ / ↓', description: 'Move to the next/previous card, or through an open menu' },
-  { keys: 'Home / End', description: 'Jump to the first / last card, or menu row' },
-  { keys: '/', description: 'Focus the quick filter (narrows the loaded cards by title/artist)' },
-  { keys: 'Ctrl / ⌘ K', description: 'Open the jump-to command palette' },
-  { keys: '?', description: 'Toggle this panel' },
+/** `feed: true` rows only apply on a scan's feed page (`/scans/:scanId`) — the
+ *  other signed-in pages have no cards, quick filter, or menus for them to act
+ *  on. `feed: false` rows (the palette, this panel's own toggle) apply
+ *  everywhere in the signed-in shell, which is also where this component is
+ *  mounted (`App.tsx`). */
+const SHORTCUTS: Array<{ keys: string; description: string; feed: boolean }> = [
+  { keys: 'l', description: 'Like the focused recommendation', feed: true },
+  { keys: 'b', description: "Block the focused recommendation's artist", feed: true },
+  {
+    keys: '↑ / ↓',
+    description: 'Move to the next/previous card, or through an open menu',
+    feed: true,
+  },
+  { keys: 'Home / End', description: 'Jump to the first / last card, or menu row', feed: true },
+  {
+    keys: '/',
+    description: 'Focus the quick filter (narrows the loaded cards by title/artist)',
+    feed: true,
+  },
+  { keys: 'Ctrl / ⌘ K', description: 'Open the jump-to command palette', feed: false },
+  { keys: '?', description: 'Toggle this panel', feed: false },
 ]
 
 function isTextEntryTarget(target: EventTarget | null): boolean {
@@ -22,10 +35,14 @@ const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
   'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-/** A "?"-triggered overlay documenting the feed's keyboard shortcuts (l/b,
- *  Dropdown arrow-key nav), which otherwise ship invisible — nothing else
- *  in the UI tells a reader they exist. */
-export function ShortcutsHelp() {
+/** A "?"-triggered overlay documenting the app's keyboard shortcuts (the
+ *  jump-to palette everywhere, plus the feed's l/b and Dropdown arrow-key nav
+ *  on a scan's feed page), which otherwise ship invisible — nothing else in
+ *  the UI tells a reader they exist. Mounted once, globally, in `App.tsx`;
+ *  `feedShortcuts` scopes the list to what's actually usable on the current
+ *  page, since the feed-only rows describe controls that don't exist on
+ *  e.g. the scans list. */
+export function ShortcutsHelp({ feedShortcuts = true }: { feedShortcuts?: boolean }) {
   const [open, setOpen] = useState(false)
   const previouslyFocused = useRef<HTMLElement | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -108,7 +125,7 @@ export function ShortcutsHelp() {
           </button>
         </div>
         <dl>
-          {SHORTCUTS.map((s) => (
+          {SHORTCUTS.filter((s) => feedShortcuts || !s.feed).map((s) => (
             <div className="shortcut-row" key={s.keys}>
               <dt>
                 <kbd>{s.keys}</kbd>

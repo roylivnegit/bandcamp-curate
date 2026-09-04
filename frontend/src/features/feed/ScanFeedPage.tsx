@@ -7,7 +7,6 @@ import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '.
 import { BulkActionBar } from '../../components/BulkActionBar'
 import { DeleteScanButton } from '../../components/DeleteScanButton'
 import { ScrollTopButton } from '../../components/ScrollTopButton'
-import { ShortcutsHelp } from '../../components/ShortcutsHelp'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, TOAST_DURATION_MS, UNDO_WINDOW_MS } from '../../config'
 import { count } from '../../lib/format'
 import { matchesQuery } from '../../lib/quickFilter'
@@ -829,7 +828,6 @@ export function ScanFeedPage() {
 
   return (
     <div className="wrap feedpage">
-      <ShortcutsHelp />
       <ScrollTopButton onClick={scrollToTop} />
       <nav className="feednav">
         <Link to="/scans" className="back">
