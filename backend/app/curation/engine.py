@@ -846,12 +846,17 @@ async def curate(
 
 
 async def seed_tags(session: AsyncSession, user: User) -> list[tuple[str, int]]:
-    """Genres of your own crawled albums (the seeds), with how many albums carry each.
+    """Genres of your own crawled albums and tracks (the seeds), with how many
+    items carry each.
 
-    These are the values the "exclude by seed genre" filter offers.
+    These are the values the "exclude by seed genre" filter offers. Combines
+    album-tag and track-tag matches — an inner join on AlbumTag alone never
+    matches a standalone owned track (its album_id is NULL), so a genre
+    carried only by a track silently never showed up here. Same bug class
+    already fixed for GET /api/facets's `tags` list in app/api/feed.py.
     """
     me = await get_me(session, user)
-    rows = (
+    album_rows = (
         await session.execute(
             select(Tag.name, func.count(func.distinct(AlbumTag.album_id)))
             .select_from(FanItem)
@@ -859,10 +864,22 @@ async def seed_tags(session: AsyncSession, user: User) -> list[tuple[str, int]]:
             .join(Tag, Tag.id == AlbumTag.tag_id)
             .where(FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False))
             .group_by(Tag.name)
-            .order_by(func.count(func.distinct(AlbumTag.album_id)).desc(), Tag.name)
         )
     ).all()
-    return [(name, n) for name, n in rows]
+    track_rows = (
+        await session.execute(
+            select(Tag.name, func.count(func.distinct(TrackTag.track_id)))
+            .select_from(FanItem)
+            .join(TrackTag, TrackTag.track_id == FanItem.track_id)
+            .join(Tag, Tag.id == TrackTag.tag_id)
+            .where(FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False))
+            .group_by(Tag.name)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for name, n in (*album_rows, *track_rows):
+        counts[name] = counts.get(name, 0) + n
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
 # Upper bounds of the recorded-collection-size buckets `neighbour_size_report` groups
