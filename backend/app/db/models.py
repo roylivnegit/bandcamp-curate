@@ -388,6 +388,14 @@ class CrawlFrontier(Base, TimestampMixin):
     # Distance from the seed (seed=0). Bounds the supporter→collection fan-out.
     depth: Mapped[int] = mapped_column(Integer, default=0, index=True)
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Consecutive TimeoutErrors, independent of `attempts` (the fairness-pass
+    # counter, bumped on every claim including an ordinary `mark_partial`
+    # re-page). A large collection legitimately needs several claims to fully
+    # page, which used to push `attempts` past `MAX_ENTRY_TIMEOUTS` with zero
+    # real timeouts — the very next timeout then failed it permanently instead
+    # of allowing the intended number of retries. Reset to 0 by `mark_done`/
+    # `mark_partial` (real progress), incremented only in the TimeoutError path.
+    timeout_count: Mapped[int] = mapped_column(Integer, default=0)
     # Resumable-pagination bookmark. A fan collection can run to thousands of items
     # (p90 here is ~1,700), far more than one job should page in one sitting, so a
     # visit pages a bounded slice and parks the next-page tokens here; the entry
