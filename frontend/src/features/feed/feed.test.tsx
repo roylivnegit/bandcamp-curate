@@ -2092,3 +2092,57 @@ describe('command palette', () => {
     expect(currentLocation().pathname).toBe('/scans/2')
   })
 })
+
+describe('seed resolution panel', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const seeds = [
+    { url: 'https://a.bandcamp.com/album/one', seed_type: 'album', resolved_album_id: 5, resolved_track_id: null },
+    { url: 'https://b.bandcamp.com/track/two', seed_type: 'track', resolved_album_id: null, resolved_track_id: null },
+  ]
+
+  it('has no Seeds toggle at all when the scan has none', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    await screen.findByText('Eyes of Infinity')
+    expect(screen.queryByRole('button', { name: /Seeds/ })).not.toBeInTheDocument()
+  })
+
+  it('shows each seed’s resolution status, even while the scan is still queued and the feed itself is hidden', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'queued', rec_count: 0, seeds }],
+      ['/api/scans', [fakeScan]],
+    ])
+    const user = userEvent.setup()
+    renderApp('/scans/1')
+
+    const toggle = await screen.findByRole('button', { name: 'Seeds (2)' })
+    // The feed/filter bar (and its own Liked/Blocked toggles) aren't shown
+    // for a queued scan — the Seeds toggle has to work without them.
+    expect(screen.queryByRole('button', { name: /Liked/ })).not.toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(screen.getByText('https://a.bandcamp.com/album/one')).toBeInTheDocument()
+    expect(screen.getByText('Resolved')).toBeInTheDocument()
+    expect(screen.getByText('https://b.bandcamp.com/track/two')).toBeInTheDocument()
+    expect(screen.getByText('Pending')).toBeInTheDocument()
+
+    await user.click(toggle)
+    expect(screen.queryByText('https://a.bandcamp.com/album/one')).not.toBeInTheDocument()
+  })
+})

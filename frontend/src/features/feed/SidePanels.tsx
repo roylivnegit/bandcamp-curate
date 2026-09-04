@@ -1,9 +1,13 @@
 import { useState } from 'react'
 import type { FocusEvent, KeyboardEvent } from 'react'
-import type { Blocked, Liked } from '../../api/types'
+import type { Blocked, Liked, ScanSeed, ScanStatus } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { BLOCK_DURATIONS, RENEW_WINDOW_MS, SIDEPANEL_PAGE_SIZE } from '../../config'
 import { expiresLabel } from '../../lib/format'
+import { seedStatus } from '../../lib/seedStatus'
+
+const SEED_STATUS_ICON = { resolved: '✓', pending: '◴', unresolved: '⚠' } as const
+const SEED_STATUS_LABEL = { resolved: 'Resolved', pending: 'Pending', unresolved: 'Not found' } as const
 
 /** Ascending by expiry — soonest-to-lapse first, permanent blocks (no
  *  `expires_at`) last, since there's nothing there to act on soon. */
@@ -226,6 +230,38 @@ export function BlockedPanel({
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** The Bandcamp links a scan was seeded with, and whether each one has
+ *  resolved to a real album/track yet — `GET /api/scans/{id}` has always
+ *  returned this (`ScanDetail.seeds`) but nothing rendered it, so a seed that
+ *  turned out to be a typo or a removed release looked identical to one
+ *  still waiting on the crawl. Unlike Liked/Blocked, seeds are per-scan, not
+ *  global, and short (bounded by what one form submission pasted in) — no
+ *  "Show more" pagination needed. */
+export function SeedsPanel({ items, scanStatus }: { items: ScanSeed[]; scanStatus: ScanStatus }) {
+  return (
+    <div className="panel sidepanel">
+      <p className="hint">
+        The links this scan was seeded with, and whether each has resolved to a real album or
+        track.
+      </p>
+      <ul className="rows">
+        {items.map((s, i) => {
+          const status = seedStatus(s, scanStatus)
+          return (
+            <li className="row" key={`${s.url}-${i}`}>
+              <span className="row-main">{s.url}</span>
+              <span className="hint">
+                <span aria-hidden="true">{SEED_STATUS_ICON[status]}</span>{' '}
+                {SEED_STATUS_LABEL[status]}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }

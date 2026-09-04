@@ -155,3 +155,52 @@ Lesson for future rounds: before building on a "this is dead/unwired code" findi
 it's dead — `git log -p`/`git blame` on the file, not just a same-session grep. A deliberate
 removal and an unfinished feature look identical to a grep for call sites; only the history tells
 them apart, and building the wrong one means undoing a decision Roy already made on purpose.
+
+## 2026-09-04 — hourly routine, another Option C round: one built, one caught before the QA call
+
+Product's round (fed the real component/lib file inventory, not a summary) proposed two ideas:
+
+- **"Show the co-ownership count (`reasons.co_owners`) on each `FeedCard`."** Framed as "the
+  strongest ranking signal is invisible in the feed." Checked against source before spending a QA
+  call: `FeedCard.tsx` has no score/co-owner display of any kind today, and `git log -S'"score"'
+  -- frontend/src/features/feed/FeedCard.tsx` finds why — commit `8507764` ("card/header cleanup —
+  drop seen+score… (#122)", merged the day before this run, Roy co-authored, "verified in a real
+  browser") explicitly hid the score badge on purpose: *"The score itself still drives sorting and
+  CSV export server-side and client-side — only the visual badge is gone."* An existing test
+  (`feed.test.tsx`: `'renders a recommendation with its artist, but no visible score or co-owner
+  chip'`) locks this in. Adding a co-owner count line would have silently reintroduced the exact
+  numeric badge Roy asked removed one day earlier — same failure mode as the `recsToMarkdown`
+  catch above (check *why* something is absent, not just that it's absent). **Do not re-propose a
+  visible score/co-owner-count badge on `FeedCard` without Roy asking for it explicitly** — CSV
+  export and the (currently unrendered) `scan.seeds` data are fine, this specific badge is not.
+- **"Seed resolution status panel."** Genuinely new and verified sound: `GET /api/scans/{id}`
+  (`ScanDetailOut.seeds`) has returned `{url, seed_type, resolved_album_id, resolved_track_id}` per
+  seed since the multi-seed scan feature shipped, fully typed on the frontend (`ScanSeed` in
+  `api/types.ts`) and fetched on every scan-detail load — but `grep -rn 'scan.seeds\|resolved_album_id'
+  --include='*.tsx'` outside `api/types.ts` and test files came back empty. No history of a removed
+  seeds UI (checked `git log --all --diff-filter=D --summary | grep -i seed`, nothing). Built this
+  run — see backlog.md.
+
+Net: leading Product with the real file inventory plus an explicit "check git history before
+trusting a gap" instruction caught a real regression risk (resurrecting a deliberately-hidden
+score badge) for the cost of one grep + one `git log -S`, before it ever reached the QA call.
+
+Also self-checked (not fed to Product) while looking for a second task the same run: `reasons.
+seed_tags` (the "via <tags>" genre-provenance explanation CLAUDE.md's M4 notes describe as "shown
+as 'via …' in the UI") is typed on the frontend, computed server-side by
+`_seed_tag_provenance()`, and rendered... nowhere. A `.via` CSS rule even still exists in
+`feed.css` with nothing left that uses it. Looks exactly like the seed-resolution-panel gap this
+run just built. It is not: `git log -S'.via' -- frontend/src/features/feed/feed.css` finds
+`640b5eb` ("drop 3 unwanted card elements (#103)", same day as the score removal, Roy
+co-authored) — its own commit message says plainly *"Removed three things the product owner
+doesn't want on the card: … the 'via <tags>' line under a card's reasons …"*. **Do not propose
+resurrecting the "via <tags>" line — same rule as the score badge: this is Roy's call to reverse
+explicitly, not a gap to fill.** The orphaned `.via` CSS rule itself is fair game for a future
+dead-code cleanup (delete the rule, not resurrect a user of it), same category as the
+`COPY_LINK_FEEDBACK_MS` cleanup — but that's cosmetic housekeeping, not a product fix.
+
+Lesson reinforced: on this codebase specifically, an "I found data the API returns that nothing
+renders" grep hit needs a `git log -S` check on the *specific missing UI element* (not just the
+data field) before it's trusted as a real gap — #103 and #122, both from the same day, deliberately
+stripped down what the card shows, so several plausible "add this back" ideas are actually the
+one thing this codebase is *not* short on: things Roy removed on purpose.

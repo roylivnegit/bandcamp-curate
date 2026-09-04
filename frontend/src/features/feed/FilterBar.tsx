@@ -41,7 +41,7 @@ export function FilterBar({
   facetTags: Facet[]
   likedCount: number
   blockedCount: number
-  panel: 'liked' | 'blocked' | null
+  panel: 'liked' | 'blocked' | 'seeds' | null
   onTogglePanel: (p: 'liked' | 'blocked') => void
   quickQuery: string
   onQuickQueryChange: (q: string) => void
