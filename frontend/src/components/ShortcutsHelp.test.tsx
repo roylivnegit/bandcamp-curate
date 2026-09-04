@@ -22,6 +22,7 @@ describe('ShortcutsHelp', () => {
     expect(dialog).toBeInTheDocument()
     expect(dialog).toHaveTextContent('Like the focused recommendation')
     expect(dialog).toHaveTextContent("Block the focused recommendation's artist")
+    expect(dialog).toHaveTextContent('Open the jump-to command palette')
   })
 
   it('does not open while a text field has focus (typing a literal "?")', () => {

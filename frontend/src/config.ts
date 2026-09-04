@@ -24,9 +24,6 @@ export const CARD_EXIT_MS = 800
  *  enough to catch a mis-click without becoming visual clutter. */
 export const UNDO_WINDOW_MS = 6000
 
-/** How long the "Copy link" button shows its "Copied" confirmation, in ms. */
-export const COPY_LINK_FEEDBACK_MS = 2000
-
 /** How long a toast (see lib/toast.ts) stays up before auto-dismissing, in ms. */
 export const TOAST_DURATION_MS = 4000
 
