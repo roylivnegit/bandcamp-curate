@@ -2226,3 +2226,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   "seed resolution panel" block (no Seeds toggle at all when `scan.seeds` is empty; the toggle
   appears and the panel opens/closes with correct per-seed statuses on a `queued` scan, where the
   Liked/Blocked toggles are confirmed absent). PR: see git history.
+
+- [x] **Cold-start diagnostics never accounted for liked items.** *(found by the hourly routine,
+  2026-09-04, via a targeted backend correctness audit — this run's second task)* `build_exclusions()`
+  treats a liked item (and its whole band) as a full exclusion category alongside owned/wishlisted/
+  followed/blacklisted, but `cold_start_diagnostics()` — the separate query `GET /api/stats` uses to
+  explain why a scan's feed came back thin or empty — only ever checked the first four. A candidate
+  excluded solely because the user liked it (or liked another release by the same band) showed up in
+  `candidates` with none of the `excluded_*` counters accounting for it, actively misleading the
+  "why is my feed empty" diagnostic this feature exists for. Confirmed via the original "Cold-start
+  feeds give no reason" design note above (only four reasons were ever implemented/tested) that this
+  was a genuine oversight, not a documented decision to leave likes out.
+  Done: added the missing `"liked"` bucket end-to-end — `engine.py`'s `reasons` dict and per-candidate
+  loop (reusing the same `Like`-table queries `build_exclusions` already does), `ColdStartOut.
+  excluded_liked` (`app/api/feed.py`), the frontend `ColdStart` type, and a new "· N liked" segment
+  in `ColdStartPanel`'s exclusion line. New `test_cold_start_diagnostics_counts_liked_items` (mirrors
+  the existing `..._everything_excluded_by_follows` fixture shape) confirms a liked candidate is now
+  counted; three existing tests asserting exact `excluded_by_reason` dicts updated for the new key.
+  261/261 backend tests pass, ruff clean; 301/301 frontend tests pass, tsc/lint/build clean. PR: see
+  git history.
