@@ -978,7 +978,7 @@ async def cold_start_diagnostics(
     seed_album_ids, seed_track_ids = await _seed_ids(session, scan, me)
     neighbours = await _scan_neighbours(session, seed_album_ids, seed_track_ids, me)
 
-    reasons = {"owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0}
+    reasons = {"owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0, "liked": 0}
     if not neighbours:
         return ColdStartDiagnostics(neighbour_count=0, candidates=0, excluded_by_reason=reasons)
 
@@ -1045,6 +1045,26 @@ async def cold_start_diagnostics(
     bl_album_ids = await _scalar_set(session, select(Blacklist.album_id).where(*bl_where))
     bl_track_ids = await _scalar_set(session, select(Blacklist.track_id).where(*bl_where))
     bl_band_ids = await _scalar_set(session, select(Blacklist.band_id).where(*bl_where))
+    # Liked items/bands (see build_exclusions — a like excludes the item AND its
+    # band). Missing this bucket used to leave a liked candidate unaccounted for
+    # in every reason count, misleadingly implying nothing excluded it.
+    liked_album_ids = await _scalar_set(
+        session, select(Like.album_id).where(Like.user_id == user.id)
+    )
+    liked_track_ids = await _scalar_set(
+        session, select(Like.track_id).where(Like.user_id == user.id)
+    )
+    liked_band_ids = await _scalar_set(
+        session,
+        select(Album.band_id).select_from(Like)
+        .join(Album, Album.id == Like.album_id)
+        .where(Like.user_id == user.id),
+    ) | await _scalar_set(
+        session,
+        select(Track.band_id).select_from(Like)
+        .join(Track, Track.id == Like.track_id)
+        .where(Like.user_id == user.id),
+    )
 
     def _is_followed(band_id: int | None, url: str | None) -> bool:
         return band_id in followed_band_ids or url_host(url) in followed_hosts
@@ -1058,6 +1078,8 @@ async def cold_start_diagnostics(
             reasons["followed"] += 1
         if album_id in bl_album_ids or band_id in bl_band_ids:
             reasons["blacklisted"] += 1
+        if album_id in liked_album_ids or band_id in liked_band_ids:
+            reasons["liked"] += 1
 
     for track_id, band_id, url in track_rows:
         if track_id in my_owned_tracks:
@@ -1068,6 +1090,8 @@ async def cold_start_diagnostics(
             reasons["followed"] += 1
         if track_id in bl_track_ids or band_id in bl_band_ids:
             reasons["blacklisted"] += 1
+        if track_id in liked_track_ids or band_id in liked_band_ids:
+            reasons["liked"] += 1
 
     return ColdStartDiagnostics(
         neighbour_count=len(neighbours), candidates=candidates, excluded_by_reason=reasons

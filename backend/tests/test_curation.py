@@ -876,9 +876,9 @@ async def test_cold_start_diagnostics_counts_neighbours_candidates_and_reasons(
     assert diag.neighbour_count == 2
     # Distinct items neighbours own, before any exclusion: albums A1-A5 + track T2.
     assert diag.candidates == 6
-    # A1 is mine (owned), A2 is wishlisted, A3's band (B3) is followed, none blacklisted.
+    # A1 is mine (owned), A2 is wishlisted, A3's band (B3) is followed, none blacklisted/liked.
     assert diag.excluded_by_reason == {
-        "owned": 1, "wishlisted": 1, "followed": 1, "blacklisted": 0,
+        "owned": 1, "wishlisted": 1, "followed": 1, "blacklisted": 0, "liked": 0,
     }
 
 
@@ -921,6 +921,48 @@ async def test_cold_start_diagnostics_everything_excluded_by_follows(
     assert diag.excluded_by_reason["owned"] == 0
     assert diag.excluded_by_reason["wishlisted"] == 0
     assert diag.excluded_by_reason["blacklisted"] == 0
+    assert diag.excluded_by_reason["liked"] == 0
+
+
+async def test_cold_start_diagnostics_counts_liked_items(session: AsyncSession) -> None:
+    """A candidate the user has liked (directly, or via another release by the
+    same band — see `build_exclusions`'s identical band-wide rule) must be
+    accounted for under `excluded_by_reason["liked"]`, the one exclusion
+    reason `build_exclusions` applies that this diagnostic used to omit
+    entirely — leaving a liked candidate unexplained in every count."""
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    neighbour = Fan(bandcamp_fan_id=2, username="n", url="https://bandcamp.com/n")
+    seed_band = Band(bandcamp_id=1, name="Seed", kind=BandKind.ARTIST)
+    liked_band = Band(bandcamp_id=2, name="Liked", kind=BandKind.ARTIST)
+    session.add_all([me, neighbour, seed_band, liked_band])
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=1, title="Seed", band_id=seed_band.id)
+    liked_album = Album(bandcamp_id=2, title="FromLiked", band_id=liked_band.id)
+    session.add_all([seed_album, liked_album])
+    await session.flush()
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id),
+        AlbumSupporter(album_id=seed_album.id, fan_id=neighbour.id),
+        FanItem(fan_id=neighbour.id, item_type=ItemType.ALBUM, album_id=liked_album.id),
+        Like(user_id=user.id, item_type=ItemType.ALBUM, album_id=liked_album.id),
+    ])
+    await session.commit()
+
+    scan = await ensure_collection_scan(session, user)
+    diag = await cold_start_diagnostics(session, scan, user)
+
+    assert diag.neighbour_count == 1
+    assert diag.candidates == 1
+    assert diag.excluded_by_reason["liked"] == 1
+    assert diag.excluded_by_reason["owned"] == 0
+    assert diag.excluded_by_reason["wishlisted"] == 0
+    assert diag.excluded_by_reason["followed"] == 0
+    assert diag.excluded_by_reason["blacklisted"] == 0
 
 
 async def test_cold_start_diagnostics_no_neighbours(session: AsyncSession) -> None:
@@ -936,7 +978,7 @@ async def test_cold_start_diagnostics_no_neighbours(session: AsyncSession) -> No
     assert diag.neighbour_count == 0
     assert diag.candidates == 0
     assert diag.excluded_by_reason == {
-        "owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0,
+        "owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0, "liked": 0,
     }
 
 

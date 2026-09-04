@@ -1586,6 +1586,7 @@ describe('feed while the scan is still running', () => {
             excluded_wishlisted: 40,
             excluded_followed: 55,
             excluded_blacklisted: 3,
+            excluded_liked: 0,
           },
           recompute_generation: 1,
         },

@@ -29,6 +29,7 @@ export function ColdStartPanel({
     excluded_wishlisted,
     excluded_followed,
     excluded_blacklisted,
+    excluded_liked,
   } = coldStart
 
   const budgetLine =
@@ -62,7 +63,8 @@ export function ColdStartPanel({
           All excluded: <b className="num">{count(excluded_owned)}</b> owned ·{' '}
           <b className="num">{count(excluded_wishlisted)}</b> wishlisted ·{' '}
           <b className="num">{count(excluded_followed)}</b> followed ·{' '}
-          <b className="num">{count(excluded_blacklisted)}</b> blocked.
+          <b className="num">{count(excluded_blacklisted)}</b> blocked ·{' '}
+          <b className="num">{count(excluded_liked)}</b> liked.
         </p>
       )}
       {budgetLine}
