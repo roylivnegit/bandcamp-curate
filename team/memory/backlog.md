@@ -2319,7 +2319,19 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   case (`feedShortcuts={false}` keeps the global rows, drops the feed-only ones) and a new
   `feed.test.tsx` integration test navigating `/scans` → `/scans/1` and asserting the panel's content
   differs correctly on each. 299/299 frontend tests pass, tsc/lint/build clean (chunk split intact
-  apart from the disclosed trade-off). PR: see git history.
+  apart from the disclosed trade-off). PR #144, merged.
+
+- [x] **`SeedsPanel` updates silently as a scan resolves seeds.** *(proposed by the hourly routine,
+  2026-09-04, Architect+QA-approved — this run's third task, Option C, found in the same round as the
+  global shortcuts-panel item above)* `SeedsPanel`'s `<ul>` of seed rows (`SidePanels.tsx`) updates as
+  `ScanFeedPage` polls a running scan — a seed flips from "Pending" to "Resolved"/"Not found" — with
+  no announcement, unlike other async-updating regions already in this app (`ScanListPage`'s skeleton
+  wrapper, `BulkActionBar`, `OfflineBanner`, all `role="status"`).
+  Done: wrapped the `<ul>` in a `role="status" aria-live="polite"` `div` — deliberately not on the
+  `<ul>` itself, which would have stripped its implicit list/listitem semantics. Covered by a new test
+  in `SidePanels.test.tsx`: render with one pending seed, assert `getByRole('status')` shows "Pending",
+  rerender with it resolved, assert the same live region now shows "Resolved". 298/298 frontend tests
+  pass, tsc/lint/build clean (chunk sizes unchanged). PR: see git history.
 
 - [x] **`seed_tags()` ignores genres carried only by owned tracks.** *(found by an Explore-agent
   backend audit, 2026-09-04 — this run's fourth task, Option C)* Prompted to look for one genuine,

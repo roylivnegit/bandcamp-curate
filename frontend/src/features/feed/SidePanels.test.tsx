@@ -223,4 +223,17 @@ describe('SeedsPanel', () => {
     expect(screen.getByText('Resolved')).toBeInTheDocument()
     expect(screen.getByText('Not found')).toBeInTheDocument()
   })
+
+  it('announces a seed resolving via a live region, not just a silent re-render', () => {
+    const pending: ScanSeed[] = [
+      { url: 'https://a.bandcamp.com/album/one', seed_type: 'album', resolved_album_id: null, resolved_track_id: null },
+    ]
+    const { rerender } = render(<SeedsPanel items={pending} scanStatus="running" />)
+
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Pending')
+
+    rerender(<SeedsPanel items={seeds} scanStatus="running" />)
+    expect(status).toHaveTextContent('Resolved')
+  })
 })
