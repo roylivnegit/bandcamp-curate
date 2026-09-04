@@ -114,6 +114,7 @@ async def test_stats(client: AsyncClient) -> None:
     assert cold_start["excluded_followed"] == 1
     assert cold_start["excluded_wishlisted"] == 0
     assert cold_start["excluded_blacklisted"] == 0
+    assert cold_start["excluded_liked"] == 0
 
 
 async def test_recommendations_feed(client: AsyncClient) -> None:

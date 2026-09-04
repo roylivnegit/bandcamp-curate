@@ -56,6 +56,7 @@ export interface ColdStart {
   excluded_wishlisted: number
   excluded_followed: number
   excluded_blacklisted: number
+  excluded_liked: number
 }
 
 export interface Stats {

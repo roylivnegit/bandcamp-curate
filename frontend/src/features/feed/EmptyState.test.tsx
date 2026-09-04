@@ -36,6 +36,7 @@ describe('EmptyState', () => {
           excluded_wishlisted: 5,
           excluded_followed: 20,
           excluded_blacklisted: 5,
+          excluded_liked: 0,
         }}
         onClearFilters={vi.fn()}
       />,
@@ -57,6 +58,7 @@ describe('EmptyState', () => {
           excluded_wishlisted: 5,
           excluded_followed: 20,
           excluded_blacklisted: 5,
+          excluded_liked: 0,
         }}
         requestsUsed={99}
         requestBudget={1000}

@@ -130,6 +130,7 @@ class ColdStartOut(BaseModel):
     excluded_wishlisted: int
     excluded_followed: int
     excluded_blacklisted: int
+    excluded_liked: int
 
 
 class StatsOut(BaseModel):
@@ -305,6 +306,7 @@ async def stats(
                     excluded_wishlisted=diag.excluded_by_reason["wishlisted"],
                     excluded_followed=diag.excluded_by_reason["followed"],
                     excluded_blacklisted=diag.excluded_by_reason["blacklisted"],
+                    excluded_liked=diag.excluded_by_reason["liked"],
                 )
     return StatsOut(
         recommendations=await _count(

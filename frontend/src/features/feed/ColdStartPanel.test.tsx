@@ -11,6 +11,7 @@ const coldStart: ColdStart = {
   excluded_wishlisted: 40,
   excluded_followed: 55,
   excluded_blacklisted: 3,
+  excluded_liked: 7,
 }
 
 describe('ColdStartPanel', () => {
@@ -29,6 +30,8 @@ describe('ColdStartPanel', () => {
     expect(screen.getByText(/followed/)).toBeInTheDocument()
     expect(screen.getByText('3')).toBeInTheDocument()
     expect(screen.getByText(/blocked/)).toBeInTheDocument()
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.getByText(/liked/)).toBeInTheDocument()
   })
 
   it('explains a total absence of neighbours differently from an exclusion story', () => {
