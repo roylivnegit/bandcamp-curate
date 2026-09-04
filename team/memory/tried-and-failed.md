@@ -184,3 +184,23 @@ Product's round (fed the real component/lib file inventory, not a summary) propo
 Net: leading Product with the real file inventory plus an explicit "check git history before
 trusting a gap" instruction caught a real regression risk (resurrecting a deliberately-hidden
 score badge) for the cost of one grep + one `git log -S`, before it ever reached the QA call.
+
+Also self-checked (not fed to Product) while looking for a second task the same run: `reasons.
+seed_tags` (the "via <tags>" genre-provenance explanation CLAUDE.md's M4 notes describe as "shown
+as 'via …' in the UI") is typed on the frontend, computed server-side by
+`_seed_tag_provenance()`, and rendered... nowhere. A `.via` CSS rule even still exists in
+`feed.css` with nothing left that uses it. Looks exactly like the seed-resolution-panel gap this
+run just built. It is not: `git log -S'.via' -- frontend/src/features/feed/feed.css` finds
+`640b5eb` ("drop 3 unwanted card elements (#103)", same day as the score removal, Roy
+co-authored) — its own commit message says plainly *"Removed three things the product owner
+doesn't want on the card: … the 'via <tags>' line under a card's reasons …"*. **Do not propose
+resurrecting the "via <tags>" line — same rule as the score badge: this is Roy's call to reverse
+explicitly, not a gap to fill.** The orphaned `.via` CSS rule itself is fair game for a future
+dead-code cleanup (delete the rule, not resurrect a user of it), same category as the
+`COPY_LINK_FEEDBACK_MS` cleanup — but that's cosmetic housekeeping, not a product fix.
+
+Lesson reinforced: on this codebase specifically, an "I found data the API returns that nothing
+renders" grep hit needs a `git log -S` check on the *specific missing UI element* (not just the
+data field) before it's trusted as a real gap — #103 and #122, both from the same day, deliberately
+stripped down what the card shows, so several plausible "add this back" ideas are actually the
+one thing this codebase is *not* short on: things Roy removed on purpose.
