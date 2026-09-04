@@ -2297,4 +2297,16 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   removed per Roy's request) and the orphaned `.via` CSS rule in `feed.css` (left behind by the same
   day's removal of the "via <tags>" reasons line, #103). Confirmed both had no other references via
   grep before deleting. No functional change. 297/297 frontend tests pass (303 minus
-  `markdown.test.ts`'s 6), tsc/lint/build clean (chunk sizes unchanged). PR #143.
+  `markdown.test.ts`'s 6), tsc/lint/build clean (chunk sizes unchanged). PR #143, merged.
+
+- [x] **`SeedsPanel` updates silently as a scan resolves seeds.** *(proposed by the hourly routine,
+  2026-09-04, Architect+QA-approved — this run's third task, Option C, found in the same round as the
+  global shortcuts-panel item above)* `SeedsPanel`'s `<ul>` of seed rows (`SidePanels.tsx`) updates as
+  `ScanFeedPage` polls a running scan — a seed flips from "Pending" to "Resolved"/"Not found" — with
+  no announcement, unlike other async-updating regions already in this app (`ScanListPage`'s skeleton
+  wrapper, `BulkActionBar`, `OfflineBanner`, all `role="status"`).
+  Done: wrapped the `<ul>` in a `role="status" aria-live="polite"` `div` — deliberately not on the
+  `<ul>` itself, which would have stripped its implicit list/listitem semantics. Covered by a new test
+  in `SidePanels.test.tsx`: render with one pending seed, assert `getByRole('status')` shows "Pending",
+  rerender with it resolved, assert the same live region now shows "Resolved". 298/298 frontend tests
+  pass, tsc/lint/build clean (chunk sizes unchanged). PR: see git history.
