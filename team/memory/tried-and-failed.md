@@ -204,3 +204,35 @@ renders" grep hit needs a `git log -S` check on the *specific missing UI element
 data field) before it's trusted as a real gap — #103 and #122, both from the same day, deliberately
 stripped down what the card shows, so several plausible "add this back" ideas are actually the
 one thing this codebase is *not* short on: things Roy removed on purpose.
+
+## 2026-09-04 — hourly routine, Option C round self-caught all three proposals pre-QA, picked up flagged cleanup instead
+
+Product's round (fed the real frontend file inventory plus an explicit list of ~30 already-shipped
+items and the two known deliberate-removal traps) proposed three ideas, all cut by checking source
+directly rather than spending an Architect+QA call:
+
+- **"Light/dark theme toggle with persisted preference."** `frontend/CLAUDE.md`'s "Already
+  satisfied — don't 'fix' these" section states plainly: *"Single-theme dark is a stated choice, not
+  a missing light mode."* Building this would reverse a documented deliberate decision — the exact
+  same failure mode as the score-badge and "via <tags>" catches logged above, just for a design
+  decision recorded in a CLAUDE.md rather than discovered via `git log -S`. **Do not re-propose a
+  theme toggle without Roy asking for one explicitly.**
+- **"Sort control for the feed (Newest / Band A–Z)."** Already exists: `FilterBar.tsx` has a
+  `Dropdown label={\`Sort · ${SORTS[filters.sort]} ▾\`}` backed by a typed `SortKey`/`SORTS` map,
+  confirmed by grep. A straight duplicate proposal.
+- **"Debounce the quick-filter search input."** `ScanFeedPage.tsx`'s `visibleRows` is a `useMemo`
+  filtering `rows` (the currently-loaded page, not the full ~1,600-item feed) — this is not the
+  thousands-of-facet-tags case `frontend/CLAUDE.md` rule 8's `useDeferredValue` guidance is about.
+  No measured perf problem; would have been premature optimization of an already-cheap operation.
+
+Picked up instead of a fourth Product round: two items already flagged in this file's own
+2026-09-04 entries above as "fair game for a future dead-code cleanup" — `lib/markdown.ts`'s
+`recsToMarkdown` (dead since the button that called it was deliberately removed) and the orphaned
+`.via` CSS rule in `feed.css`. Both re-confirmed dead via grep (zero other references) immediately
+before deleting. Built and merged this run — see backlog.md.
+
+Lesson: this file's own "fair game for a future cleanup" notes are a legitimate task source when a
+fresh Product round comes up empty — they've already been vetted (grep-confirmed dead, history-
+checked as not a resurrection candidate), so re-verifying and executing them costs less than another
+`claude -p` round that risks yet another duplicate proposal against an already heavily-mined
+backlog.
