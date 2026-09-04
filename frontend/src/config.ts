@@ -51,10 +51,12 @@ export const SCROLL_TOP_THRESHOLD_PX = 600
  *  `useSessionExpiryWarning` fires its one warning toast, in ms. */
 export const SESSION_EXPIRY_WARNING_MS = 5 * 60 * 1000
 
-/** Options offered by `FeedCard`'s "block for… ▾" duration picker — a
- *  temporary block, as opposed to the plain "⊘ block" button's permanent one.
- *  `ms` is added to `Date.now()` to produce the `expires_at` sent to
- *  `POST /api/blacklist`. */
+/** Options offered by `SidePanels`' "renew ▾" action on a soon-to-expire
+ *  block (see `RENEW_WINDOW_MS` below). `FeedCard`'s own "⊘ block" button
+ *  had a matching "block for… ▾" picker at one point but it was deliberately
+ *  dropped (#103) — permanent block only there now; this constant is no
+ *  longer used from that component. `ms` is added to `Date.now()` to produce
+ *  the `expires_at` sent to `POST /api/blacklist`. */
 export const BLOCK_DURATIONS: { label: string; ms: number }[] = [
   { label: '1 day', ms: 24 * 60 * 60 * 1000 },
   { label: '1 week', ms: 7 * 24 * 60 * 60 * 1000 },

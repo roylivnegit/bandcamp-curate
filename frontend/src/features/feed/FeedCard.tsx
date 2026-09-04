@@ -44,9 +44,11 @@ export const FeedCard = memo(function FeedCard({
   selectMode: boolean
   selected: boolean
   onLike: (rec: Recommendation) => void
-  /** `expiresAt` (an ISO string), when passed, makes this a temporary block —
-   *  see the "block for… ▾" picker below. Omitted, it's the existing
-   *  permanent block. */
+  /** `expiresAt` (an ISO string), when passed, makes this a temporary block.
+   *  This card's own "⊘ block" button always omits it (a deliberate product
+   *  call, #103 — permanent block only, no picker here); the parameter exists
+   *  because `ScanFeedPage` wires the same handler to `SidePanels`' "renew ▾"
+   *  action on an already-temporary block. */
   onBlock: (rec: Recommendation, expiresAt?: string | null) => void
   onTagClick: (tag: string) => void
   onBandClick: (rec: Recommendation) => void

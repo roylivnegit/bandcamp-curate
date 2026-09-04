@@ -2131,3 +2131,50 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   mock's `requests_used: 40` collides with its own `cold_start.excluded_wishlisted: 40` as an
   exact-text match, so the assertion checks the whole sentence instead of a standalone `'40'`).
   283/283 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Stale comments claimed `FeedCard` has a block-duration picker.** *(found by the hourly
+  routine, 2026-09-03, via direct code audit)* `FeedCard.tsx`'s `onBlock` prop doc and `config.ts`'s
+  `BLOCK_DURATIONS` doc both described a "block for… ▾" picker on the feed card itself — but that
+  picker was deliberately removed from `FeedCard` in #103 (a real product decision, not a
+  regression; only `SidePanels`' "renew ▾" action on an already-temporary block still uses
+  `BLOCK_DURATIONS`/`expiresAt`). Already flagged as a stale-doc risk in
+  `team/memory/tried-and-failed.md` — left uncorrected, a future round could mistakenly re-propose
+  "resurrecting" a feature Roy explicitly rejected.
+  Done: reworded both comments to describe the current, real wiring. Comment-only change; 287/287
+  frontend tests pass, tsc/lint/build clean. Merged (#134).
+
+- [~] **Dead `COPY_LINK_FEEDBACK_MS` constant + `ShortcutsHelp` missing the Ctrl/Cmd+K row.**
+  *(found by the hourly routine, 2026-09-03, via direct code audit)* `config.ts`'s
+  `COPY_LINK_FEEDBACK_MS` was orphaned when `CopyLinkButton`/`CopyMarkdownButton` were removed in
+  #107 — confirmed via a repo-wide grep, its only remaining reference was its own declaration.
+  Separately, `ShortcutsHelp`'s panel lists `l`/`b`/arrows/Home/End/`/`/`?` but never mentioned
+  `Ctrl`/`Cmd`+`K`, even though `CommandPalette` is mounted globally and live on the same page.
+  Done: deleted the dead constant; added the missing shortcuts row plus a test assertion. 287/287
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR #135 open with auto-merge
+  enabled, not yet confirmed merged as of this note.
+
+- [x] **Collection-scan neighbour seeding ignores owned standalone tracks.** *(found by the hourly
+  routine, 2026-09-04, via direct code audit)* `_seed_ids()` (`app/curation/engine.py`) only pulled
+  seed ids from owned albums for the `COLLECTION` scan kind (your primary "My collection" feed) —
+  an owned standalone track never contributed to `seed_track_ids`, even though downstream
+  (`_scan_neighbours`, the `CUSTOM` scan branch) was already fully track-aware. Net effect: if you
+  own a standalone track, that track's supporters silently never became your taste-neighbours in
+  your primary feed — a real loss of co-ownership signal, no error.
+  Done: mirrored the existing `album_ids` query with an identical `track_ids` one.
+  `neighbour_size_report`/`cold_start_diagnostics` also benefit, since they share `_seed_ids`. New
+  `test_collection_scan_owned_track_finds_neighbours` confirmed red before the fix, green after.
+  259/259 backend tests pass, ruff clean. Merged (#136).
+
+- [~] **`DELETE /api/scans/{id}` orphans `crawl_frontier`/`provider_usage` rows.** *(found by the
+  hourly routine, 2026-09-04, via direct code audit)* Neither `CrawlFrontier.scan_id` nor
+  `ProviderUsage.scan_id` declares `ondelete="CASCADE"` (unlike `ScanSeed`/`Recommendation`, which
+  do), and `delete_scan` never cleaned them up itself — any scan that has actually run at least
+  once has rows in both tables, so deleting it on Postgres (the real deployment target) raises an
+  unhandled `IntegrityError` (500) instead of succeeding. On SQLite (tests, no FK pragma) the
+  delete instead silently orphans the rows. The only existing delete test deleted a scan
+  immediately after creation, before either table had rows, so this was untested.
+  Done: mirrored the existing explicit `Recommendation` delete with two more explicit deletes
+  (`CrawlFrontier`, `ProviderUsage`) before `session.delete(scan)`. New
+  `test_delete_scan_drops_frontier_and_usage_rows` confirmed red before the fix, green after.
+  260/260 backend tests pass, ruff clean. PR #137 open with auto-merge enabled, not yet confirmed
+  merged as of this note.
