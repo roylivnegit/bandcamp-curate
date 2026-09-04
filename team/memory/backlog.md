@@ -2352,3 +2352,45 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   different items but the same integer). Covered by a new
   `test_seed_tags_lists_my_track_genres_too`. 263/263 backend tests pass, ruff clean. PR: see git
   history.
+
+- [x] **Failed scans have no way to retry.** *(proposed by the hourly routine, 2026-09-04, Option C —
+  Architect+QA-approved)* Product's round was fed the real frontend file inventory plus the list of
+  deliberate removals not to resurrect (score badge, "via tags" line, copy buttons, theme toggle) and
+  told to ground any idea in a specific file. Most candidates it checked (delete confirmation,
+  bulk-block confirmation, session-expiry warning, roving tabindex, undo/retry patterns, error
+  boundary, offline handling, CSV export, filter-state persistence, shortcuts-help accuracy) were
+  already built. Grepping for API-client methods with zero call sites turned up two real gaps; this is
+  the smaller of the two (see below for the other, still queued).
+  `api/client.ts` already defines `runScan: (id) => POST /api/scans/{id}/run` and the backend already
+  supports re-queuing an errored/draft scan — but `grep -rn "runScan"` found only the definition, no
+  caller. A scan that ends in `status === 'error'` (e.g. the crawl budget ran out mid-collection, per
+  `CLAUDE.md`) showed an error banner with no action; for a `kind === 'collection'` scan it was worse,
+  since `DeleteScanButton` refuses to render for that kind at all — zero recovery path in the UI.
+  Done: new `components/RetryScanButton.tsx` (busy state, calls `api.runScan(scanId)`, hands the fresh
+  `ScanDetail` back via an `onRetried` callback rather than re-fetching, and toasts on failure — same
+  shape as `DeleteScanButton` minus the confirm step, since re-queuing isn't destructive). Wired into
+  `ScanFeedPage.tsx`'s existing error banner (`.banner.error`, already `display:flex` so the button
+  drops in with no CSS changes) via `onRetried={setScan}`, so the banner flips straight to "Queued —
+  waiting for the crawl worker…" without waiting on the next poll. Covered by a new test in
+  `feed.test.tsx`: an errored scan shows "Retry scan"; clicking it calls `POST /api/scans/1/run`,
+  swaps the banner to the queued message, and the button disappears. 301/301 frontend tests pass,
+  tsc/lint/build clean (chunk split intact — lands in the `ScanFeedPage` chunk, its only importer). PR:
+  see git history.
+  **Second gap found the same round, not yet built:** the backend's "exclude my own genres" recompute
+  (`POST /api/recommendations/recompute?exclude_seed_tag=...`) is unreachable from the UI —
+  `Facets.seed_tags` is typed and fetched but discarded, and `grep -rn "api.recompute"` finds only the
+  client definition. Architect+QA called it sound but the bigger lift of the two (a new dropdown
+  mirroring `FilterBar.tsx`'s existing `GenreDropdown` against `facets.seed_tags`, wired to
+  `api.recompute` + a reload) — queued for a future task with its own full sitting rather than
+  attempted in the same round as the smaller fix above.
+
+- [ ] **"My genres" exclude-seed-tag dropdown.** *(proposed by the hourly routine, 2026-09-04,
+  Architect+QA-approved, queued from the round above)* `facets.seed_tags` (`GET /api/facets`) is typed
+  on the frontend and already fetched by `ScanFeedPage.tsx`'s `loadFacets`, but discarded — nothing
+  calls `api.recompute(scanId, excludeSeedTags)` (`api/client.ts`), so the backend's "exclude
+  recommendations that came from your own collection's genres" feature has no UI. Build a dropdown in
+  `FilterBar.tsx` mirroring the existing `GenreDropdown` pattern (same searchable-checkbox-list shape)
+  against `facets.seed_tags` instead of `facets.tags`, whose Apply calls `api.recompute` then reloads
+  the feed. Verify: a component test mocking `api.recompute`/`api.facets` (seeded with a `seed_tags`
+  fixture) asserts selecting a tag and clicking Apply calls `api.recompute(scanId, ['thattag'])`; tsc/
+  lint confirm the `Facets.seed_tags` plumbing type-checks end to end. No browser needed.
