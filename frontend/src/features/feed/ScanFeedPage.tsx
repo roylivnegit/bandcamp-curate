@@ -17,7 +17,7 @@ import { useScanFinishedMarker } from '../../lib/useScanFinishedMarker'
 import { EmptyState } from './EmptyState'
 import { FeedCard, FeedCardSkeleton } from './FeedCard'
 import { FilterBar } from './FilterBar'
-import { BlockedPanel, LikedPanel } from './SidePanels'
+import { BlockedPanel, LikedPanel, SeedsPanel } from './SidePanels'
 import { useFeedFilters } from './useFeedFilters'
 import { useResumeScroll } from './useResumeScroll'
 import { useUpdatedSinceLastVisit } from './useUpdatedSinceLastVisit'
@@ -84,7 +84,7 @@ export function ScanFeedPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [liked, setLiked] = useState<Liked[]>([])
   const [blocked, setBlocked] = useState<Blocked[]>([])
-  const [panel, setPanel] = useState<'liked' | 'blocked' | null>(null)
+  const [panel, setPanel] = useState<'liked' | 'blocked' | 'seeds' | null>(null)
   const [exiting, setExiting] = useState<Record<string, 'like' | 'block'>>({})
   /** Which action, if any, is in flight for a card — mirrors `exiting`'s
    *  per-key/per-action shape so `FeedCard` can swap its acting button's
@@ -839,6 +839,15 @@ export function ScanFeedPage() {
           {scan?.name ?? 'Loading…'}
           {scan && <span className="ktag">{scan.kind}</span>}
         </h1>
+        {scan && scan.seeds.length > 0 && (
+          <button
+            type="button"
+            className={`btn ghost${panel === 'seeds' ? ' on' : ''}`}
+            onClick={() => setPanel((cur) => (cur === 'seeds' ? null : 'seeds'))}
+          >
+            Seeds <span className="num">({scan.seeds.length})</span>
+          </button>
+        )}
         {scan && <DeleteScanButton scanId={scan.id} scanName={scan.name} kind={scan.kind} />}
       </nav>
 
@@ -866,6 +875,8 @@ export function ScanFeedPage() {
           </span>
         </div>
       )}
+
+      {scan && panel === 'seeds' && <SeedsPanel items={scan.seeds} scanStatus={scan.status} />}
 
       {showFeed && (
         <>

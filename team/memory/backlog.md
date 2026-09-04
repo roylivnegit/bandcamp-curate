@@ -2196,3 +2196,33 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   blur commits a changed, non-blank reason; blur with unchanged/blank text does not; blur while the
   row's own save is already in flight does not double-submit. 290/290 frontend tests pass,
   tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Seed resolution status has no UI.** *(proposed by the hourly routine, 2026-09-04,
+  Architect+QA-approved with corrections)* `GET /api/scans/{id}` (`ScanDetailOut.seeds`) has always
+  returned each seed's `url`/`seed_type`/`resolved_album_id`/`resolved_track_id`, fully typed on the
+  frontend (`ScanSeed`) and fetched on every scan-detail load — but grep confirmed zero UI component
+  ever rendered it, so a user who seeded a scan with several Bandcamp URLs had no way to see which
+  ones actually resolved to a real album/track vs which were a typo or a removed release, especially
+  while the scan was still `queued`/`running` (when it matters most). A companion Product proposal
+  from the same round — a co-owner count badge on `FeedCard` — was rejected before reaching QA: `git
+  log -S'"score"'` showed the score/co-owner badge was deliberately hidden the day before (#122,
+  Roy co-authored, browser-verified) with the score kept only for sorting/CSV; see
+  `tried-and-failed.md`.
+  Done: new pure helper `lib/seedStatus.ts` (`seedStatus(seed, scanStatus)` → `'resolved' |
+  'pending' | 'unresolved'` — resolved once either id is set regardless of scan status; otherwise
+  `pending` while the scan is `draft`/`queued`/`running`, `unresolved` once it's `done`/`error`,
+  since `ScanSeed` has no separate failure signal so a still-null seed after crawling is a normal
+  outcome, not an error). New `SeedsPanel` in `SidePanels.tsx`, following the exact `LikedPanel`/
+  `BlockedPanel` shape (`.panel.sidepanel` > `.rows`/`.row`, no new CSS) — no pagination, since a
+  scan's seed list is bounded by one form submission, not a growing per-user total. Toggled by a new
+  "Seeds (N)" button in `ScanFeedPage.tsx`'s `feednav` (next to "← Scans"/the scan title), not
+  inside `FilterBar` — `FilterBar`/the Liked/Blocked toggles only render once `showFeed` is true
+  (`status !== 'queued' && status !== 'draft'`), exactly the states where seed status is most
+  useful to check. `panel` state (previously `'liked' | 'blocked' | null`) widened to include
+  `'seeds'`, reusing the same single-open-panel state as the other two. Covered by table-driven
+  tests in `seedStatus.test.ts` (all 5 `ScanStatus` values × resolved/unresolved), two new tests in
+  `SidePanels.test.tsx` (`SeedsPanel` renders every url + status; a still-unresolved seed reads
+  "Not found" once `scanStatus` is `'done'`), and two integration tests in `feed.test.tsx`'s new
+  "seed resolution panel" block (no Seeds toggle at all when `scan.seeds` is empty; the toggle
+  appears and the panel opens/closes with correct per-seed statuses on a `queued` scan, where the
+  Liked/Blocked toggles are confirmed absent). PR: see git history.

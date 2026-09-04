@@ -1,9 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Blocked, Liked } from '../../api/types'
+import type { Blocked, Liked, ScanSeed } from '../../api/types'
 import { SIDEPANEL_PAGE_SIZE } from '../../config'
-import { BlockedPanel, LikedPanel } from './SidePanels'
+import { BlockedPanel, LikedPanel, SeedsPanel } from './SidePanels'
 
 function makeLiked(n: number): Liked[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -199,5 +199,28 @@ describe('BlockedPanel reason', () => {
     fireEvent.blur(input)
 
     expect(onSetReason).not.toHaveBeenCalled()
+  })
+})
+
+describe('SeedsPanel', () => {
+  const seeds: ScanSeed[] = [
+    { url: 'https://a.bandcamp.com/album/one', seed_type: 'album', resolved_album_id: 1, resolved_track_id: null },
+    { url: 'https://b.bandcamp.com/track/two', seed_type: 'track', resolved_album_id: null, resolved_track_id: null },
+  ]
+
+  it('shows every seed url and its resolution status', () => {
+    render(<SeedsPanel items={seeds} scanStatus="running" />)
+
+    expect(screen.getByText('https://a.bandcamp.com/album/one')).toBeInTheDocument()
+    expect(screen.getByText('Resolved')).toBeInTheDocument()
+    expect(screen.getByText('https://b.bandcamp.com/track/two')).toBeInTheDocument()
+    expect(screen.getByText('Pending')).toBeInTheDocument()
+  })
+
+  it('labels a still-unresolved seed "Not found" once the scan has finished', () => {
+    render(<SeedsPanel items={seeds} scanStatus="done" />)
+
+    expect(screen.getByText('Resolved')).toBeInTheDocument()
+    expect(screen.getByText('Not found')).toBeInTheDocument()
   })
 })
