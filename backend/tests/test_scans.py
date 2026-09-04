@@ -26,7 +26,7 @@ from app.crawl.scan_service import (
     run_scan,
 )
 from app.db.base import Base
-from app.db.models import CrawlFrontier, Fan, FanItem, Scan, ScanSeed, User
+from app.db.models import CrawlFrontier, Fan, FanItem, ProviderUsage, Scan, ScanSeed, User
 from app.db.session import get_session
 from app.enums import CrawlKind, CrawlStatus, ScanKind, ScanStatus
 from app.main import app
@@ -150,6 +150,50 @@ async def test_delete_scan_and_protect_collection(client: AsyncClient) -> None:
     assert (await client.delete(f"/api/scans/{sid}")).status_code == 200
     assert (await client.get(f"/api/scans/{sid}")).status_code == 404
     assert (await client.delete("/api/scans/999999")).status_code == 404
+
+
+async def test_delete_scan_drops_frontier_and_usage_rows(sessionmaker_) -> None:  # noqa: ANN001
+    # A scan that has actually run leaves CrawlFrontier/ProviderUsage rows
+    # behind (neither FK declares ondelete=CASCADE, unlike ScanSeed/
+    # Recommendation) -- delete_scan must clean those up itself or they're
+    # orphaned (silently on SQLite here; an IntegrityError on real Postgres).
+    async with sessionmaker_() as s:
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
+        await s.flush()
+        scan = Scan(user_id=user.id, name="n", kind=str(ScanKind.CUSTOM),
+                    status=str(ScanStatus.DONE))
+        s.add(scan)
+        await s.flush()
+        sid = scan.id
+        s.add_all([
+            CrawlFrontier(scan_id=sid, url=ALBUM_URL, kind=str(CrawlKind.ALBUM)),
+            ProviderUsage(scan_id=sid, provider="test"),
+        ])
+        await s.commit()
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker_() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.delete(f"/api/scans/{sid}")
+    app.dependency_overrides.clear()
+    assert r.status_code == 200
+
+    async with sessionmaker_() as s:
+        assert (
+            await s.execute(select(CrawlFrontier).where(CrawlFrontier.scan_id == sid))
+        ).first() is None
+        assert (
+            await s.execute(select(ProviderUsage).where(ProviderUsage.scan_id == sid))
+        ).first() is None
 
 
 # ── run_scan orchestration (over the fixture, no network) ────────────────────────
