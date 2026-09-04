@@ -524,12 +524,6 @@
   background: var(--accent-wash);
 }
 
-.via {
-  margin: var(--s-2) 0 0;
-  font-size: var(--fs-tiny);
-  color: var(--faint);
-}
-
 .card-actions {
   margin-top: var(--s-3);
   display: flex;
