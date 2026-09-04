@@ -291,6 +291,48 @@ describe('scan feed', () => {
     expect(more).toHaveClass('open')
   })
 
+  it('excludes recs from my own genres via the "My genres" recompute dropdown', async () => {
+    const fetchMock = mockFetch([
+      // Specific routes before their own prefixes — mockFetch matches by URL
+      // substring in array order, and both '/api/recommendations/recompute'
+      // and '/api/recommendations/count' start with '/api/recommendations'.
+      ['/api/recommendations/recompute', { computed: 1, excluded_seed_tags: ['ambient'] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/facets',
+        {
+          tags: [{ value: 'psybient', label: 'psybient', count: 12 }],
+          labels: [],
+          seed_tags: [{ value: 'ambient', label: 'ambient', count: 4 }],
+        },
+      ],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '＋ Exclude my genres' }))
+    await user.click(await screen.findByRole('button', { name: /ambient/ }))
+    await user.click(screen.getByRole('button', { name: 'Apply (1)' }))
+
+    expect(await screen.findByRole('button', { name: 'My genres (1) ▾' })).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([input, init]) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        return (
+          url.includes('/api/recommendations/recompute') &&
+          url.includes('exclude_seed_tag=ambient') &&
+          init?.method === 'POST'
+        )
+      }),
+    ).toBe(true)
+  })
+
   it('adds an include pill when a genre chip on a card is clicked', async () => {
     mockFetch(feedRoutes())
     renderApp('/scans/1')
