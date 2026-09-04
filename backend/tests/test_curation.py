@@ -627,6 +627,48 @@ async def test_custom_scan_mixed_album_and_track_seeds_union_neighbours(
     assert scored[0].reasons["co_owners"] == 2  # both neighbours counted
 
 
+async def test_collection_scan_owned_track_finds_neighbours(session: AsyncSession) -> None:
+    # `_seed_ids` used to return an empty seed_track_ids for the COLLECTION
+    # scan kind even when `me` owns a standalone track — so a fan who only
+    # shares that track with me (no album in common) never became a
+    # taste-neighbour and their other albums never surfaced as recs.
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    neighbour = Fan(bandcamp_fan_id=2, username="neighbour", url="https://bandcamp.com/neighbour")
+    my_band = Band(bandcamp_id=10, name="MyBand", kind=BandKind.ARTIST)
+    rec_band = Band(bandcamp_id=20, name="RecBand", kind=BandKind.ARTIST)
+    session.add_all([me, neighbour, my_band, rec_band])
+    await session.flush()
+
+    my_track = Track(
+        bandcamp_id=100, title="My Track", band_id=my_band.id,
+        url="https://myband.bandcamp.com/track/my-track",
+    )
+    rec_album = Album(
+        bandcamp_id=200, title="Rec Album", band_id=rec_band.id,
+        url="https://recband.bandcamp.com/album/rec-album",
+    )
+    session.add_all([my_track, rec_album])
+    await session.flush()
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.TRACK, track_id=my_track.id),
+        TrackSupporter(track_id=my_track.id, fan_id=neighbour.id),
+        FanItem(fan_id=neighbour.id, item_type=ItemType.ALBUM, album_id=rec_album.id),
+    ])
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.commit()
+
+    scored = await _recs(session, user)
+    assert len(scored) == 1
+    assert scored[0].album_id == rec_album.id
+    assert scored[0].reasons["co_owners"] == 1
+
+    coll_scan = await ensure_collection_scan(session, user)
+    diagnostics = await cold_start_diagnostics(session, coll_scan, user)
+    assert diagnostics.neighbour_count == 1
+
+
 async def test_get_me_requires_seed(session: AsyncSession) -> None:
     import pytest
 

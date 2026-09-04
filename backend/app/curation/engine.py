@@ -116,9 +116,8 @@ async def _seed_ids(session: AsyncSession, scan: Scan, me: Fan) -> tuple[set[int
     """(seed_album_ids, seed_track_ids) — the ids whose supporters form this
     scan's taste-neighbour set.
 
-    collection → your owned albums (album-level only — owned standalone tracks
-    don't yet feed neighbours here); custom → the scan's resolved album AND
-    track seeds, any mix.
+    collection → your owned albums AND standalone tracks; custom → the scan's
+    resolved album AND track seeds, any mix.
     """
     if scan.kind == str(ScanKind.COLLECTION):
         album_ids = await _scalar_set(
@@ -129,7 +128,15 @@ async def _seed_ids(session: AsyncSession, scan: Scan, me: Fan) -> tuple[set[int
                 FanItem.album_id.isnot(None),
             ),
         )
-        return album_ids, set()
+        track_ids = await _scalar_set(
+            session,
+            select(FanItem.track_id).where(
+                FanItem.fan_id == me.id,
+                FanItem.is_wishlist.is_(False),
+                FanItem.track_id.isnot(None),
+            ),
+        )
+        return album_ids, track_ids
     album_ids = await _scalar_set(
         session,
         select(ScanSeed.resolved_album_id).where(
