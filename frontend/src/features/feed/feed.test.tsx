@@ -527,6 +527,36 @@ describe('scan feed', () => {
     expect(document.activeElement).toBe(screen.getByPlaceholderText('Search (/)'))
   })
 
+  it('Escape clears a typed quick filter, restoring every card', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const user = userEvent.setup()
+    const input = screen.getByPlaceholderText('Search (/)')
+    await user.type(input, 'second')
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(input).toHaveValue('')
+    expect(screen.getAllByRole('article')).toHaveLength(3)
+  })
+
+  it('Escape on an already-empty quick filter blurs it instead', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const input = screen.getByPlaceholderText('Search (/)')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(document.activeElement).not.toBe(input)
+  })
+
   const bulkRecs = [
     fakeRec({ album_id: 1, band_id: 101, title: 'First album', band_name: 'Band One' }),
     fakeRec({ album_id: 2, band_id: 102, title: 'Second album', band_name: 'Band Two' }),

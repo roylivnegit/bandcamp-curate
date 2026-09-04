@@ -87,6 +87,20 @@ export function FilterBar({
           placeholder="Search (/)"
           value={quickQuery}
           onChange={(e) => onQuickQueryChange(e.target.value)}
+          onKeyDown={(e) => {
+            // Escape-to-dismiss, same convention as Dropdown/CommandPalette/
+            // ShortcutsHelp — this is the one text input on the page that
+            // didn't follow it. Clears first (if there's anything to clear),
+            // then blurs so the card-list keyboard shortcuts (l/b, arrows)
+            // work again without an extra Tab or click.
+            if (e.key !== 'Escape') return
+            if (quickQuery) {
+              e.preventDefault()
+              onQuickQueryChange('')
+            } else {
+              e.currentTarget.blur()
+            }
+          }}
         />
 
         <button
