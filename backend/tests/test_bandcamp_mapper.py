@@ -13,6 +13,10 @@ from app.bandcamp.mapper import (
     ingest_track_supporters,
 )
 from app.bandcamp.parse import (
+    FanCollection,
+    ParsedBand,
+    ParsedFan,
+    ParsedItem,
     parse_album_page,
     parse_album_supporters,
     parse_fan_page,
@@ -150,6 +154,32 @@ async def test_wishlist_skipped_for_other_fans(session: AsyncSession) -> None:
         select(func.count()).select_from(FanItem).where(FanItem.is_wishlist.is_(True))
     )).scalar_one()
     assert wished == 0
+
+
+async def test_purchasing_a_wishlisted_item_flips_it_to_owned(session: AsyncSession) -> None:
+    # `uq_fan_item` is on (fan_id, item_type, album_id, track_id) only — not
+    # `is_wishlist` — so a later re-crawl observing the same album as owned
+    # must update the existing row rather than being treated as a no-op dup.
+    fan = ParsedFan(fan_id=555, username="me", name="Me", url="https://bandcamp.com/me")
+    band = ParsedBand(bandcamp_id=20, name="Band2", url="https://b2.bandcamp.com")
+    item = ParsedItem(
+        item_id=2, item_type="album", band=band, title="Wanted",
+        url="https://b2.bandcamp.com/album/x",
+    )
+
+    await ingest_fan_collection(session, FanCollection(fan=fan, wishlist=[item]), is_me=True)
+    assert await _count(session, FanItem) == 1
+    wished = (await session.execute(
+        select(FanItem).where(FanItem.is_wishlist.is_(True))
+    )).scalar_one()
+    assert wished.is_wishlist is True
+
+    # Same album, now actually owned.
+    await ingest_fan_collection(session, FanCollection(fan=fan, items=[item]), is_me=True)
+
+    assert await _count(session, FanItem) == 1  # still one edge, not a duplicate
+    owned = (await session.execute(select(FanItem))).scalar_one()
+    assert owned.is_wishlist is False
 
 
 async def test_ingest_album_populates_graph(session: AsyncSession) -> None:
