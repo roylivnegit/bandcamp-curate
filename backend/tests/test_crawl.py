@@ -2035,3 +2035,50 @@ async def test_an_entry_that_always_times_out_eventually_fails(
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
         assert entry.status == CrawlStatus.ERROR  # stopped being re-queued
         assert "timed out" in entry.last_error
+
+
+async def test_ordinary_reclaims_do_not_count_toward_the_timeout_cap(
+    concurrent_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """`attempts` (the fairness-pass counter) bumps on every claim, including an
+    ordinary `mark_partial` re-page — a large-but-healthy collection needs several
+    of those to fully page through, with zero real timeouts. Before `timeout_count`
+    existed, that alone could push `attempts` past `MAX_ENTRY_TIMEOUTS`, so a single
+    genuine timeout afterward failed the entry immediately instead of allowing the
+    intended number of retries."""
+    async with concurrent_sessionmaker() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=SCAN)
+        await s.commit()
+
+    # Several ordinary partial-page re-claims, no timeout involved — enough to
+    # push `attempts` past MAX_ENTRY_TIMEOUTS purely from normal pagination.
+    for _ in range(runner.MAX_ENTRY_TIMEOUTS + 1):
+        async with concurrent_sessionmaker() as s:
+            entry = await frontier.claim_next(s, scan_id=SCAN)
+            await s.commit()
+            await frontier.mark_partial(s, entry, {"collection": "tok"})
+
+    async with concurrent_sessionmaker() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.attempts > runner.MAX_ENTRY_TIMEOUTS  # the old bug's trigger
+        assert entry.timeout_count == 0  # but nothing has actually timed out
+
+    class HangsOnce(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            import asyncio as _asyncio
+
+            await _asyncio.sleep(30)
+            return await super().fetch(request)
+
+    async with concurrent_sessionmaker() as s:
+        await runner.process_one(
+            s, HangsOnce({ALBUM_URL: ALBUM_HTML}), scan_id=SCAN,
+            supporters_client=FakeSupportersClient(), max_depth=0, entry_seconds=0.2,
+        )
+
+    async with concurrent_sessionmaker() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        # One real timeout, after many ordinary re-claims, must re-queue — not
+        # fail — since only one actual timeout has happened so far.
+        assert entry.status == CrawlStatus.PENDING
+        assert entry.timeout_count == 1

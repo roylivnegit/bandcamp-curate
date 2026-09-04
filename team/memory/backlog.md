@@ -2245,3 +2245,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   counted; three existing tests asserting exact `excluded_by_reason` dicts updated for the new key.
   261/261 backend tests pass, ruff clean; 301/301 frontend tests pass, tsc/lint/build clean. PR: see
   git history.
+
+- [x] **A crawl entry could be permanently failed by its first real timeout.** *(found by the
+  hourly routine, 2026-09-04, via a second targeted backend correctness audit — this run's third
+  task)* `runner.process_one`'s `TimeoutError` handler capped retries by checking `entry.attempts >=
+  MAX_ENTRY_TIMEOUTS`, but `attempts` is the fairness-pass counter bumped on every `claim_next` —
+  including the ordinary, non-failure `mark_partial` re-page a large collection needs several visits
+  to fully page through (p90 ~1,700 items, `PAGES_PER_VISIT=10` → ~5 claims with zero timeouts). Once
+  such a collection's `attempts` passed `MAX_ENTRY_TIMEOUTS` purely from normal pagination, its very
+  next genuine timeout — even a single one — permanently failed the entry instead of allowing the
+  intended number of retries, silently truncating an otherwise-healthy collection's crawl. Worse for
+  the owner's own collection scan specifically: `finalize_scan` refuses to curate until that self-crawl
+  entry reaches `DONE`, so this could permanently block a user's own feed from ever curating.
+  Done: added `crawl_frontier.timeout_count` (migration `0017`), incremented only in the `TimeoutError`
+  path and reset to 0 by `mark_done`/`mark_partial` (real progress) — fully decoupled from `attempts`.
+  New `test_ordinary_reclaims_do_not_count_toward_the_timeout_cap` simulates several ordinary re-claims
+  (pushing `attempts` past the old threshold with zero timeouts) followed by one real timeout, and
+  confirms the entry is re-queued (`PENDING`) rather than failed (`ERROR`). 262/262 backend tests pass,
+  ruff clean; `alembic upgrade head` / `downgrade -1` / `upgrade head` round-trips clean against a
+  fresh sqlite DB. PR: see git history.

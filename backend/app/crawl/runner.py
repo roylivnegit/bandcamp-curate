@@ -216,9 +216,17 @@ async def process_one(
             if reloaded is None:
                 return None
             note = f"timed out after {entry_seconds}s"
-            if reloaded.attempts >= MAX_ENTRY_TIMEOUTS:
+            # Counts consecutive TIMEOUTS specifically — not `attempts`, the
+            # fairness-pass counter that also bumps on an ordinary claim (a
+            # big collection's own `mark_partial` re-pages), which would
+            # otherwise fail this entry on its first real timeout once a
+            # large-but-healthy collection had simply been claimed enough
+            # times to page through.
+            timeout_count = reloaded.timeout_count + 1
+            reloaded.timeout_count = timeout_count
+            if timeout_count >= MAX_ENTRY_TIMEOUTS:
                 # Stop re-queueing something that never finishes; say why.
-                await frontier.mark_error(session, reloaded, f"{note} x{reloaded.attempts}")
+                await frontier.mark_error(session, reloaded, f"{note} x{timeout_count}")
                 logger.warning("%s (%s): %s — giving up", url, kind, note)
             else:
                 # Back to PENDING, cursor intact. Left IN_PROGRESS it would be

@@ -217,6 +217,7 @@ async def mark_done(session: AsyncSession, entry: CrawlFrontier) -> None:
     entry.status = CrawlStatus.DONE
     entry.last_error = None
     entry.cursor = None  # fully paged; nothing left to resume from
+    entry.timeout_count = 0  # real progress — clear any prior timeout streak
     await session.commit()
 
 
@@ -233,6 +234,12 @@ async def mark_partial(
     entry.status = CrawlStatus.PENDING
     entry.last_error = None
     entry.cursor = cursor
+    # Real progress — a large collection legitimately needs several of these
+    # ordinary re-claims to fully page, and `attempts` (the fairness counter)
+    # bumps on every one of them regardless. `timeout_count` must NOT ride
+    # along with that — it exists to cap consecutive genuine timeouts only,
+    # so a clean partial page always clears it.
+    entry.timeout_count = 0
     await session.commit()
 
 
