@@ -248,20 +248,29 @@ export function SeedsPanel({ items, scanStatus }: { items: ScanSeed[]; scanStatu
         The links this scan was seeded with, and whether each has resolved to a real album or
         track.
       </p>
-      <ul className="rows">
-        {items.map((s, i) => {
-          const status = seedStatus(s, scanStatus)
-          return (
-            <li className="row" key={`${s.url}-${i}`}>
-              <span className="row-main">{s.url}</span>
-              <span className="hint">
-                <span aria-hidden="true">{SEED_STATUS_ICON[status]}</span>{' '}
-                {SEED_STATUS_LABEL[status]}
-              </span>
-            </li>
-          )
-        })}
-      </ul>
+      {/* A running scan's poll can silently flip a row from "Pending" to
+       *  "Resolved"/"Not found" while this panel is open — role="status"
+       *  announces that change to a screen-reader user, matching the
+       *  convention already used for other async-updating regions
+       *  (ScanListPage's skeleton wrapper, BulkActionBar, OfflineBanner).
+       *  On the wrapping div, not the <ul> itself, so the list keeps its
+       *  implicit list/listitem semantics. */}
+      <div role="status" aria-live="polite">
+        <ul className="rows">
+          {items.map((s, i) => {
+            const status = seedStatus(s, scanStatus)
+            return (
+              <li className="row" key={`${s.url}-${i}`}>
+                <span className="row-main">{s.url}</span>
+                <span className="hint">
+                  <span aria-hidden="true">{SEED_STATUS_ICON[status]}</span>{' '}
+                  {SEED_STATUS_LABEL[status]}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
     </div>
   )
 }
