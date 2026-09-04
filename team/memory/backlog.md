@@ -2264,3 +2264,19 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   confirms the entry is re-queued (`PENDING`) rather than failed (`ERROR`). 262/262 backend tests pass,
   ruff clean; `alembic upgrade head` / `downgrade -1` / `upgrade head` round-trips clean against a
   fresh sqlite DB. PR: see git history.
+
+- [x] **Escape doesn't clear the quick filter.** *(proposed by the hourly routine, 2026-09-04 — this
+  run's fourth task)* Every other transient input/overlay in this app (`Dropdown`, `CommandPalette`,
+  `ShortcutsHelp`) closes/resets on Escape; the feed's quick-filter search box (`Search (/)`,
+  `FilterBar.tsx`) was the one text input that didn't follow that convention — clearing a typed query
+  meant select-all-and-delete or repeated backspace. Verified as a genuine, previously-unproposed gap
+  (not a resurfacing of either of this run's two deliberate-removal traps — this is a text-input
+  interaction, not a card/feed display element): grepped `FilterBar.tsx`/`ScanFeedPage.tsx` for
+  existing Escape handling (none on the quick-filter input) and both memory files for any prior
+  Escape-related entry (all were about `Dropdown`/`CommandPalette`/`ShortcutsHelp`, none about this).
+  Done: the quick-filter `<input>` gained an `onKeyDown` — Escape clears the query if non-empty;
+  Escape on an already-empty query blurs the input instead, so the card-list keyboard shortcuts
+  (`l`/`b`, arrow-key nav) work again without an extra Tab or click. Covered by two new tests in
+  `feed.test.tsx`: typing a query that narrows the list, then Escape, restores every card and empties
+  the input; Escape on an empty, focused input blurs it. 303/303 frontend tests pass, tsc/lint/build
+  clean (chunk split intact). PR: see git history.
