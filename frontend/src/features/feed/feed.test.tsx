@@ -235,6 +235,31 @@ describe('scan feed', () => {
     expect(await screen.findByText(/no bandcamp_fan_url set/)).toBeInTheDocument()
   })
 
+  it('retries a failed scan and reflects the requeued status', async () => {
+    const fetchMock = mockFetch([
+      // More specific route first — mockFetch matches by URL substring in
+      // array order, and '/api/scans/1/run'.includes('/api/scans/1') is
+      // true, so the run route would never be reached if listed second.
+      ['/api/scans/1/run', { ...fakeScan, status: 'queued', error: null, seeds: [] }],
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'error', error: 'no bandcamp_fan_url set', seeds: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+
+    const retryButton = await screen.findByRole('button', { name: 'Retry scan' })
+    await user.click(retryButton)
+
+    expect(await screen.findByText(/Queued — waiting for the crawl worker/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry scan' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([input, init]) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      return url.includes('/api/scans/1/run') && init?.method === 'POST'
+    })).toBe(true)
+  })
+
   it('collapses the secondary filter controls behind a toggle, off by default', async () => {
     // Actually hiding `#filterbar-more` is a mobile-only CSS media query
     // (jsdom doesn't evaluate those, so it isn't meaningfully testable here)

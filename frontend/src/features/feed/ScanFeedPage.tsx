@@ -6,6 +6,7 @@ import { api } from '../../api/client'
 import type { Blocked, Facet, Liked, Recommendation, ScanDetail, Stats } from '../../api/types'
 import { BulkActionBar } from '../../components/BulkActionBar'
 import { DeleteScanButton } from '../../components/DeleteScanButton'
+import { RetryScanButton } from '../../components/RetryScanButton'
 import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, TOAST_DURATION_MS, UNDO_WINDOW_MS } from '../../config'
 import { count } from '../../lib/format'
@@ -871,6 +872,7 @@ export function ScanFeedPage() {
             {scan.status === 'error' && `Scan failed: ${scan.error ?? 'unknown error'}`}
             {scan.status === 'draft' && 'Draft — not queued yet.'}
           </span>
+          {scan.status === 'error' && <RetryScanButton scanId={scan.id} onRetried={setScan} />}
         </div>
       )}
 
