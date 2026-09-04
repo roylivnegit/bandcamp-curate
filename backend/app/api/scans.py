@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import get_current_user
 from app.crawl.scan_service import create_scan
-from app.db.models import Recommendation, Scan, ScanSeed, User
+from app.db.models import CrawlFrontier, ProviderUsage, Recommendation, Scan, ScanSeed, User
 from app.db.session import get_session
 from app.enums import ScanKind, ScanStatus
 
@@ -164,9 +164,14 @@ async def delete_scan(
         raise HTTPException(status_code=404, detail="scan not found")
     if scan.kind == str(ScanKind.COLLECTION):
         raise HTTPException(status_code=400, detail="the collection scan can't be deleted")
-    # Explicitly drop this scan's recs (portable across SQLite/PG); seeds go via
+    # Explicitly drop this scan's recs/frontier/usage rows (portable across
+    # SQLite/PG -- unlike ScanSeed/Recommendation, neither FK declares
+    # ondelete=CASCADE, so a scan that's actually run at least once would
+    # otherwise hit an IntegrityError on Postgres deleting it); seeds go via
     # the ORM relationship cascade.
     await session.execute(delete(Recommendation).where(Recommendation.scan_id == scan_id))
+    await session.execute(delete(CrawlFrontier).where(CrawlFrontier.scan_id == scan_id))
+    await session.execute(delete(ProviderUsage).where(ProviderUsage.scan_id == scan_id))
     await session.delete(scan)
     await session.commit()
     return {"deleted": scan_id}
