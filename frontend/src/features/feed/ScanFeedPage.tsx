@@ -81,6 +81,13 @@ export function ScanFeedPage() {
   const [rows, setRows] = useState<Recommendation[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [facetTags, setFacetTags] = useState<Facet[]>([])
+  const [seedTagFacets, setSeedTagFacets] = useState<Facet[]>([])
+  /** The genres currently excluded via the "My genres" recompute action —
+   *  client-side only, since `exclude_seed_tag` isn't persisted server-side
+   *  (the next automatic recompute, e.g. from a crawl slice, drops it). Kept
+   *  so the dropdown's trigger label/active state and its pre-filled
+   *  selection on reopen reflect what was actually last applied. */
+  const [excludedSeedTags, setExcludedSeedTags] = useState<Set<string>>(new Set())
   const [stats, setStats] = useState<Stats | null>(null)
   const [liked, setLiked] = useState<Liked[]>([])
   const [blocked, setBlocked] = useState<Blocked[]>([])
@@ -246,6 +253,7 @@ export function ScanFeedPage() {
   const loadFacets = useCallback(async () => {
     const data = await api.facets(scanId)
     setFacetTags(data.tags)
+    setSeedTagFacets(data.seed_tags)
     // A tag the URL is filtering "by" (include mode) that no longer appears
     // anywhere in the scan's current recommendations (e.g. a recompute moved
     // it out) would otherwise silently keep matching nothing forever, with no
@@ -306,6 +314,27 @@ export function ScanFeedPage() {
       if (feedSeq.current === req) setLoading(false)
     }
   }, [filters.params, filters.sort])
+
+  // "Exclude my genres": a curation-time recompute (not a client-side filter,
+  // unlike the tag/label pills above), so applying it re-fetches the feed
+  // directly instead of waiting on the poll-driven `generation` effect below
+  // — that effect only re-arms once `loadScan` lands a fresh `scan`, and
+  // polling itself stops once a scan is `done` (the common case for browsing
+  // an existing feed).
+  async function applySeedTagExclusion(tags: Set<string>) {
+    const key = 'seedtags'
+    if (inFlight.current.has(key)) return
+    inFlight.current.add(key)
+    try {
+      await api.recompute(scanId, [...tags])
+      setExcludedSeedTags(tags)
+      await Promise.all([loadFirstPage(), loadFacets()])
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not recompute the feed.', 'alert')
+    } finally {
+      inFlight.current.delete(key)
+    }
+  }
 
   useEffect(() => {
     if (!showFeed) return
@@ -883,6 +912,9 @@ export function ScanFeedPage() {
           <FilterBar
             filters={filters}
             facetTags={facetTags}
+            seedTagFacets={seedTagFacets}
+            excludedSeedTags={excludedSeedTags}
+            onApplySeedTagExclusion={(tags) => void applySeedTagExclusion(tags)}
             likedCount={liked.length}
             blockedCount={blocked.length}
             panel={panel}
