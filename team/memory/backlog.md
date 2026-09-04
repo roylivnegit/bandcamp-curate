@@ -2176,3 +2176,23 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   (`CrawlFrontier`, `ProviderUsage`) before `session.delete(scan)`. New
   `test_delete_scan_drops_frontier_and_usage_rows` confirmed red before the fix, green after.
   260/260 backend tests pass, ruff clean. Merged (#137).
+
+- [x] **A typed block reason is silently discarded unless you press Enter.** *(proposed by the
+  hourly routine, 2026-09-04, Architect+QA-approved with a caveat)* `SidePanels.tsx`'s
+  `BlockedPanel` reason input only committed on `Enter` (`onKeyDown`) — clicking away, tabbing to
+  the next control, or closing the panel dropped whatever was typed with no save and no warning.
+  A second Product proposal from the same round ("wire up the already-dead `recsToMarkdown` into a
+  Copy-as-Markdown button") was caught and dropped before building — see
+  `team/memory/tried-and-failed.md`, it would have reintroduced a feature Roy explicitly asked
+  removed in #107.
+  Done: extracted the existing Enter-commit logic into a shared `commitReason()` and wired it to a
+  new `onBlur` handler too. QA flagged a real race first: disabling the input mid-save (the
+  existing `disabled={rowBusy}`) itself fires a browser blur event, which would otherwise
+  re-submit the same value a second time while the Enter-triggered save is still in flight — guarded
+  by skipping the blur commit whenever `rowBusy` is true. No success toast added (scope check found
+  the row's own `· "reason"` text already updates once the save lands, via the same `loadBlocked()`
+  every sibling action — `renew`/`unblock` — already uses without a toast either, so adding one here
+  would have been an inconsistency, not a fix). Covered by three new tests in `SidePanels.test.tsx`:
+  blur commits a changed, non-blank reason; blur with unchanged/blank text does not; blur while the
+  row's own save is already in flight does not double-submit. 290/290 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
