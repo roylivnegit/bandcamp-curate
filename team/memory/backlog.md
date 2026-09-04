@@ -2320,3 +2320,23 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `feed.test.tsx` integration test navigating `/scans` → `/scans/1` and asserting the panel's content
   differs correctly on each. 299/299 frontend tests pass, tsc/lint/build clean (chunk split intact
   apart from the disclosed trade-off). PR: see git history.
+
+- [x] **`seed_tags()` ignores genres carried only by owned tracks.** *(found by an Explore-agent
+  backend audit, 2026-09-04 — this run's fourth task, Option C)* Prompted to look for one genuine,
+  previously-unfixed correctness bug (not needing a live crawl), grounded in actual source, distinct
+  from a list of already-fixed examples. Found and self-verified against source before building:
+  `curation.engine.seed_tags()` (the values `GET /api/facets` offers for "exclude by seed genre")
+  joined `FanItem` to `AlbumTag` only — a genre carried exclusively by an owned standalone track (no
+  album with that tag) silently never appeared, even though `_effective_track_tags`/
+  `_seed_tag_provenance` in the same file already treat track genres as legitimate seed tags. Exact
+  same bug class already fixed once in the sibling endpoint, `GET /api/facets`'s own `tags` list in
+  `app/api/feed.py` (comment there: "an inner join on AlbumTag alone... never matches a track
+  recommendation... a genre that only tracks carry silently never showed up as a facet") — that fix
+  was never applied to `seed_tags()`. Not caught by the existing
+  `test_seed_tags_lists_my_album_genres`, which only exercises album-sourced genres.
+  Done: `seed_tags()` now also queries `TrackTag`-joined counts and merges them with the album counts
+  in Python — kept as two separate grouped queries rather than a SQL `UNION`, to avoid the
+  id-namespace collision a bare `album_id`/`track_id` union would risk (album id 5 and track id 5 are
+  different items but the same integer). Covered by a new
+  `test_seed_tags_lists_my_track_genres_too`. 263/263 backend tests pass, ruff clean. PR: see git
+  history.

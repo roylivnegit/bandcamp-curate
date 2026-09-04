@@ -503,6 +503,35 @@ async def test_seed_tags_lists_my_album_genres(session: AsyncSession) -> None:
     assert genres.get("rock") == 1 and genres.get("jazz") == 1
 
 
+async def test_seed_tags_lists_my_track_genres_too(session: AsyncSession) -> None:
+    """A genre carried only by an owned standalone track (no album has it) must
+    still show up — an inner join on AlbumTag alone never matches a track,
+    the same bug class already fixed in GET /api/facets's `tags` list."""
+    from app.curation.engine import seed_tags
+
+    me = Fan(bandcamp_fan_id=50, username="me5", url="https://bandcamp.com/me5", is_me=True)
+    band = Band(bandcamp_id=501, name="B501", kind=BandKind.ARTIST)
+    session.add_all([me, band])
+    await session.flush()
+    user = User(username="me5", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    track = Track(bandcamp_id=501, title="Solo track", band_id=band.id)
+    session.add(track)
+    await session.flush()
+
+    ambient = Tag(name="ambient")
+    session.add(ambient)
+    await session.flush()
+    session.add(TrackTag(track_id=track.id, tag_id=ambient.id))
+    session.add(FanItem(fan_id=me.id, item_type=ItemType.TRACK, track_id=track.id))
+    await session.commit()
+
+    genres = dict(await seed_tags(session, user))
+    assert genres.get("ambient") == 1
+
+
 async def test_liked_item_excludes_its_band(session: AsyncSession) -> None:
     user = await _build_graph(session)
     a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
