@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest'
 
 import { ShortcutsHelp } from './ShortcutsHelp'
 
-function renderWithControls() {
+function renderWithControls(feedShortcuts?: boolean) {
   render(
     <div>
       <button type="button">Trigger</button>
       <input aria-label="Search" />
-      <ShortcutsHelp />
+      <ShortcutsHelp feedShortcuts={feedShortcuts} />
     </div>,
   )
 }
@@ -23,6 +23,17 @@ describe('ShortcutsHelp', () => {
     expect(dialog).toHaveTextContent('Like the focused recommendation')
     expect(dialog).toHaveTextContent("Block the focused recommendation's artist")
     expect(dialog).toHaveTextContent('Open the jump-to command palette')
+  })
+
+  it('omits the feed-only rows when feedShortcuts is false, keeping the global ones', () => {
+    renderWithControls(false)
+    fireEvent.keyDown(document, { key: '?' })
+
+    const dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).toHaveTextContent('Toggle this panel')
+    expect(dialog).not.toHaveTextContent('Like the focused recommendation')
+    expect(dialog).not.toHaveTextContent("Block the focused recommendation's artist")
   })
 
   it('does not open while a text field has focus (typing a literal "?")', () => {
