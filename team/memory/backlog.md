@@ -2280,3 +2280,21 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `feed.test.tsx`: typing a query that narrows the list, then Escape, restores every card and empties
   the input; Escape on an empty, focused input blurs it. 303/303 frontend tests pass, tsc/lint/build
   clean (chunk split intact). PR: see git history.
+
+- [x] **Delete two pieces of orphaned dead code.** *(hourly routine, 2026-09-04 — this run's first
+  task, Option C)* Product's round this task proposed three ideas, all cut before an Architect+QA
+  call: a light/dark theme toggle (`frontend/CLAUDE.md`'s "Already satisfied" section states plainly
+  "Single-theme dark is a stated choice, not a missing light mode" — this would have reversed a
+  documented deliberate decision, same trap as the score-badge/via-tags catches logged above); a feed
+  sort control (`FilterBar.tsx` already has one — `Dropdown label={\`Sort · ...\`}` backed by
+  `SortKey`/`SORTS` — confirmed by grep, a straight duplicate); and debouncing the quick-filter search
+  box (`ScanFeedPage.tsx`'s `visibleRows` is a plain `useMemo` filter over the *currently loaded page*
+  of rows, not the thousands-of-tags case `frontend/CLAUDE.md` rule 8 is about — no measured problem,
+  premature optimization).
+  Picked up instead: two genuinely dead pieces of code already flagged as "fair game for a future
+  cleanup" in `team/memory/tried-and-failed.md`'s 2026-09-04 entries — `lib/markdown.ts`'s
+  `recsToMarkdown` (zero callers outside its own test; the button that used it was deliberately
+  removed per Roy's request) and the orphaned `.via` CSS rule in `feed.css` (left behind by the same
+  day's removal of the "via <tags>" reasons line, #103). Confirmed both had no other references via
+  grep before deleting. No functional change. 297/297 frontend tests pass (303 minus
+  `markdown.test.ts`'s 6), tsc/lint/build clean (chunk sizes unchanged). PR #143.
