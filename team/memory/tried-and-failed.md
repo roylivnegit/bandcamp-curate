@@ -127,3 +127,31 @@ UI either. Only `SidePanels.tsx`'s "renew ▾" dropdown (for a block already abo
 uses `BLOCK_DURATIONS`. Looks like stale documentation/dead code left over from a card-layout
 cleanup pass, not a regression from this run's change — worth a future small "resurrect or
 delete the duration-picker-at-block-time UI" cleanup item, but out of scope for today's task.
+
+## 2026-09-04 — hourly routine, Option C caught a proposal that would have undone a real Roy decision
+
+Product's first round (fed the current file inventory plus the rejected-ideas list) proposed
+two things, both confirmed real gaps by direct grep before reaching Architect+QA:
+
+- **"Wire up the already-built `recsToMarkdown` into a Copy-as-Markdown button."** `grep -rn
+  "recsToMarkdown"` does show zero call sites outside its own test — genuinely dead code, exactly
+  as Product described. But `git log -p -- frontend/src/lib/markdown.ts` and the commit that
+  deleted its old caller (`2517b6f`, "remove dead toolbar buttons (#107)") tell the rest of the
+  story: `CopyLinkButton`/`CopyMarkdownButton` were deleted **"per request"** — this was Roy
+  explicitly asking for that UI to go, not an unfinished feature. `lib/markdown.ts` itself was
+  simply left behind by that deletion (the commit only removed the button component + its test).
+  Re-adding a button for it would have silently reintroduced something Roy asked removed one day
+  earlier. **Do not propose resurrecting `recsToMarkdown`'s UI again** — if genuinely wanted, that
+  is Roy's call to make explicitly, not a "found a gap" pickup. The dead file itself
+  (`lib/markdown.ts` + its test) is fair game for an ordinary dead-code-deletion cleanup, same as
+  the `COPY_LINK_FEEDBACK_MS` cleanup earlier — deleting unreachable code doesn't revive the
+  feature, it just stops misleading later scans of the codebase into thinking it's an unfinished
+  feature.
+- **"Commit a typed block-reason on blur, not just Enter."** No such history — `Blacklist.reason`
+  UI only shipped a few hours earlier in the same day (#131) with Enter-only commit, a plausible
+  incremental gap rather than a deliberate omission. Built this run (see backlog.md).
+
+Lesson for future rounds: before building on a "this is dead/unwired code" finding, check *why*
+it's dead — `git log -p`/`git blame` on the file, not just a same-session grep. A deliberate
+removal and an unfinished feature look identical to a grep for call sites; only the history tells
+them apart, and building the wrong one means undoing a decision Roy already made on purpose.

@@ -146,4 +146,58 @@ describe('BlockedPanel reason', () => {
 
     expect(onSetReason).not.toHaveBeenCalled()
   })
+
+  it('saves a typed reason on blur', () => {
+    const onSetReason = vi.fn()
+    render(
+      <BlockedPanel
+        items={makeBlocked(1)}
+        onUnblock={() => {}}
+        onRenew={() => {}}
+        onSetReason={onSetReason}
+        busy={() => false}
+      />,
+    )
+
+    const input = screen.getByLabelText('Reason for blocking Band 0')
+    fireEvent.change(input, { target: { value: 'too repetitive' } })
+    fireEvent.blur(input)
+
+    expect(onSetReason).toHaveBeenCalledWith(0, 'too repetitive')
+  })
+
+  it('does not save on blur when the text is unchanged or blank', () => {
+    const items = makeBlocked(1)
+    items[0].reason = 'too much noise'
+    const onSetReason = vi.fn()
+    render(
+      <BlockedPanel items={items} onUnblock={() => {}} onRenew={() => {}} onSetReason={onSetReason} busy={() => false} />,
+    )
+
+    const input = screen.getByLabelText('Reason for blocking Band 0')
+    fireEvent.blur(input)
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.blur(input)
+
+    expect(onSetReason).not.toHaveBeenCalled()
+  })
+
+  it('does not re-save on blur while a save for this row is already in flight', () => {
+    const onSetReason = vi.fn()
+    render(
+      <BlockedPanel
+        items={makeBlocked(1)}
+        onUnblock={() => {}}
+        onRenew={() => {}}
+        onSetReason={onSetReason}
+        busy={() => true}
+      />,
+    )
+
+    const input = screen.getByLabelText('Reason for blocking Band 0')
+    fireEvent.change(input, { target: { value: 'too repetitive' } })
+    fireEvent.blur(input)
+
+    expect(onSetReason).not.toHaveBeenCalled()
+  })
 })

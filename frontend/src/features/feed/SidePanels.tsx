@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { FocusEvent, KeyboardEvent } from 'react'
 import type { Blocked, Liked } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { BLOCK_DURATIONS, RENEW_WINDOW_MS, SIDEPANEL_PAGE_SIZE } from '../../config'
@@ -133,10 +133,24 @@ export function BlockedPanel({
                 b.expires_at !== null &&
                 new Date(b.expires_at).getTime() - Date.now() <= RENEW_WINDOW_MS &&
                 new Date(b.expires_at).getTime() > Date.now()
+              const commitReason = (value: string) => {
+                const trimmed = value.trim()
+                if (trimmed && trimmed !== b.reason) onSetReason(b.band_id, trimmed)
+              }
               const saveReason = (e: KeyboardEvent<HTMLInputElement>) => {
                 if (e.key !== 'Enter') return
-                const value = e.currentTarget.value.trim()
-                if (value && value !== b.reason) onSetReason(b.band_id, value)
+                commitReason(e.currentTarget.value)
+              }
+              // Clicking away, tabbing to the next control, or closing the
+              // panel without pressing Enter used to discard a typed reason
+              // silently. `rowBusy` guards against a race: disabling the
+              // input mid-save (see the `disabled={rowBusy}` below) itself
+              // fires a blur — without this guard that would re-submit the
+              // same value a second time while the first save is still in
+              // flight.
+              const blurReason = (e: FocusEvent<HTMLInputElement>) => {
+                if (rowBusy) return
+                commitReason(e.currentTarget.value)
               }
               return (
                 <li className="row" key={b.id}>
@@ -153,6 +167,7 @@ export function BlockedPanel({
                     defaultValue={b.reason ?? ''}
                     disabled={rowBusy}
                     onKeyDown={saveReason}
+                    onBlur={blurReason}
                   />
                   {b.band_url && (
                     // Icon-only link, same pattern as LikedPanel's — the glyph is
