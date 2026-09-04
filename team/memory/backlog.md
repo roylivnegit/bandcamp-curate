@@ -2299,6 +2299,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   grep before deleting. No functional change. 297/297 frontend tests pass (303 minus
   `markdown.test.ts`'s 6), tsc/lint/build clean (chunk sizes unchanged). PR #143, merged.
 
+- [x] **The "?" shortcuts panel is invisible outside a scan's feed page.** *(proposed by the hourly
+  routine, 2026-09-04, Architect+QA-approved — this run's second task, Option C)* Product's round was
+  told to actually grep/read `SidePanels.tsx`/`NewScanForm.tsx`/`CommandPalette.tsx`/`AppHeader.tsx`/
+  the auth pages before proposing, to avoid another duplicate. Found: `App.tsx` mounts
+  `<CommandPalette>` globally (Ctrl/Cmd+K already works on the plain `/scans` list page), but
+  `<ShortcutsHelp>` — the only UI documenting the palette's existence — was mounted exclusively
+  inside `ScanFeedPage.tsx`. So a user who signs up and lands on `/scans` without opening a scan has
+  no way to discover Ctrl/Cmd+K exists, and "?" does nothing there.
+  Done, with one refinement over the raw proposal (its shortcut list mixes global rows — the palette,
+  the panel's own toggle — with feed-only rows — l/b, arrow-key card nav, quick filter — and a bare
+  move would have shown the feed-only rows on pages with no cards for them to act on): `SHORTCUTS` in
+  `ShortcutsHelp.tsx` now carries a `feed: boolean` flag per row; a new `feedShortcuts` prop (default
+  `true`, so the pre-existing standalone tests were unaffected) filters them out when false. Moved the
+  component's mount from `ScanFeedPage.tsx` into `App.tsx` next to `CommandPalette`, deriving
+  `feedShortcuts` from `useMatch('/scans/:scanId') !== null`. Trade-off, disclosed in the PR: its
+  small JS/CSS moves from the lazy `ScanFeedPage` chunk into the eager main chunk (~2.7KB gzipped) —
+  unavoidable, since it now has to work outside that route. Covered by a new `ShortcutsHelp.test.tsx`
+  case (`feedShortcuts={false}` keeps the global rows, drops the feed-only ones) and a new
+  `feed.test.tsx` integration test navigating `/scans` → `/scans/1` and asserting the panel's content
+  differs correctly on each. 299/299 frontend tests pass, tsc/lint/build clean (chunk split intact
+  apart from the disclosed trade-off). PR #144, merged.
+
 - [x] **`SeedsPanel` updates silently as a scan resolves seeds.** *(proposed by the hourly routine,
   2026-09-04, Architect+QA-approved — this run's third task, Option C, found in the same round as the
   global shortcuts-panel item above)* `SeedsPanel`'s `<ul>` of seed rows (`SidePanels.tsx`) updates as

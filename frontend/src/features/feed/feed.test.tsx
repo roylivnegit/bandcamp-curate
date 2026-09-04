@@ -2177,3 +2177,48 @@ describe('seed resolution panel', () => {
     expect(screen.queryByText('https://a.bandcamp.com/album/one')).not.toBeInTheDocument()
   })
 })
+
+describe('global keyboard shortcuts help', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  // '/api/scans/1' must be listed before '/api/scans' — mockFetch matches by
+  // substring in order, and the list route would otherwise swallow it too.
+  const combinedRoutes: Array<[string, unknown, number?]> = [
+    ['/api/auth/me', fakeMe],
+    ['/api/scans/1', { ...fakeScan, seeds: [] }],
+    ['/api/scans', [fakeScan]],
+    ['/api/recommendations/count', { count: 1 }],
+    ['/api/recommendations', [fakeRec()]],
+    ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+    ['/api/likes', []],
+    ['/api/blacklist', []],
+  ]
+
+  it('works on the scans list too, scoped to what the current page actually has', async () => {
+    mockFetch(combinedRoutes)
+    const user = userEvent.setup()
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    // On the list page there are no cards, so the feed-only rows (l/b/arrow
+    // nav/quick filter) would document controls that don't exist here.
+    fireEvent.keyDown(document, { key: '?' })
+    let dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).not.toHaveTextContent('Like the focused recommendation')
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await user.click(await screen.findByRole('link', { name: /My collection/ }))
+    await screen.findByRole('heading', { name: /My collection/ })
+
+    // The feed page has all of it.
+    fireEvent.keyDown(document, { key: '?' })
+    dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).toHaveTextContent('Like the focused recommendation')
+  })
+})
