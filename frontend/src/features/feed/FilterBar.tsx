@@ -23,6 +23,9 @@ const TYPES: Array<{ value: '' | 'album' | 'track'; label: string }> = [
 export function FilterBar({
   filters,
   facetTags,
+  seedTagFacets,
+  excludedSeedTags,
+  onApplySeedTagExclusion,
   likedCount,
   blockedCount,
   panel,
@@ -39,6 +42,16 @@ export function FilterBar({
 }: {
   filters: FeedFilters
   facetTags: Facet[]
+  /** Genres carried by the caller's own collection (`GET /api/facets`'s
+   *  `seed_tags`) — the candidates for "exclude recs generated from my own
+   *  genres", distinct from `facetTags` (genres present in the current
+   *  recommendations). */
+  seedTagFacets: Facet[]
+  /** Currently-applied exclusion set, client-side only (the backend doesn't
+   *  persist it) — drives the dropdown trigger's active state/count and its
+   *  pre-filled selection on reopen. */
+  excludedSeedTags: Set<string>
+  onApplySeedTagExclusion: (tags: Set<string>) => void
   likedCount: number
   blockedCount: number
   panel: 'liked' | 'blocked' | 'seeds' | null
@@ -137,6 +150,11 @@ export function FilterBar({
 
           <GenreDropdown filters={filters} facetTags={facetTags} />
           <ContainsDropdown filters={filters} />
+          <MyGenresDropdown
+            facets={seedTagFacets}
+            excluded={excludedSeedTags}
+            onApply={onApplySeedTagExclusion}
+          />
 
           <div className="spacer" />
 
@@ -268,6 +286,108 @@ function GenreDropdown({ filters, facetTags }: { filters: FeedFilters; facetTags
               className="btn"
               onClick={() => {
                 filters.commitTags(pending)
+                close()
+              }}
+            >
+              {pending.size ? `Apply (${pending.size})` : 'Apply'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Dropdown>
+  )
+}
+
+/** "Exclude recommendations that came from my own collection's genres" — a
+ *  curation-time recompute (`POST /api/recommendations/recompute?
+ *  exclude_seed_tag=...`), not a client-side filter like `GenreDropdown`
+ *  above. Same searchable-checkbox-list shape, applied against `seedTags`
+ *  (the caller's own genres) instead of the current recs' genres. */
+function MyGenresDropdown({
+  facets,
+  excluded,
+  onApply,
+}: {
+  facets: Facet[]
+  excluded: Set<string>
+  onApply: (tags: Set<string>) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [pending, setPending] = useState<Set<string>>(new Set())
+
+  const selectedCount = excluded.size
+
+  const searchable = useMemo(() => facets.map((t) => ({ tag: t, key: t.label.toLowerCase() })), [facets])
+  const deferredQuery = useDeferredValue(query)
+  const rows = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase()
+    if (!q) return facets
+    const out: Facet[] = []
+    for (const { tag, key } of searchable) if (key.includes(q)) out.push(tag)
+    return out
+  }, [searchable, facets, deferredQuery])
+
+  return (
+    <Dropdown
+      label={selectedCount ? `My genres (${selectedCount}) ▾` : '＋ Exclude my genres'}
+      active={selectedCount > 0}
+      onOpen={() => {
+        setPending(new Set(excluded))
+        setQuery('')
+      }}
+    >
+      {(close) => (
+        <div>
+          <input
+            className="ddsearch input"
+            placeholder="Search your genres…"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <p className="ddempty">
+            Excludes recommendations that came from albums/tracks in your own collection carrying
+            these genres.
+          </p>
+          <div className="ddlist">
+            {facets.length === 0 ? (
+              <p className="ddempty">
+                No seed genres yet — they come from your own crawled collection.
+              </p>
+            ) : rows.length === 0 ? (
+              <p className="ddempty">No genres match “{deferredQuery}”.</p>
+            ) : (
+              rows.map((t) => {
+                const sel = pending.has(t.value)
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    className={`ddrow${sel ? ' sel' : ''}`}
+                    onClick={() => {
+                      const next = new Set(pending)
+                      if (sel) next.delete(t.value)
+                      else next.add(t.value)
+                      setPending(next)
+                    }}
+                  >
+                    <span className="box">✓</span>
+                    <span className="nm">{t.label}</span>
+                    <span className="cnt">{count(t.count)}</span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+          <div className="ddfoot">
+            <button type="button" className="btn ghost" onClick={() => setPending(new Set())}>
+              Clear
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                onApply(pending)
                 close()
               }}
             >

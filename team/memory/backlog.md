@@ -2352,3 +2352,49 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   different items but the same integer). Covered by a new
   `test_seed_tags_lists_my_track_genres_too`. 263/263 backend tests pass, ruff clean. PR: see git
   history.
+
+- [x] **Failed scans have no way to retry.** *(proposed by the hourly routine, 2026-09-04, Option C —
+  Architect+QA-approved)* Product's round was fed the real frontend file inventory plus the list of
+  deliberate removals not to resurrect (score badge, "via tags" line, copy buttons, theme toggle) and
+  told to ground any idea in a specific file. Most candidates it checked (delete confirmation,
+  bulk-block confirmation, session-expiry warning, roving tabindex, undo/retry patterns, error
+  boundary, offline handling, CSV export, filter-state persistence, shortcuts-help accuracy) were
+  already built. Grepping for API-client methods with zero call sites turned up two real gaps — this
+  entry and the next.
+  `api/client.ts` already defines `runScan: (id) => POST /api/scans/{id}/run` and the backend already
+  supports re-queuing an errored/draft scan — but `grep -rn "runScan"` found only the definition, no
+  caller. A scan that ends in `status === 'error'` (e.g. the crawl budget ran out mid-collection, per
+  `CLAUDE.md`) showed an error banner with no action; for a `kind === 'collection'` scan it was worse,
+  since `DeleteScanButton` refuses to render for that kind at all — zero recovery path in the UI.
+  Done: new `components/RetryScanButton.tsx` (busy state, calls `api.runScan(scanId)`, hands the fresh
+  `ScanDetail` back via an `onRetried` callback rather than re-fetching, toasts on failure). Wired into
+  `ScanFeedPage.tsx`'s existing error banner via `onRetried={setScan}`, so the banner flips straight to
+  "Queued — waiting for the crawl worker…" without waiting on the next poll. Covered by a new test in
+  `feed.test.tsx`. 301/301 frontend tests pass, tsc/lint/build clean. Merged (#147).
+
+- [x] **"My genres" exclude-seed-tag dropdown.** *(proposed by the hourly routine, 2026-09-04,
+  Architect+QA-approved, found in the same round as the item above)* `facets.seed_tags`
+  (`GET /api/facets`) was typed on the frontend and already fetched by `ScanFeedPage.tsx`'s
+  `loadFacets`, but discarded — nothing called `api.recompute(scanId, excludeSeedTags)`
+  (`api/client.ts`), so the backend's "exclude recommendations that came from your own collection's
+  genres" feature (`POST /api/recommendations/recompute?exclude_seed_tag=...`) had no UI. Architect+QA
+  called it sound but the bigger of the two gaps this round found, queued for its own full sitting
+  rather than bundled with the smaller retry-scan fix above.
+  Done: new `MyGenresDropdown` in `FilterBar.tsx`, mirroring the existing `GenreDropdown`'s
+  searchable-checkbox-list shape but against `facets.seed_tags` instead of `facets.tags`, and against
+  local pending/applied state instead of the URL-persisted `useFeedFilters` (this is a one-shot
+  curation-time recompute, not a client-side filter — the backend doesn't persist `exclude_seed_tag`
+  across other recomputes, e.g. a crawl slice). `ScanFeedPage.tsx` threads `seedTagFacets`
+  (from `loadFacets`'s previously-discarded `data.seed_tags`) and a new `applySeedTagExclusion`
+  handler down to it: calls `api.recompute(scanId, tags)`, then directly reloads via
+  `Promise.all([loadFirstPage(), loadFacets()])` rather than waiting on the poll-driven
+  `recompute_generation` effect, since that effect only re-arms on a fresh `loadScan()` and polling
+  itself stops once a scan is `done` — the common case for browsing an already-finished feed. Guarded
+  by the existing shared `inFlight` ref (keyed `'seedtags'`) against a double-submit; a failure (e.g.
+  the backend's recompute cooldown) shows an alert toast rather than silently no-opping. The applied
+  set is tracked client-side (`excludedSeedTags`) purely to drive the dropdown's trigger label/count
+  and its pre-filled selection on reopen — there's nothing server-side to read it back from. Covered
+  by a new test in `feed.test.tsx`: opens the dropdown, selects a genre, clicks Apply, asserts
+  `POST /api/recommendations/recompute?...exclude_seed_tag=ambient...` was called and the trigger
+  label updates to "My genres (1) ▾". 301/301 frontend tests pass, tsc/lint/build clean (chunk split
+  intact — lands in the `ScanFeedPage` chunk, its only importer). PR: see git history.
