@@ -2165,7 +2165,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `test_collection_scan_owned_track_finds_neighbours` confirmed red before the fix, green after.
   259/259 backend tests pass, ruff clean. Merged (#136).
 
-- [~] **`DELETE /api/scans/{id}` orphans `crawl_frontier`/`provider_usage` rows.** *(found by the
+- [x] **`DELETE /api/scans/{id}` orphans `crawl_frontier`/`provider_usage` rows.** *(found by the
   hourly routine, 2026-09-04, via direct code audit)* Neither `CrawlFrontier.scan_id` nor
   `ProviderUsage.scan_id` declares `ondelete="CASCADE"` (unlike `ScanSeed`/`Recommendation`, which
   do), and `delete_scan` never cleaned them up itself — any scan that has actually run at least
@@ -2176,5 +2176,4 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   Done: mirrored the existing explicit `Recommendation` delete with two more explicit deletes
   (`CrawlFrontier`, `ProviderUsage`) before `session.delete(scan)`. New
   `test_delete_scan_drops_frontier_and_usage_rows` confirmed red before the fix, green after.
-  260/260 backend tests pass, ruff clean. PR #137 open with auto-merge enabled, not yet confirmed
-  merged as of this note.
+  260/260 backend tests pass, ruff clean. Merged (#137).
