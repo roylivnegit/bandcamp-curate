@@ -2398,3 +2398,29 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `POST /api/recommendations/recompute?...exclude_seed_tag=ambient...` was called and the trigger
   label updates to "My genres (1) ▾". 301/301 frontend tests pass, tsc/lint/build clean (chunk split
   intact — lands in the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **A purchased item stays permanently wishlisted.** *(found by an Explore-agent backend audit,
+  2026-09-04 — this run's third task, Option C)* Prompted to find one genuine, previously-unfixed
+  correctness bug grounded in actual source, not requiring a live crawl, distinct from ~10 already-
+  fixed examples supplied for context (seed_tags/TrackTag, cold-start liked bucket, timeout_count vs
+  attempts, delete_scan orphaned rows, owned-track neighbour seeding, follows cross-tenant scoping,
+  seed-tag provenance bypass, track tag-affinity, deterministic tie-break, login lockout). Found and
+  self-verified against source before building: `app/bandcamp/mapper.py`'s `_add_fan_item` matches an
+  existing `FanItem` row on `(fan_id, item_type, album_id, track_id)` only — the same columns as the
+  `uq_fan_item` unique constraint, which also excludes `is_wishlist` — so at most one row can ever
+  exist per item. When a match is found the function just returns `False` (no new row needed) without
+  ever touching `is_wishlist` on the existing row. A fan who wishlists an album and later actually buys
+  it gets re-ingested with `is_wishlist=False` against that same row on the next collection crawl — but
+  the row silently stays wishlisted forever. Downstream, `curation/engine.py` filters "owned" via
+  `FanItem.is_wishlist.is_(False)` in `_seed_ids` (collection-scan neighbour seeding), the owner's own
+  tag profile, and co-owner overlap weighting (ADR-0003) — so a purchased-but-formerly-wishlisted item
+  permanently never seeds the crawl, never contributes to taste/tag affinity, and never counts toward
+  neighbour overlap. `/api/stats`'s owned/wishlist counts are wrong for it too. Not caught by the
+  existing `test_wishlist_ingested_as_flagged_fan_items`, which only exercises a single ingest pass.
+  Done: `_add_fan_item` now flips `existing.is_wishlist = False` when a currently-wishlisted row is
+  re-observed as owned (ownership wins over a stale wishlist flag; the reverse — an owned item later
+  merely wishlisted, which shouldn't happen in practice — is left alone). New
+  `test_purchasing_a_wishlisted_item_flips_it_to_owned` builds two `FanCollection`s directly (no HTML
+  round-trip needed, `ingest_fan_collection` takes the dataclass) — first with the item on the
+  wishlist, then the same item as owned — and asserts exactly one `FanItem` row exists throughout and
+  ends with `is_wishlist is False`. 264/264 backend tests pass, ruff clean. PR: see git history.

@@ -218,14 +218,26 @@ async def get_or_create_fan(session: AsyncSession, fan_id: int, username: str, *
 async def _add_fan_item(session: AsyncSession, fan: Fan, item_type: ItemType,
                         album: Album | None = None, track: Track | None = None,
                         is_wishlist: bool = False) -> bool:
-    """Insert a fan↔item edge if absent. Returns True if a new row was created."""
+    """Insert a fan↔item edge if absent. Returns True if a new row was created.
+
+    The unique constraint (`uq_fan_item`) is on `(fan_id, item_type, album_id,
+    track_id)` only — it does not include `is_wishlist` — so at most one row
+    can ever exist per item. If a wishlisted item is later actually bought, a
+    re-crawl observes it with `is_wishlist=False` against this same existing
+    row; ownership must win over a stale wishlist flag rather than leaving it
+    permanently wishlisted (which would wrongly keep excluding it from the
+    owner's own taste/tag profile forever).
+    """
     stmt = select(FanItem).where(
         FanItem.fan_id == fan.id,
         FanItem.item_type == item_type,
         FanItem.album_id == (album.id if album else None),
         FanItem.track_id == (track.id if track else None),
     )
-    if (await session.execute(stmt)).scalar_one_or_none() is not None:
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        if existing.is_wishlist and not is_wishlist:
+            existing.is_wishlist = False
         return False
     return await _add_edge_or_false(
         session,
