@@ -2474,3 +2474,30 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   duplicate of an existing seed and another repeated within the paste itself lands exactly 2 distinct
   entries. 312/312 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
+
+- [x] **CSV export filename collides across scans on the same day.** *(proposed by the hourly
+  routine, 2026-09-07, via a targeted Product read-the-actual-files round, Architect+QA-approved)*
+  `FilterBar.tsx`'s "Export CSV" button built the filename as `bandcamp-feed-${date}.csv` — date
+  only, no scan identity — even though `ScanListPage.tsx` clearly supports multiple named scans and
+  `ScanFeedPage.tsx` already has `scan.name` in scope right where `FilterBar` is rendered. Exporting
+  two different scans on the same day produced two files with the identical name, silently
+  overwriting one in the browser's Downloads folder.
+  Done: new `exportFilename(scanName: string | null, date: Date): string` in `lib/export.ts` —
+  slugifies the name (lowercase, non-alphanumeric runs collapsed to `-`, leading/trailing `-`
+  trimmed, capped at 50 characters so an unusually long scan name can't produce an unwieldy
+  filename) and appends it between the existing `bandcamp-feed-` prefix and the date; falls back to
+  the original date-only form for a `null` name or one that's empty/all-punctuation after slugifying
+  (an empty segment in the filename otherwise). `FilterBar` takes a new required `scanName` prop,
+  threaded from `ScanFeedPage.tsx`'s `scan?.name ?? null` at its one call site; the export button's
+  `onClick` now calls `exportFilename(scanName, new Date())` instead of building the string inline.
+  Per the QA watch-out, both call sites keep storing/submitting nothing new here — this only affects
+  the downloaded filename, not what's in the CSV. Two differently-named scans exported the same day
+  now get distinct files instead of overwriting each other; two scans that happen to share the exact
+  same name are a separate, pre-existing, much narrower edge case not addressed here (nothing in the
+  schema enforces scan-name uniqueness). Covered by 7 new tests in `export.test.ts` (null-name
+  fallback, slugified name, punctuation/whitespace collapsing, empty/all-punctuation fallback, the
+  50-character cap, two distinct names produce distinct filenames) and one extended integration test
+  in `feed.test.tsx`'s "export feed as CSV" block, capturing the anchor's `download` attribute and
+  asserting it matches `bandcamp-feed-my-collection-YYYY-MM-DD.csv` for the fixture scan named "My
+  collection". 318/318 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
+  history.
