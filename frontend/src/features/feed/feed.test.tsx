@@ -2063,6 +2063,30 @@ describe('scroll-to-top button', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
     expect(screen.getByRole('heading', { name: /My collection/ })).toHaveFocus()
   })
+
+  it('scrolls without animation when the user prefers reduced motion', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 700, configurable: true })
+    fireEvent.scroll(window)
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to top' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
+  })
 })
 
 describe('export feed as CSV', () => {

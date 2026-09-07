@@ -65,6 +65,19 @@ describe('NewScanForm seed URL validation', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
   })
 
+  it('rejects a cosmetically-different duplicate (trailing slash, different host case)', () => {
+    renderForm()
+    addViaButton('https://artist.bandcamp.com/album/some-release')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    addViaButton('https://Artist.BandCamp.com/album/some-release/')
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Already in your seed list.')
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    // the original, as typed, is what's kept — not silently rewritten
+    expect(screen.getByText('https://artist.bandcamp.com/album/some-release')).toBeInTheDocument()
+  })
+
   it('also rejects an invalid URL submitted via Enter', () => {
     renderForm()
     const input = screen.getByLabelText('Seed releases')
@@ -115,6 +128,22 @@ describe('NewScanForm multi-URL paste', () => {
     )
 
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  })
+
+  it('dedupes a pasted line that is only cosmetically different from an existing/pasted seed', () => {
+    renderForm()
+    addViaButton('https://a.bandcamp.com/album/one')
+    pasteInto(
+      [
+        'https://A.BandCamp.com/album/one/', // cosmetic dup of the already-added seed
+        'https://b.bandcamp.com/album/two',
+        'https://B.BandCamp.com/album/two/', // cosmetic dup within the same paste
+      ].join('\n'),
+    )
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByText('https://a.bandcamp.com/album/one')).toBeInTheDocument()
+    expect(screen.getByText('https://b.bandcamp.com/album/two')).toBeInTheDocument()
   })
 
   it('leaves a single-line paste to the default paste behavior instead of auto-adding', () => {

@@ -92,3 +92,26 @@ if (typeof window !== 'undefined') {
 }
 
 export { MockIntersectionObserver }
+
+/* matchMedia shim — jsdom doesn't implement it at all (the bare call throws
+ * "not implemented"), but prefersReducedMotion() (lib/motion.ts) calls it for
+ * real. Defaults to `matches: false` (no reduced-motion preference) so every
+ * existing test keeps its current behavior unless it explicitly overrides
+ * `window.matchMedia` itself (e.g. via `vi.stubGlobal`) to simulate the
+ * preference being on. */
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  Object.defineProperty(window, 'matchMedia', {
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+    configurable: true,
+    writable: true,
+  })
+}

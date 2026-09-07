@@ -2,7 +2,7 @@ import { useEffect, useState, type ClipboardEvent as ReactClipboardEvent } from 
 
 import { api } from '../../api/client'
 import { RemoveButton } from '../../components/RemoveButton'
-import { seedKind } from '../../lib/format'
+import { normalizeSeedUrl, seedKind } from '../../lib/format'
 
 // Mirrors the backend's own acceptance shape (`app.crawl.scan_service._SEED_RE`):
 // any host, path starting /album/<slug> or /track/<slug>. Deliberately no
@@ -48,7 +48,7 @@ export function NewScanForm({
       setError('That doesn’t look like a Bandcamp album or track URL (e.g. https://artist.bandcamp.com/album/name).')
       return
     }
-    if (seeds.includes(u)) {
+    if (seeds.some((s) => normalizeSeedUrl(s) === normalizeSeedUrl(u))) {
       setError('Already in your seed list.')
       return
     }
@@ -78,8 +78,17 @@ export function NewScanForm({
     }
     setError('')
     setSeeds((prev) => {
+      // A `Set` of normalized keys, seeded from the existing list and grown
+      // as each pasted line is accepted — catches a duplicate against what
+      // was already there *and* a duplicate repeated within this same paste.
+      const seen = new Set(prev.map(normalizeSeedUrl))
       const next = [...prev]
-      for (const u of valid) if (!next.includes(u)) next.push(u)
+      for (const u of valid) {
+        const key = normalizeSeedUrl(u)
+        if (seen.has(key)) continue
+        seen.add(key)
+        next.push(u)
+      }
       return next
     })
     setSeedUrl('')

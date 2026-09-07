@@ -10,6 +10,7 @@ import { RetryScanButton } from '../../components/RetryScanButton'
 import { ScrollTopButton } from '../../components/ScrollTopButton'
 import { CARD_EXIT_MS, FEED_PAGE_SIZE, SCAN_POLL_MS, TOAST_DURATION_MS, UNDO_WINDOW_MS } from '../../config'
 import { count } from '../../lib/format'
+import { prefersReducedMotion } from '../../lib/motion'
 import { matchesQuery } from '../../lib/quickFilter'
 import { showToast } from '../../lib/toast'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
@@ -220,7 +221,7 @@ export function ScanFeedPage() {
   // hands focus to the page heading rather than leaving it wherever it was
   // (often a card no longer near the viewport).
   const scrollToTop = useCallback(() => {
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
     headingRef.current?.focus()
   }, [])
 
