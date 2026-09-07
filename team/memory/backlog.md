@@ -2450,16 +2450,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `ToastStack`-level test that clicking the rendered action button invokes it (mirrors the existing
   like/block-retry action test).
 
-- [ ] **Cosmetically-different duplicate seed URLs aren't caught.** *(proposed by the hourly routine,
+- [x] **Cosmetically-different duplicate seed URLs aren't caught.** *(proposed by the hourly routine,
   2026-09-07, Architect+QA-approved)* `NewScanForm.tsx`'s `addSeed` and `onSeedPaste` both dedupe by
   exact trimmed-string equality, so `https://x.bandcamp.com/album/y` and
   `https://X.BANDCAMP.com/album/y/` (differing only by host case or a trailing slash) are treated as
-  two distinct seeds, silently burning a slot on a scan with a small, budget-limited seed list. Add
-  `normalizeSeedUrl(url)` to `lib/format.ts` (lowercase host only — not the whole URL, since Bandcamp
-  slug case could matter server-side even if it usually doesn't — and strip a trailing slash), and
-  dedupe/compare against normalized values in **both** call sites. QA watch-out: still store and
-  submit the user's original raw URL (display + `api.createScan` payload) — normalization is for the
-  comparison only, never silently rewrite what was typed/pasted. Verify: a unit test on
-  `normalizeSeedUrl` for the slash/case cases, plus a `NewScanForm` test asserting a cosmetically-
-  different duplicate shows the existing "Already in your seed list" error instead of adding a second
-  entry.
+  two distinct seeds, silently burning a slot on a scan with a small, budget-limited seed list.
+  Done: new `normalizeSeedUrl(url)` in `lib/format.ts` — lowercases the host only (not the whole URL,
+  since Bandcamp slug case could matter server-side even if it usually doesn't) and strips a trailing
+  slash from the path, falling back to the trimmed raw string if it doesn't parse as a URL at all
+  (mirrors `bandcampHandle`'s try/catch). `addSeed` compares against normalized values instead of raw
+  equality; `onSeedPaste` builds its `seen` set from normalized keys, seeded from the existing list
+  and grown as each pasted line is accepted, so it catches a duplicate against what's already there
+  **and** a duplicate repeated within the same paste. Per the QA watch-out, both call sites keep
+  pushing/storing the user's original raw URL — normalization is for the comparison only, nothing
+  typed or pasted is silently rewritten. Covered by 4 new tests in `format.test.ts`
+  (trailing-slash equivalence, host-case-insensitive but path-case-preserving, two genuinely
+  different URLs stay distinct, a non-URL string falls back to itself) and 2 new integration tests in
+  `NewScanForm.test.tsx`: a host-case + trailing-slash variant of an already-added seed is rejected
+  via the single-add path and the original (unrewritten) URL is what's kept; a paste with a cosmetic
+  duplicate of an existing seed and another repeated within the paste itself lands exactly 2 distinct
+  entries. 312/312 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
+  history.

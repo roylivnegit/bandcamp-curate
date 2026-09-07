@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { expiresLabel, isValidFanUrl } from './format'
+import { expiresLabel, isValidFanUrl, normalizeSeedUrl } from './format'
 
 describe('isValidFanUrl', () => {
   it('accepts a plain bandcamp.com fan URL', () => {
@@ -39,6 +39,35 @@ describe('isValidFanUrl', () => {
 
   it('rejects an empty string', () => {
     expect(isValidFanUrl('')).toBe(false)
+  })
+})
+
+describe('normalizeSeedUrl', () => {
+  it('treats a trailing slash as equivalent to none', () => {
+    expect(normalizeSeedUrl('https://a.bandcamp.com/album/x/')).toBe(
+      normalizeSeedUrl('https://a.bandcamp.com/album/x'),
+    )
+  })
+
+  it('is case-insensitive on the host only, not the path', () => {
+    expect(normalizeSeedUrl('https://A.BandCamp.com/album/X')).toBe(
+      normalizeSeedUrl('https://a.bandcamp.com/album/X'),
+    )
+    // the path's case is preserved, not lowercased, since a slug could
+    // plausibly be case-sensitive server-side
+    expect(normalizeSeedUrl('https://a.bandcamp.com/album/X')).not.toBe(
+      normalizeSeedUrl('https://a.bandcamp.com/album/x'),
+    )
+  })
+
+  it('leaves two genuinely different URLs distinct', () => {
+    expect(normalizeSeedUrl('https://a.bandcamp.com/album/x')).not.toBe(
+      normalizeSeedUrl('https://a.bandcamp.com/album/y'),
+    )
+  })
+
+  it('falls back to the trimmed raw string for something that does not parse as a URL', () => {
+    expect(normalizeSeedUrl('  not a url  ')).toBe('not a url')
   })
 })
 
