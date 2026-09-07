@@ -2424,3 +2424,51 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   round-trip needed, `ingest_fan_collection` takes the dataclass) — first with the item on the
   wishlist, then the same item as owned — and asserts exactly one `FanItem` row exists throughout and
   ends with `is_wishlist is False`. 264/264 backend tests pass, ruff clean. PR: see git history.
+
+- [x] **"Back to top" ignores the reduced-motion preference.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `ScanFeedPage.tsx`'s `scrollToTop` calls `window.scrollTo({top:
+  0, behavior: 'smooth'})` unconditionally. `base.css`'s `prefers-reduced-motion` block only zeroes
+  CSS transition/animation durations — it can't reach a native imperative smooth-scroll — so this was
+  the one motion effect in the app that preference didn't actually cover.
+  Done: new `lib/motion.ts`'s `prefersReducedMotion()` (checks
+  `matchMedia('(prefers-reduced-motion: reduce)').matches`), used in `scrollToTop` to pick `'auto'`
+  instead of `'smooth'` when set. Also added a `window.matchMedia` shim to `test/setup.ts` (jsdom
+  doesn't implement it), matching the existing `localStorage`/`IntersectionObserver` shim pattern —
+  defaults to `matches: false` so no existing test's behavior changed. Covered by a new
+  `motion.test.ts` (false/true/queries-the-right-media-feature) and a new integration test in
+  `feed.test.tsx`'s "scroll-to-top button" block asserting `scrollTo` is called with
+  `{top: 0, behavior: 'auto'}` when `matchMedia` reports the preference. 306/306 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Session-expiry warning toast has no way to act on it.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `lib/useSessionExpiryWarning.ts` calls
+  `showToast(SESSION_EXPIRING_MESSAGE, 'alert')` with no `action`, even though `Toast.action`/
+  `ToastStack` already render a one-click action button (used today for like/block retries) and
+  `AuthContext.tsx` already has `logout` in scope right where the hook is called.
+  Done: `useSessionExpiryWarning(token, logout)` takes `logout` as a second, required param and
+  attaches `{label: 'Log out now', onClick: logout}` to the warning toast. `AuthContext.tsx`'s one
+  call site passes its own (already `useCallback`-stable) `logout`. Per the QA watch-out, `logout` is
+  listed as a real effect dependency rather than only read imperatively — since `AuthContext`'s
+  `logout` identity is stable across renders, this doesn't reschedule the timer any more than `token`
+  alone already did, so it doesn't reopen the StrictMode double-timer risk the note flagged. Covered
+  by a new test in `useSessionExpiryWarning.test.ts` asserting the fired toast's `action.label` is
+  "Log out now" and that clicking it calls the passed-in `logout` mock exactly once; the four
+  pre-existing tests in that file were updated to pass a `vi.fn()` for the new required param, no
+  behavior change. `ToastStack`'s own generic "renders an action button and runs it" coverage
+  (already shipped for the like/block-retry actions) exercises the same rendering mechanism, so no
+  duplicate `ToastStack`-level test was added. 304/304 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). PR: see git history.
+
+- [ ] **Cosmetically-different duplicate seed URLs aren't caught.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `NewScanForm.tsx`'s `addSeed` and `onSeedPaste` both dedupe by
+  exact trimmed-string equality, so `https://x.bandcamp.com/album/y` and
+  `https://X.BANDCAMP.com/album/y/` (differing only by host case or a trailing slash) are treated as
+  two distinct seeds, silently burning a slot on a scan with a small, budget-limited seed list. Add
+  `normalizeSeedUrl(url)` to `lib/format.ts` (lowercase host only — not the whole URL, since Bandcamp
+  slug case could matter server-side even if it usually doesn't — and strip a trailing slash), and
+  dedupe/compare against normalized values in **both** call sites. QA watch-out: still store and
+  submit the user's original raw URL (display + `api.createScan` payload) — normalization is for the
+  comparison only, never silently rewrite what was typed/pasted. Verify: a unit test on
+  `normalizeSeedUrl` for the slash/case cases, plus a `NewScanForm` test asserting a cosmetically-
+  different duplicate shows the existing "Already in your seed list" error instead of adding a second
+  entry.

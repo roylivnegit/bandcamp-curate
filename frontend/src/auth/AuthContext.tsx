@@ -108,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  useSessionExpiryWarning(me !== null ? getToken() : null)
+  useSessionExpiryWarning(me !== null ? getToken() : null, logout)
 
   const value = useMemo(
     () => ({ me, loading, authError, login, signup, logout, refresh }),
