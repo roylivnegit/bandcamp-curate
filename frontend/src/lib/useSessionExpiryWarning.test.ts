@@ -25,7 +25,7 @@ describe('useSessionExpiryWarning', () => {
     const now = Date.now()
     const token = fakeJwt((now + 60 * 60 * 1000) / 1000) // expires in 1h
     const toasts = renderHook(() => useToasts())
-    renderHook(() => useSessionExpiryWarning(token))
+    renderHook(() => useSessionExpiryWarning(token, vi.fn()))
 
     expect(toasts.result.current).toHaveLength(0)
 
@@ -42,16 +42,33 @@ describe('useSessionExpiryWarning', () => {
     expect(toasts.result.current[0].variant).toBe('alert')
   })
 
+  it('gives the warning toast a "Log out now" action wired to the passed-in logout', () => {
+    const now = Date.now()
+    const token = fakeJwt((now + 60 * 60 * 1000) / 1000)
+    const logout = vi.fn()
+    const toasts = renderHook(() => useToasts())
+    renderHook(() => useSessionExpiryWarning(token, logout))
+
+    act(() => {
+      vi.advanceTimersByTime(60 * 60 * 1000 - SESSION_EXPIRY_WARNING_MS)
+    })
+
+    const toast = toasts.result.current[0]
+    expect(toast.action?.label).toBe('Log out now')
+    toast.action?.onClick()
+    expect(logout).toHaveBeenCalledTimes(1)
+  })
+
   it('schedules nothing for a null token', () => {
     const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
-    renderHook(() => useSessionExpiryWarning(null))
+    renderHook(() => useSessionExpiryWarning(null, vi.fn()))
 
     expect(setTimeoutSpy).not.toHaveBeenCalled()
   })
 
   it('schedules nothing for a token with no readable exp claim', () => {
     const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
-    renderHook(() => useSessionExpiryWarning('not-a-jwt'))
+    renderHook(() => useSessionExpiryWarning('not-a-jwt', vi.fn()))
 
     expect(setTimeoutSpy).not.toHaveBeenCalled()
   })
@@ -60,7 +77,7 @@ describe('useSessionExpiryWarning', () => {
     const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
     const now = Date.now()
     const token = fakeJwt((now + 60 * 60 * 1000) / 1000)
-    const { unmount } = renderHook(() => useSessionExpiryWarning(token))
+    const { unmount } = renderHook(() => useSessionExpiryWarning(token, vi.fn()))
 
     unmount()
 
@@ -72,7 +89,7 @@ describe('useSessionExpiryWarning', () => {
     const shortLivedToken = fakeJwt((now + 6 * 60 * 1000) / 1000) // warns at t=60s
     const longLivedToken = fakeJwt((now + 60 * 60 * 1000) / 1000) // warns at t=55m
     const toasts = renderHook(() => useToasts())
-    const { rerender } = renderHook(({ token }) => useSessionExpiryWarning(token), {
+    const { rerender } = renderHook(({ token }) => useSessionExpiryWarning(token, vi.fn()), {
       initialProps: { token: shortLivedToken },
     })
 

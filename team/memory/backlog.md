@@ -2440,18 +2440,24 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `{top: 0, behavior: 'auto'}` when `matchMedia` reports the preference. 306/306 frontend tests pass,
   tsc/lint/build clean (chunk split intact). Merged (#150).
 
-- [ ] **Session-expiry warning toast has no way to act on it.** *(proposed by the hourly routine,
+- [x] **Session-expiry warning toast has no way to act on it.** *(proposed by the hourly routine,
   2026-09-07, Architect+QA-approved)* `lib/useSessionExpiryWarning.ts` calls
   `showToast(SESSION_EXPIRING_MESSAGE, 'alert')` with no `action`, even though `Toast.action`/
   `ToastStack` already render a one-click action button (used today for like/block retries) and
-  `AuthContext.tsx` already has `logout` in scope right where the hook is called. Thread `logout`
-  into `useSessionExpiryWarning(token, logout)` and attach `{label: 'Log out now', onClick: logout}`
-  to the warning toast. QA watch-out: StrictMode double-invokes effects — confirm adding `logout` to
-  the effect's dep array doesn't end up scheduling two competing toasts on a token change; keep the
-  existing single-timer-per-effect-closure shape (rule 7, `frontend/CLAUDE.md`). Verify: a unit test
-  asserting `showToast` is called with an `action` object whose `onClick === logout`, plus a
-  `ToastStack`-level test that clicking the rendered action button invokes it (mirrors the existing
-  like/block-retry action test).
+  `AuthContext.tsx` already has `logout` in scope right where the hook is called.
+  Done: `useSessionExpiryWarning(token, logout)` takes `logout` as a second, required param and
+  attaches `{label: 'Log out now', onClick: logout}` to the warning toast. `AuthContext.tsx`'s one
+  call site passes its own (already `useCallback`-stable) `logout`. Per the QA watch-out, `logout` is
+  listed as a real effect dependency rather than only read imperatively — since `AuthContext`'s
+  `logout` identity is stable across renders, this doesn't reschedule the timer any more than `token`
+  alone already did, so it doesn't reopen the StrictMode double-timer risk the note flagged. Covered
+  by a new test in `useSessionExpiryWarning.test.ts` asserting the fired toast's `action.label` is
+  "Log out now" and that clicking it calls the passed-in `logout` mock exactly once; the four
+  pre-existing tests in that file were updated to pass a `vi.fn()` for the new required param, no
+  behavior change. `ToastStack`'s own generic "renders an action button and runs it" coverage
+  (already shipped for the like/block-retry actions) exercises the same rendering mechanism, so no
+  duplicate `ToastStack`-level test was added. 304/304 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). Merged (#151).
 
 - [x] **Cosmetically-different duplicate seed URLs aren't caught.** *(proposed by the hourly routine,
   2026-09-07, Architect+QA-approved)* `NewScanForm.tsx`'s `addSeed` and `onSeedPaste` both dedupe by
@@ -2472,8 +2478,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `NewScanForm.test.tsx`: a host-case + trailing-slash variant of an already-added seed is rejected
   via the single-add path and the original (unrewritten) URL is what's kept; a paste with a cosmetic
   duplicate of an existing seed and another repeated within the paste itself lands exactly 2 distinct
-  entries. 312/312 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
-  history.
+  entries. 312/312 frontend tests pass, tsc/lint/build clean (chunk split intact). Merged (#152).
 
 - [x] **CSV export filename collides across scans on the same day.** *(proposed by the hourly
   routine, 2026-09-07, via a targeted Product read-the-actual-files round, Architect+QA-approved)*
