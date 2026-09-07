@@ -31,6 +31,32 @@ export function formatRecommendationsAsCsv(recs: Recommendation[]): string {
   return [HEADERS.join(','), ...rows].join('\r\n')
 }
 
+const GENERIC_EXPORT_NAME = 'bandcamp-feed'
+/* Hoisted per rule 9 (js-hoist-regexp, frontend/CLAUDE.md) — exportFilename
+ * runs once per export click, not a hot path, but there's no reason not to. */
+const SLUG_UNSAFE = /[^a-z0-9]+/g
+
+/** Slugifies a scan name for use in a downloaded filename: lowercase,
+ *  non-alphanumeric runs collapsed to a single `-`, leading/trailing `-`
+ *  trimmed, capped at 50 characters so a very long scan name can't produce
+ *  an unwieldy filename. */
+function slugify(name: string): string {
+  return name.toLowerCase().replace(SLUG_UNSAFE, '-').replace(/^-+|-+$/g, '').slice(0, 50)
+}
+
+/** CSV export filename, scoped to the scan it came from so exporting two
+ *  different scans on the same day doesn't produce two files with the
+ *  identical name (silently overwriting one in the browser's Downloads
+ *  folder). `scanName` is `null` for the pre-#150 generic form, and a name
+ *  that's empty/whitespace-only or made entirely of characters `slugify`
+ *  strips (e.g. "???") falls back to the same generic form rather than
+ *  producing a filename with an empty segment. */
+export function exportFilename(scanName: string | null, date: Date): string {
+  const dateStr = date.toISOString().slice(0, 10)
+  const slug = scanName === null ? '' : slugify(scanName)
+  return slug ? `${GENERIC_EXPORT_NAME}-${slug}-${dateStr}.csv` : `${GENERIC_EXPORT_NAME}-${dateStr}.csv`
+}
+
 /** Triggers a browser download of `csv` as `filename` via a temporary
  *  object-URL anchor, revoked right after the click. DOM plumbing only —
  *  the string it saves is what `formatRecommendationsAsCsv` is tested

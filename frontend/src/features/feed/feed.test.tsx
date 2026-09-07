@@ -2129,7 +2129,12 @@ describe('export feed as CSV', () => {
     const revokeObjectURL = vi.fn()
     URL.createObjectURL = createObjectURL
     URL.revokeObjectURL = revokeObjectURL
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    let downloadedAs = ''
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadedAs = this.download
+    })
     try {
       const button = await screen.findByRole('button', { name: /Export CSV/ })
       expect(button).not.toBeDisabled()
@@ -2142,6 +2147,9 @@ describe('export feed as CSV', () => {
       expect(await blob.text()).toContain('Eyes of Infinity')
       expect(click).toHaveBeenCalledTimes(1)
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
+      // fakeScan.name is "My collection" — scopes the filename so exporting
+      // a different scan the same day doesn't overwrite this one.
+      expect(downloadedAs).toMatch(/^bandcamp-feed-my-collection-\d{4}-\d{2}-\d{2}\.csv$/)
     } finally {
       URL.createObjectURL = originalCreateObjectURL
       URL.revokeObjectURL = originalRevokeObjectURL

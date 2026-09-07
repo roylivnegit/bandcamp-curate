@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Recommendation } from '../api/types'
-import { formatRecommendationsAsCsv } from './export'
+import { exportFilename, formatRecommendationsAsCsv } from './export'
 
 function rec(overrides: Partial<Recommendation> = {}): Recommendation {
   return {
@@ -74,6 +74,39 @@ function parseCsv(text: string): string[][] {
   rows.push(row)
   return rows
 }
+
+describe('exportFilename', () => {
+  const date = new Date('2026-09-07T12:00:00Z')
+
+  it('falls back to the plain date-only filename for a null scan name', () => {
+    expect(exportFilename(null, date)).toBe('bandcamp-feed-2026-09-07.csv')
+  })
+
+  it('scopes the filename with a slugified scan name', () => {
+    expect(exportFilename('My collection', date)).toBe('bandcamp-feed-my-collection-2026-09-07.csv')
+  })
+
+  it('collapses punctuation/whitespace runs and trims leading/trailing dashes', () => {
+    expect(exportFilename('  Deep -- Forest_Psy!! dig  ', date)).toBe(
+      'bandcamp-feed-deep-forest-psy-dig-2026-09-07.csv',
+    )
+  })
+
+  it('falls back to the generic form when the name is empty or all-punctuation after slugifying', () => {
+    expect(exportFilename('', date)).toBe('bandcamp-feed-2026-09-07.csv')
+    expect(exportFilename('   ', date)).toBe('bandcamp-feed-2026-09-07.csv')
+    expect(exportFilename('???', date)).toBe('bandcamp-feed-2026-09-07.csv')
+  })
+
+  it('caps a very long scan name at 50 slug characters', () => {
+    const name = exportFilename('a'.repeat(200), date)
+    expect(name).toBe(`bandcamp-feed-${'a'.repeat(50)}-2026-09-07.csv`)
+  })
+
+  it('two differently-named scans on the same day get distinct filenames', () => {
+    expect(exportFilename('Deep forest psy dig', date)).not.toBe(exportFilename('Ambient drift', date))
+  })
+})
 
 describe('formatRecommendationsAsCsv', () => {
   it('starts with the expected header row', () => {
