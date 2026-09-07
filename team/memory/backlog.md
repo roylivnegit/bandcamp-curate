@@ -2424,3 +2424,42 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   round-trip needed, `ingest_fan_collection` takes the dataclass) — first with the item on the
   wishlist, then the same item as owned — and asserts exactly one `FanItem` row exists throughout and
   ends with `is_wishlist is False`. 264/264 backend tests pass, ruff clean. PR: see git history.
+
+- [ ] **"Back to top" ignores the reduced-motion preference.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `ScanFeedPage.tsx`'s `scrollToTop` calls `window.scrollTo({top:
+  0, behavior: 'smooth'})` unconditionally. `base.css`'s `prefers-reduced-motion` block only zeroes
+  CSS transition/animation durations — it can't reach a native imperative smooth-scroll — so this is
+  the one motion effect in the app that preference doesn't actually cover. Add a small
+  `prefersReducedMotion()` helper (its own `lib/motion.ts`, per QA's note — a shared spot other
+  animation call sites could use later, without scope-creeping into touching them now) checking
+  `window.matchMedia('(prefers-reduced-motion: reduce)').matches`, and use `behavior: 'auto'` instead
+  of `'smooth'` when it's set. Verify: a unit test mocking `matchMedia` to return `matches: true`,
+  calling `scrollToTop`, asserting `scrollTo` was called with `{top: 0, behavior: 'auto'}` — no visual
+  check needed.
+
+- [ ] **Session-expiry warning toast has no way to act on it.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `lib/useSessionExpiryWarning.ts` calls
+  `showToast(SESSION_EXPIRING_MESSAGE, 'alert')` with no `action`, even though `Toast.action`/
+  `ToastStack` already render a one-click action button (used today for like/block retries) and
+  `AuthContext.tsx` already has `logout` in scope right where the hook is called. Thread `logout`
+  into `useSessionExpiryWarning(token, logout)` and attach `{label: 'Log out now', onClick: logout}`
+  to the warning toast. QA watch-out: StrictMode double-invokes effects — confirm adding `logout` to
+  the effect's dep array doesn't end up scheduling two competing toasts on a token change; keep the
+  existing single-timer-per-effect-closure shape (rule 7, `frontend/CLAUDE.md`). Verify: a unit test
+  asserting `showToast` is called with an `action` object whose `onClick === logout`, plus a
+  `ToastStack`-level test that clicking the rendered action button invokes it (mirrors the existing
+  like/block-retry action test).
+
+- [ ] **Cosmetically-different duplicate seed URLs aren't caught.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `NewScanForm.tsx`'s `addSeed` and `onSeedPaste` both dedupe by
+  exact trimmed-string equality, so `https://x.bandcamp.com/album/y` and
+  `https://X.BANDCAMP.com/album/y/` (differing only by host case or a trailing slash) are treated as
+  two distinct seeds, silently burning a slot on a scan with a small, budget-limited seed list. Add
+  `normalizeSeedUrl(url)` to `lib/format.ts` (lowercase host only — not the whole URL, since Bandcamp
+  slug case could matter server-side even if it usually doesn't — and strip a trailing slash), and
+  dedupe/compare against normalized values in **both** call sites. QA watch-out: still store and
+  submit the user's original raw URL (display + `api.createScan` payload) — normalization is for the
+  comparison only, never silently rewrite what was typed/pasted. Verify: a unit test on
+  `normalizeSeedUrl` for the slash/case cases, plus a `NewScanForm` test asserting a cosmetically-
+  different duplicate shows the existing "Already in your seed list" error instead of adding a second
+  entry.
