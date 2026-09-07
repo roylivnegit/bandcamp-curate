@@ -2425,17 +2425,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   wishlist, then the same item as owned — and asserts exactly one `FanItem` row exists throughout and
   ends with `is_wishlist is False`. 264/264 backend tests pass, ruff clean. PR: see git history.
 
-- [ ] **"Back to top" ignores the reduced-motion preference.** *(proposed by the hourly routine,
+- [x] **"Back to top" ignores the reduced-motion preference.** *(proposed by the hourly routine,
   2026-09-07, Architect+QA-approved)* `ScanFeedPage.tsx`'s `scrollToTop` calls `window.scrollTo({top:
   0, behavior: 'smooth'})` unconditionally. `base.css`'s `prefers-reduced-motion` block only zeroes
-  CSS transition/animation durations — it can't reach a native imperative smooth-scroll — so this is
-  the one motion effect in the app that preference doesn't actually cover. Add a small
-  `prefersReducedMotion()` helper (its own `lib/motion.ts`, per QA's note — a shared spot other
-  animation call sites could use later, without scope-creeping into touching them now) checking
-  `window.matchMedia('(prefers-reduced-motion: reduce)').matches`, and use `behavior: 'auto'` instead
-  of `'smooth'` when it's set. Verify: a unit test mocking `matchMedia` to return `matches: true`,
-  calling `scrollToTop`, asserting `scrollTo` was called with `{top: 0, behavior: 'auto'}` — no visual
-  check needed.
+  CSS transition/animation durations — it can't reach a native imperative smooth-scroll — so this was
+  the one motion effect in the app that preference didn't actually cover.
+  Done: new `lib/motion.ts`'s `prefersReducedMotion()` (checks
+  `matchMedia('(prefers-reduced-motion: reduce)').matches`), used in `scrollToTop` to pick `'auto'`
+  instead of `'smooth'` when set. Also added a `window.matchMedia` shim to `test/setup.ts` (jsdom
+  doesn't implement it), matching the existing `localStorage`/`IntersectionObserver` shim pattern —
+  defaults to `matches: false` so no existing test's behavior changed. Covered by a new
+  `motion.test.ts` (false/true/queries-the-right-media-feature) and a new integration test in
+  `feed.test.tsx`'s "scroll-to-top button" block asserting `scrollTo` is called with
+  `{top: 0, behavior: 'auto'}` when `matchMedia` reports the preference. 306/306 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). Merged (#150).
 
 - [ ] **Session-expiry warning toast has no way to act on it.** *(proposed by the hourly routine,
   2026-09-07, Architect+QA-approved)* `lib/useSessionExpiryWarning.ts` calls
