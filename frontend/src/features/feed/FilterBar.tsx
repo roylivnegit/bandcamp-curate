@@ -4,7 +4,7 @@ import type { RefObject } from 'react'
 import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { RemoveButton } from '../../components/RemoveButton'
-import { downloadCsv, formatRecommendationsAsCsv } from '../../lib/export'
+import { downloadCsv, exportFilename, formatRecommendationsAsCsv } from '../../lib/export'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
 
@@ -39,6 +39,7 @@ export function FilterBar({
   selectableCount,
   onSelectAll,
   exportRows,
+  scanName,
 }: {
   filters: FeedFilters
   facetTags: Facet[]
@@ -68,6 +69,10 @@ export function FilterBar({
    *  screen (server-side filters + the quick-filter narrowing), not a
    *  separate fetch of the whole result set. */
   exportRows: Recommendation[]
+  /** The current scan's name, used to scope the CSV export's filename so two
+   *  scans exported the same day don't collide. `null` when there's no scan
+   *  name to work with (falls back to the plain date-only filename). */
+  scanName: string | null
 }) {
   const allSelected = selectableCount > 0 && selectedCount >= selectableCount
   // Mobile only (see feed.css) — everything below the search box collapses
@@ -177,7 +182,7 @@ export function FilterBar({
             disabled={exportRows.length === 0}
             onClick={() => {
               const csv = formatRecommendationsAsCsv(exportRows)
-              downloadCsv(`bandcamp-feed-${new Date().toISOString().slice(0, 10)}.csv`, csv)
+              downloadCsv(exportFilename(scanName, new Date()), csv)
             }}
           >
             ⇩ Export CSV
