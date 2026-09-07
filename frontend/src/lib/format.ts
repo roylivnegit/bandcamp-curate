@@ -29,6 +29,25 @@ export function seedKind(url: string): 'album' | 'track' {
   return url.toLowerCase().includes('/track/') ? 'track' : 'album'
 }
 
+/** Canonical form of a seed URL, for de-dup comparison only — lowercases the
+ *  host and strips a trailing slash from the path, so
+ *  `https://X.bandcamp.com/album/y/` and `https://x.bandcamp.com/album/y` are
+ *  recognized as the same seed. Never used for display or for what's
+ *  actually submitted to the API — callers keep storing/sending the original,
+ *  as typed or pasted. Falls back to the trimmed raw string if it doesn't
+ *  parse as a URL (mirrors `bandcampHandle`'s try/catch) rather than
+ *  throwing. */
+export function normalizeSeedUrl(url: string): string {
+  const trimmed = url.trim()
+  try {
+    const u = new URL(trimmed)
+    const path = u.pathname.replace(/\/+$/, '')
+    return `${u.protocol}//${u.hostname.toLowerCase()}${path}${u.search}${u.hash}`
+  } catch {
+    return trimmed
+  }
+}
+
 // A fan's collection page always lives at bandcamp.com/<handle> — unlike album/track
 // URLs (SEED_URL_RE in NewScanForm.tsx), which are hosted per-artist and deliberately
 // accept any host. The backend itself only checks non-empty (`api/auth.py`), so this
