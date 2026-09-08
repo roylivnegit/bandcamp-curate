@@ -2989,7 +2989,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   raw ISO is no longer shown. 396/396 frontend tests pass, tsc/lint/build clean (chunk split intact).
   PR #175.
 
-- [~] **Bulk-block/like's Undo only covers one of the N items, silently.** *(proposed by the hourly
+- [x] **Bulk-block/like's Undo only covers one of the N items, silently.** *(proposed by the hourly
   routine, 2026-09-08, Product-round proposal, self-verified against source before building — the
   backlog is heavily mined enough now that most fresh Product proposals turn out to be duplicates or
   resurrection traps per `tried-and-failed.md`, but this one checked out as a genuine, previously
@@ -3014,6 +3014,10 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   Covered by two new tests in `feed.test.tsx`: a bulk block shows one "Undo all" naming the count,
   not the old single "Undo"; clicking it restores every card and calls `unblock` for each. 398/398
   frontend tests pass, tsc/lint/build clean (chunk split intact).
-  **Left open (`[~]`), not merged yet:** PR #176 open, CI pending at the time this was recorded —
-  auto-merge (squash) is enabled, so it should land on its own once checks pass; a later task/run
-  should confirm it merged and flip this to `[x]`, or investigate if CI came back red.
+  **Merged.** PR #176's first CI run hit an unrelated pre-existing flake (`ScanListPage`'s
+  mount-focus test, same class as PR #163's documented flakes — confirmed by two clean local full-
+  suite runs and a from-scratch diff review before standing down in a PR comment); a re-run of that
+  job came back green. The PR was then briefly `mergeable_state: behind` (this run's own docs-only
+  bookkeeping commit had landed on `main` after the branch was cut) — merged `main` back into the
+  branch, re-ran the full local suite (398/398 clean) before pushing, CI went green on the merge
+  commit, and auto-merge (squash) landed it.
