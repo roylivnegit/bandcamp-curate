@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 
+import { rankCommands } from '../lib/commandRank'
 import './CommandPalette.css'
 
 export interface CommandAction {
@@ -51,11 +52,7 @@ export function CommandPalette({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return actions
-    return actions.filter((a) => a.label.toLowerCase().includes(q))
-  }, [actions, query])
+  const filtered = useMemo(() => rankCommands(actions, query), [actions, query])
 
   // Typing narrows `filtered` on every keystroke, so the highlighted row has
   // to stay in range rather than pointing past the end of a shorter list.
