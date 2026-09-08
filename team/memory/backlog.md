@@ -2736,34 +2736,40 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   pass (352 + 1), tsc/lint/build clean (chunk split intact — `CommandPalette` is part of the eagerly
   loaded app shell, mounted once in `App.tsx`).
 
-- [ ] **Rank command-palette results instead of leaving them in list order.** *(proposed by the
+- [~] **Rank command-palette results instead of leaving them in list order.** *(proposed by the
   hourly routine, 2026-09-08, Architect+QA-approved)* `CommandPalette.tsx` filters actions with a
   plain `.label.toLowerCase().includes(q)` and renders them in whatever order `api.listScans()`
   returned, so on an account with a dozen+ scans a good partial match doesn't float to the top.
-  Idea: a pure `rankCommands(actions, query)` helper (new `lib/commandRank.ts`) scoring prefix match
-  > word-boundary match (after a space) > plain substring, stable-sorted by original order within a
-  tier; swap it in for the current `.filter()`. Verify: a unit test asserting `'sca'` against
-  `['Vaporwave Deep Cuts', 'My Ambient Scan', 'Scavenger Hunt']` ranks `'Scavenger Hunt'` (prefix)
-  before `'My Ambient Scan'` (word-boundary); `CommandPalette.test.tsx` extended to assert rendered
-  order via `getAllByRole('option')`.
+  Built this run: new `rankCommands(items, query)` in `lib/commandRank.ts` — prefix match >
+  word-boundary match (after a space) > plain substring, ties within a tier keep original relative
+  order — swapped in for `CommandPalette`'s existing `useMemo` filter, no caller changes needed. 5
+  new unit tests in `commandRank.test.ts`, 1 new integration test in `CommandPalette.test.tsx`
+  asserting rendered `option` order for a mixed-tier query. 362/362 frontend tests pass, tsc/lint/
+  build clean. PR #163, open with auto-merge armed — CI was still running when this run ended;
+  mark `[x]` once a later run (or the PR's own CI) confirms it merged.
 
-- [ ] **Warn on a duplicate scan name.** *(proposed by the hourly routine, 2026-09-08,
+- [~] **Warn on a duplicate scan name.** *(proposed by the hourly routine, 2026-09-08,
   Architect+QA-approved — no backend change needed, `ScanListPage` already fetches all scan names
   up front via `listScans()`)* Nothing stops two scans getting the same name, so a user who forgets
-  they already made a "Deep house" scan ends up with two indistinguishable rows. Idea: thread the
-  already-fetched scan names into `NewScanForm`, add a pure `isDuplicateScanName(name,
-  existingNames)` helper (case-insensitive, trimmed) driving a non-blocking inline warning under the
-  name field — warns, doesn't block submission. Verify: unit tests on the helper (case/whitespace
-  insensitivity, empty list); a `NewScanForm.test.tsx` case where typing an existing name shows the
-  warning (`getByText`), changing it away removes it (`queryByText` → null), and the submit button
-  stays enabled throughout.
+  they already made a "Deep house" scan ends up with two indistinguishable rows.
+  Built this run: `isDuplicateScanName(name, existingNames)` in `lib/format.ts` (case/whitespace-
+  insensitive); `ScanListPage` threads its already-fetched scan names into `NewScanForm`, which
+  shows a non-blocking `.hint` under the name field on a match — warns, never blocks submission. 5
+  new unit tests in `format.test.ts`, 4 new integration tests in `NewScanForm.test.tsx`. 362/362
+  frontend tests pass, tsc/lint/build clean. PR #162, open with auto-merge armed — CI was still
+  running when this run ended; mark `[x]` once a later run (or the PR's own CI) confirms it merged.
 
-- [ ] **Quick-filter search box on the scan list.** *(proposed by the hourly routine, 2026-09-08,
+- [x] **Quick-filter search box on the scan list.** *(proposed by the hourly routine, 2026-09-08,
   Architect+QA-approved — "trivially derivative of the existing feed quick-filter pattern")*
   `ScanListPage` only offers sort, not filtering — once someone has many custom scans, finding one
   by name means scrolling and reading, even though the same substring-match pattern already exists
-  for the feed (`lib/quickFilter.ts`) and the liked/blocked side panels. Idea: a search input on
-  `ScanListPage` (shown once `scans.length` passes the same threshold the sort dropdown uses) that
-  filters `sortedScans` by case-insensitive substring match on `scan.name`. Verify: a small pure
-  matcher with a direct unit test, plus a `ScanListPage`-level test rendering several scans, typing
-  a substring, and asserting via `queryAllByRole('link')` that only the matching scan(s) remain.
+  for the feed (`lib/quickFilter.ts`) and the liked/blocked side panels.
+  Done: a search input on `ScanListPage` (shown once there's more than one scan, mirroring the sort
+  dropdown's own gate) filters `sortedScans` by case-insensitive substring match on `scan.name`,
+  reusing the existing `matchesPanelQuery` helper the Liked/Blocked side panels already use for the
+  identical pattern rather than inventing a new matcher — no new pure matcher needed after all. A
+  distinct "No scans match …" message shows when the query filters everything out, separate from
+  the existing "No scans yet" empty state. 3 new tests in `feed.test.tsx`'s `scan list > search`
+  block (no box for a single scan; typing narrows the list; no-matches message shows and clears).
+  356/356 frontend tests pass, tsc/lint/build clean (chunk split intact — `panelFilter` now lands in
+  a small chunk shared between `ScanListPage` and `ScanFeedPage`, its two importers). Merged (#161).

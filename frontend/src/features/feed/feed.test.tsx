@@ -141,6 +141,53 @@ describe('scan list', () => {
       expect(scanNamesInOrder()).toEqual(['Charlie', 'Bravo', 'Alpha'])
     })
   })
+
+  describe('search', () => {
+    const threeScans = [
+      { ...fakeScan, id: 1, name: 'Vaporwave Deep Cuts' },
+      { ...fakeScan, id: 2, name: 'My Ambient Scan' },
+      { ...fakeScan, id: 3, name: 'Scavenger Hunt' },
+    ]
+
+    it('has no search box for a single scan', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', [fakeScan]]])
+      renderApp('/scans')
+      await screen.findByText('My collection')
+
+      expect(screen.queryByLabelText('Search scans')).not.toBeInTheDocument()
+    })
+
+    it('narrows the list to scans matching the query', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Vaporwave Deep Cuts')
+
+      await user.type(screen.getByLabelText('Search scans'), 'sca')
+
+      expect(screen.getByText('Scavenger Hunt')).toBeInTheDocument()
+      expect(screen.getByText('My Ambient Scan')).toBeInTheDocument()
+      expect(screen.queryByText('Vaporwave Deep Cuts')).not.toBeInTheDocument()
+    })
+
+    it('shows a no-matches message, and clearing the query restores the list', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Vaporwave Deep Cuts')
+
+      const box = screen.getByLabelText('Search scans')
+      await user.type(box, 'nothing matches this')
+
+      expect(await screen.findByText('No scans match “nothing matches this”.')).toBeInTheDocument()
+      expect(screen.queryByText('Vaporwave Deep Cuts')).not.toBeInTheDocument()
+
+      await user.clear(box)
+
+      expect(await screen.findByText('Vaporwave Deep Cuts')).toBeInTheDocument()
+      expect(screen.queryByText(/No scans match/)).not.toBeInTheDocument()
+    })
+  })
 })
 
 describe('scan feed', () => {
