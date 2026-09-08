@@ -2866,3 +2866,28 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   block (no box for a single scan; typing narrows the list; no-matches message shows and clears).
   356/356 frontend tests pass, tsc/lint/build clean (chunk split intact — `panelFilter` now lands in
   a small chunk shared between `ScanListPage` and `ScanFeedPage`, its two importers). Merged (#161).
+
+- [~] **Keyboard focus vanishes after a like/block removes the focused card.** *(proposed by the
+  hourly routine, 2026-09-08, self-verified against source before building — the `l`/`b` shortcuts
+  and roving-tabindex system are both already shipped, this closes a gap in their interaction)*
+  `activeCardIndex`'s clamp (`Math.min(activeIndex, visibleRows.length - 1)`) already picks the
+  right *logical* next card once a row is removed, but nothing ever called `.focus()` on it —
+  confirmed by reading `retire()`/`armUndo()` directly: React unmounts the old DOM node without
+  moving focus, so the browser drops focus to `document.body` and arrow keys stop responding until
+  the reader clicks or tabs back in. No existing test covered this (only arrow-key-nav focus tests
+  existed).
+  Done: `retire()` now flags (in a ref) when the card it's about to remove currently holds focus; a
+  new effect, run once `visibleRows`/`activeCardIndex` settle post-removal, focuses the card now
+  sitting at that index. Two new tests in `feed.test.tsx`: liking a focused non-last card moves
+  focus to its replacement; blocking a focused *last* card moves focus to the new last card (the
+  boundary case), neither ever landing on `document.body`. 380/380 frontend tests pass, tsc/lint/
+  build clean (chunk split intact). PR #169, auto-merge enabled — awaiting CI.
+  Two sibling proposals from the same Product round were disqualified before reaching Architect+QA:
+  debouncing the scan-list/Liked/Blocked quick-filter search boxes (same "premature optimization on
+  an already-cheap small-list filter" reason a near-identical feed quick-filter debounce proposal
+  was rejected for in an earlier round), and adding `aspect-ratio`/`loading="lazy"` to feed-card
+  album art to prevent layout shift — genuinely already built (`FeedCard.tsx`'s `showArt`/`<img
+  loading="lazy">`, with an `onError` fallback to the plain score box), caught only on a second,
+  more careful grep after an initial `files_with_matches`-only check wrongly suggested no `<img>`
+  existed at all — worth remembering for future rounds: a `Grep` call needs `output_mode: "content"`
+  to actually see whether a match is real, not just that a file matched.
