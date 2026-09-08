@@ -1,4 +1,4 @@
-import { dismissToast, useToasts } from '../lib/toast'
+import { dismissToast, pauseToast, resumeToast, useToasts } from '../lib/toast'
 import './ToastStack.css'
 
 /** Mounted once in the app shell (`App.tsx`). Renders whatever's currently in
@@ -11,7 +11,25 @@ export function ToastStack() {
   return (
     <div className="toaststack">
       {toasts.map((t) => (
-        <div key={t.id} role={t.variant} className={`toast ${t.variant}`}>
+        <div
+          key={t.id}
+          role={t.variant}
+          className={`toast ${t.variant}`}
+          onMouseEnter={() => pauseToast(t.id)}
+          onMouseLeave={() => resumeToast(t.id)}
+          onFocus={(e) => {
+            // Only pause once when focus actually enters this toast — moving
+            // focus between two buttons inside the same one (action, then
+            // dismiss) re-fires onFocus for the new button and would
+            // over-pause (see the matching onBlur check below) without this.
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) pauseToast(t.id)
+          }}
+          onBlur={(e) => {
+            // Mirror image: only resume once focus actually leaves this
+            // toast, not on every transition between its own buttons.
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) resumeToast(t.id)
+          }}
+        >
           <span>{t.message}</span>
           {t.action && (
             <button

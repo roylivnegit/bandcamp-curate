@@ -24,6 +24,63 @@ let toasts: Toast[] = []
 let nextId = 0
 const listeners = new Set<() => void>()
 
+/** One entry per toast with a live or paused dismiss timer. `pauseCount` is a
+ *  reference count, not a boolean — a toast can be both hovered and
+ *  keyboard-focused at once (ToastStack pauses on each independently), and
+ *  the timer must only actually resume once every reason to pause has
+ *  cleared. `remaining`/`startedAt` are only meaningful while paused
+ *  (`timerId === null`): the ground truth while running is the `setTimeout`
+ *  itself. */
+interface ToastTimer {
+  timerId: number | null
+  remaining: number
+  startedAt: number
+  pauseCount: number
+}
+const timers = new Map<number, ToastTimer>()
+
+function startTimer(id: number, ms: number) {
+  const timerId = window.setTimeout(() => dismissToast(id), ms)
+  timers.set(id, { timerId, remaining: ms, startedAt: Date.now(), pauseCount: 0 })
+}
+
+function clearTimer(id: number) {
+  const state = timers.get(id)
+  if (state?.timerId !== null && state?.timerId !== undefined) window.clearTimeout(state.timerId)
+  timers.delete(id)
+}
+
+/** Freezes a toast's auto-dismiss countdown — e.g. the reader's pointer or
+ *  keyboard focus is on it, so it shouldn't vanish out from under them mid
+ *  reach for an action like Undo. Safe to call more than once for
+ *  independent reasons (hover AND focus); `resumeToast` only actually
+ *  restarts the timer once every `pauseToast` call has a matching resume. */
+export function pauseToast(id: number) {
+  const state = timers.get(id)
+  if (!state) return
+  const pauseCount = state.pauseCount + 1
+  if (state.timerId === null) {
+    timers.set(id, { ...state, pauseCount })
+    return
+  }
+  window.clearTimeout(state.timerId)
+  const remaining = Math.max(0, state.remaining - (Date.now() - state.startedAt))
+  timers.set(id, { timerId: null, remaining, startedAt: state.startedAt, pauseCount })
+}
+
+/** Resumes a toast paused via `pauseToast`, for the remaining time it had
+ *  left. No-ops until every `pauseToast` call has a matching `resumeToast`. */
+export function resumeToast(id: number) {
+  const state = timers.get(id)
+  if (!state || state.timerId !== null) return
+  const pauseCount = Math.max(0, state.pauseCount - 1)
+  if (pauseCount > 0) {
+    timers.set(id, { ...state, pauseCount })
+    return
+  }
+  startTimer(id, state.remaining)
+}
+
 function emitChange() {
   for (const listener of listeners) listener()
 }
@@ -48,7 +105,7 @@ export function showToast(
   const id = nextId++
   toasts = evictOverflow([...toasts, { id, message, variant, action }])
   emitChange()
-  window.setTimeout(() => dismissToast(id), durationMs)
+  startTimer(id, durationMs)
 }
 
 /** Drops the oldest toast with no pending `action` until the queue is back
@@ -61,6 +118,7 @@ function evictOverflow(list: Toast[]): Toast[] {
   while (next.length > TOAST_STACK_CAP) {
     const idx = next.findIndex((t) => !t.action)
     if (idx === -1) break
+    clearTimer(next[idx].id)
     next = [...next.slice(0, idx), ...next.slice(idx + 1)]
   }
   return next
@@ -73,6 +131,7 @@ export function dismissToast(id: number) {
   const next = toasts.filter((t) => t.id !== id)
   if (next.length === toasts.length) return
   toasts = next
+  clearTimer(id)
   emitChange()
 }
 
@@ -89,5 +148,6 @@ export function useToasts(): Toast[] {
  *  harmlessly later: `dismissToast` no-ops once its id is gone. */
 export function resetToastsForTests() {
   toasts = []
+  for (const id of Array.from(timers.keys())) clearTimer(id)
   emitChange()
 }
