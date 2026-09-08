@@ -618,3 +618,13 @@ async def test_like_and_unlike_bump_recompute_generation_immediately(
 async def test_like_requires_exactly_one_id(client: AsyncClient) -> None:
     assert (await client.post("/api/likes", json={})).status_code == 422
     assert (await client.post("/api/likes", json={"album_id": 1, "track_id": 2})).status_code == 422
+
+
+async def test_like_nonexistent_album_returns_404(client: AsyncClient) -> None:
+    r = await client.post("/api/likes", json={"album_id": 999_999})
+    assert r.status_code == 404
+
+
+async def test_like_nonexistent_track_returns_404(client: AsyncClient) -> None:
+    r = await client.post("/api/likes", json={"track_id": 999_999})
+    assert r.status_code == 404

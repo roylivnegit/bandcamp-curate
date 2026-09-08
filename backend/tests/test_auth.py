@@ -131,6 +131,14 @@ async def test_signup_creates_user_and_collection_scan(client: AsyncClient, make
         assert seeds == []
 
 
+async def test_signup_rejects_overlong_username(client: AsyncClient) -> None:
+    r = await client.post("/api/auth/signup", json={
+        "username": "a" * 257, "password": "hunter22",
+        "bandcamp_fan_url": "https://bandcamp.com/toolong", "invite_code": INVITE,
+    })
+    assert r.status_code == 422
+
+
 async def test_signup_requires_valid_invite_code(client: AsyncClient) -> None:
     r = await client.post("/api/auth/signup", json={
         "username": "mallory", "password": "hunter22",
