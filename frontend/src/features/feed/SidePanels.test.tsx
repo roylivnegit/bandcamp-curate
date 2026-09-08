@@ -216,6 +216,42 @@ describe('BlockedPanel reason', () => {
     expect(onSetReason).not.toHaveBeenCalled()
   })
 
+  it('Escape reverts a typed reason without saving it', () => {
+    const items = makeBlocked(1)
+    items[0].reason = 'too much noise'
+    const onSetReason = vi.fn()
+    render(
+      <BlockedPanel items={items} onUnblock={() => {}} onRenew={() => {}} onSetReason={onSetReason} busy={() => false} />,
+    )
+
+    const input = screen.getByLabelText('Reason for blocking Band 0')
+    fireEvent.change(input, { target: { value: 'a stray keystroke' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(input).toHaveValue('too much noise')
+    expect(onSetReason).not.toHaveBeenCalled()
+  })
+
+  it('Escape on a reason that was never set reverts to blank without saving', () => {
+    const onSetReason = vi.fn()
+    render(
+      <BlockedPanel
+        items={makeBlocked(1)}
+        onUnblock={() => {}}
+        onRenew={() => {}}
+        onSetReason={onSetReason}
+        busy={() => false}
+      />,
+    )
+
+    const input = screen.getByLabelText('Reason for blocking Band 0')
+    fireEvent.change(input, { target: { value: 'oops' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(input).toHaveValue('')
+    expect(onSetReason).not.toHaveBeenCalled()
+  })
+
   it('does not re-save on blur while a save for this row is already in flight', () => {
     const onSetReason = vi.fn()
     render(
