@@ -1694,6 +1694,27 @@ describe('feed while the scan is still running', () => {
     expect(screen.getByText(/7 found so far/i)).toBeInTheDocument()
   })
 
+  it('also shows the crawl-budget line once results have started landing on a running scan', async () => {
+    // Before this fix, the "N of M requests used" readout only ever rendered
+    // inside ColdStartPanel, which stops being reachable the moment `total`
+    // leaves zero -- so a running scan with results already had no visible
+    // budget readout at all.
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'running', stats: { recommendations: 7 }, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+      ['/api/stats', { requests_used: 742, request_budget: 1000 }],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(await screen.findByText(/742 of 1,000 crawl requests used/)).toBeInTheDocument()
+  })
+
   it('shows nothing for a queued scan, which has curated nothing yet', async () => {
     mockFetch([
       ['/api/auth/me', fakeMe],
