@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import { isDuplicateScanName } from '../lib/format'
 import { deleteView, listViews, saveView, type SavedView } from '../lib/savedViews'
 import { Dropdown } from './Dropdown'
 import { RemoveButton } from './RemoveButton'
+
+/** Same window `DeleteScanButton`/`BulkActionBar` use for the identical
+ *  arm-then-confirm shape, applied here per-row instead of to one button. */
+const CONFIRM_WINDOW_MS = 4000
 
 /** Saves the current filter/sort combination (already fully expressed in the
  *  URL by `useFeedFilters`) under a name, and offers a list of previously
@@ -20,6 +24,32 @@ export function SavedViewsDropdown({ scanId }: { scanId: number }) {
     name,
     views.map((v) => v.name),
   )
+  /** Which saved view's remove button is armed, awaiting a second click —
+   *  same "first click arms, second confirms, or it reverts on its own"
+   *  pattern as `DeleteScanButton`/`BulkActionBar`, keyed per-row here since
+   *  this is a list rather than one button. Deleting a saved view is
+   *  permanent (no undo, unlike like/block), so a stray click shouldn't be
+   *  enough on its own. */
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const revertTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (revertTimer.current !== null) window.clearTimeout(revertTimer.current)
+    }
+  }, [])
+
+  const arm = (id: string) => {
+    if (revertTimer.current !== null) window.clearTimeout(revertTimer.current)
+    setConfirmingId(id)
+    revertTimer.current = window.setTimeout(() => setConfirmingId(null), CONFIRM_WINDOW_MS)
+  }
+
+  const confirmDelete = (id: string) => {
+    if (revertTimer.current !== null) window.clearTimeout(revertTimer.current)
+    setConfirmingId(null)
+    setViews(deleteView(scanId, id))
+  }
 
   return (
     <Dropdown
@@ -27,6 +57,8 @@ export function SavedViewsDropdown({ scanId }: { scanId: number }) {
       onOpen={() => {
         setViews(listViews(scanId))
         setName('')
+        if (revertTimer.current !== null) window.clearTimeout(revertTimer.current)
+        setConfirmingId(null)
       }}
     >
       {(close) => (
@@ -66,10 +98,21 @@ export function SavedViewsDropdown({ scanId }: { scanId: number }) {
                   >
                     <span className="nm">{v.name}</span>
                   </button>
-                  <RemoveButton
-                    label={`Delete saved view "${v.name}"`}
-                    onClick={() => setViews(deleteView(scanId, v.id))}
-                  />
+                  {confirmingId === v.id ? (
+                    <button
+                      type="button"
+                      className="rm confirm"
+                      aria-label={`Confirm delete saved view "${v.name}"`}
+                      onClick={() => confirmDelete(v.id)}
+                    >
+                      Confirm?
+                    </button>
+                  ) : (
+                    <RemoveButton
+                      label={`Delete saved view "${v.name}"`}
+                      onClick={() => arm(v.id)}
+                    />
+                  )}
                 </div>
               ))
             )}

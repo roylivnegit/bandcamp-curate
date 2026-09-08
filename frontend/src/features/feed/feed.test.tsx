@@ -2502,7 +2502,10 @@ describe('saved filter views', () => {
     localStorage.clear()
     signedIn()
   })
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
 
   const feedRoutes = (recs = [fakeRec()]) =>
     [
@@ -2566,7 +2569,7 @@ describe('saved filter views', () => {
     expect(currentLocation().search).toContain('tag=psybient')
   })
 
-  it('deletes a saved view without applying it', async () => {
+  it('requires a second click to delete a saved view, and does not apply it', async () => {
     mockFetch(feedRoutes())
     const user = userEvent.setup()
     renderApp('/scans/1?tag=psybient')
@@ -2576,11 +2579,40 @@ describe('saved filter views', () => {
     await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
 
     await user.click(screen.getByRole('button', { name: 'Delete saved view "House only"' }))
+    // First click only arms it — the view is still there, and applying it
+    // still works (a stray click shouldn't lock the row into anything).
+    expect(screen.getByRole('button', { name: 'House only' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Confirm delete saved view "House only"' }))
 
     expect(screen.queryByRole('button', { name: 'House only' })).not.toBeInTheDocument()
     expect(screen.getByText('No saved views yet.')).toBeInTheDocument()
     // Deleting didn't navigate anywhere.
     expect(currentLocation().pathname).toBe('/scans/1')
+  })
+
+  it('reverts an armed delete confirmation if the second click never comes', async () => {
+    mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: '☆ Views' }))
+    fireEvent.change(screen.getByPlaceholderText('Name this view — press Enter to save'), {
+      target: { value: 'House only' },
+    })
+    fireEvent.keyDown(screen.getByPlaceholderText('Name this view — press Enter to save'), { key: 'Enter' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete saved view "House only"' }))
+    expect(screen.getByRole('button', { name: 'Confirm delete saved view "House only"' })).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    expect(screen.queryByRole('button', { name: 'Confirm delete saved view "House only"' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete saved view "House only"' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'House only' })).toBeInTheDocument()
   })
 
   it('warns, but does not block, saving a view under a name that already exists', async () => {
