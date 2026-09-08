@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TOAST_DURATION_MS } from '../config'
@@ -86,5 +86,53 @@ describe('ToastStack', () => {
     const remaining = screen.getAllByRole('status')
     expect(remaining).toHaveLength(1)
     expect(remaining[0]).toHaveTextContent('Second')
+  })
+
+  it('pauses the auto-dismiss timer while hovered, then resumes on mouse leave', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() => showToast('Undo?'))
+    const toast = screen.getByRole('status')
+
+    fireEvent.mouseEnter(toast)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS + 1000)
+    })
+    expect(screen.getByRole('status')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(toast)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('pauses while a control inside it holds focus, and stays paused when focus moves to another control in the same toast', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() =>
+      showToast('Could not save that like.', 'alert', TOAST_DURATION_MS, { label: 'Retry', onClick: () => {} }),
+    )
+    const retry = screen.getByRole('button', { name: 'Retry' })
+    const dismiss = screen.getByRole('button', { name: 'Dismiss notification' })
+
+    fireEvent.focus(retry)
+    // Focus moves to the other button inside the same toast — still inside it.
+    fireEvent.blur(retry, { relatedTarget: dismiss })
+    fireEvent.focus(dismiss, { relatedTarget: retry })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS + 1000)
+    })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    // Focus leaves the toast entirely.
+    fireEvent.blur(dismiss, { relatedTarget: null })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
