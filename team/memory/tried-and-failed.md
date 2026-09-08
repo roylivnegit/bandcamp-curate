@@ -273,3 +273,37 @@ essentially the same timestamp. "Recent" would degenerate into "last recompute's
 a real recency signal — building it properly needs a `first_seen_at` that survives clear+insert
 (schema + curation-logic change), not a one-hour sort-key add. Don't re-propose the naive version;
 a `first_seen_at`-backed version would be a legitimately different, larger proposal.
+
+## 2026-09-08 — hourly routine: `Like.uq_like_item`/`Recommendation.uq_recommendation_item` share
+the same NULL-pattern bug `FanItem.uq_fan_item` had, left unfixed on purpose
+
+While fixing `FanItem.uq_fan_item` (a `UniqueConstraint` on `(fan_id, item_type, album_id,
+track_id)` that never actually enforced anything for album/track rows, since one of `album_id`/
+`track_id` is always NULL and standard SQL treats NULL as distinct from NULL even inside a unique
+constraint — see `backlog.md`'s 2026-09-08 entry for the full writeup and the fix, two partial
+unique indexes instead of one flat constraint), a grep for the same shape
+(`UniqueConstraint(..., "item_type", "album_id", "track_id")`) turned up two more instances with
+the identical structural bug:
+
+- `Like.uq_like_item` on `(user_id, item_type, album_id, track_id)`
+- `Recommendation.uq_recommendation_item` on `(scan_id, item_type, album_id, track_id)`
+
+Both are genuinely broken in the same way — a duplicate `Like`/`Recommendation` row for the same
+album or track could insert without error. **Left unfixed this round, deliberately, not an
+oversight:** the practical exposure is much lower than `FanItem`'s.
+`Recommendation` rows are wholesale cleared and reinserted by `curate()`/`compute_recommendations`
+inside one single-writer transaction (see `curation/generation.py`/`engine.py`) — there's no
+concurrent-worker race analogous to two crawl workers hitting the same fan's collection pages, so a
+duplicate here would need a bug in the curation loop itself (e.g. computing the same candidate
+twice in one pass), not an external race. `Like` rows are created by one user's own API click
+(`POST /api/likes`), not a fan-out crawl — the realistic failure mode is a double-submit from a fast
+double-click, which is a much narrower, lower-frequency case than "two crawl workers processing
+overlapping collection pages," which the `FanItem` mapper code's own comments call "the common
+case, not the exotic one."
+**This is fair game for a future task**, following the exact pattern the `FanItem` fix just
+established: two partial unique indexes per table (`Like`: `uq_like_item_album`/
+`uq_like_item_track`, keyed on `(user_id, album_id)`/`(user_id, track_id)` with the NULL-column
+`WHERE`; `Recommendation`: same shape keyed on `scan_id`), plus a guarded Alembic migration
+following `0018_fan_item_partial_unique`'s `_find_unique`/`_drop_unique` structure. Verify the same
+way: a direct duplicate-insert test bypassing the application-level check, asserting `IntegrityError`
+now fires. Do them as one item each (or together) rather than reopening `FanItem`'s migration.

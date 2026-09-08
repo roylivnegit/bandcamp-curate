@@ -2608,3 +2608,51 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   buttons rendered; no search box at all when the list itself is empty. 348/348 frontend tests pass
   (338 + 10), tsc/lint/build clean (chunk split intact — the new `lib/panelFilter.ts` lands inside the
   `ScanFeedPage` chunk, `SidePanels.tsx`'s only importer). PR: see git history.
+
+- [x] **`uq_fan_item` never actually rejected a duplicate.** *(found by an Explore-agent backend
+  audit, 2026-09-08 — this run's fourth task)* Prompted to find one genuine, previously-unfixed
+  correctness bug grounded in actual source, not requiring a live crawl, distinct from a long list of
+  already-fixed examples supplied for context. Found and self-verified against source before
+  building: `FanItem.uq_fan_item` was a single `UniqueConstraint` on `(fan_id, item_type, album_id,
+  track_id)` — but an album row always has `track_id` NULL and a track row always has `album_id`
+  NULL, and standard SQL treats NULL as distinct from NULL even inside a unique constraint. So this
+  constraint never rejected anything for album or track rows (confirmed empirically: two identical
+  album `FanItem` rows both inserted without error, both before and independently of this fix).
+  `_add_fan_item`/`_add_edge_or_false` (`app/bandcamp/mapper.py`) explicitly rely on this constraint
+  as their concurrent-worker race backstop — two crawl workers ingesting overlapping collection pages
+  for the same fan is documented in the mapper's own comments as "the common case, not the exotic
+  one" — so the race silently produced duplicate ownership rows, inflating the owned/wishlist counts
+  `GET /api/stats` and `neighbour_size_report` (`curation/engine.py`'s `_collection_sizes`) compute.
+  Not caught by the existing `test_purchasing_a_wishlisted_item_flips_it_to_owned`, which only
+  exercises the *application-level* select-then-update path sequentially — it never bypasses the
+  SELECT to hit the DB constraint directly, so it couldn't observe that the constraint itself doesn't
+  fire. The same NULL-pattern shape also exists on `Like.uq_like_item` and
+  `Recommendation.uq_recommendation_item` (both key on `(id, item_type, album_id, track_id)`) — left
+  unfixed this round: `Recommendation` rows are wholesale cleared and reinserted by a single-writer
+  `curate()` transaction (not concurrent crawl workers), and `Like` rows come from single user clicks,
+  not a fan-out crawl, so both have much lower real-world exposure to the same race than `FanItem`
+  does. Flagged in `tried-and-failed.md` as a known latent gap for a future, narrower fix rather than
+  bundled in here.
+  Done: replaced the single constraint with two partial unique indexes —
+  `uq_fan_item_album` on `(fan_id, album_id) WHERE track_id IS NULL` and `uq_fan_item_track` on
+  `(fan_id, track_id) WHERE album_id IS NULL` (`Index(..., sqlite_where=..., postgresql_where=...)`,
+  both dialects support partial indexes with this syntax). `item_type` itself is redundant once split
+  this way — `album_id` is only ever set on an album row and `track_id` only ever on a track row.
+  Migration `0018_fan_item_partial_unique` patches an existing DB (guarded like 0002-0017 — a fresh
+  DB already builds the new schema from current ORM metadata), following the `_find_unique`/
+  `_drop_unique` pattern `0010_frontier_per_scan` established for a constraint that can materialize
+  as either a named constraint or a plain unique index depending on dialect/history. No data cleanup
+  needed — any duplicates that already slipped through simply stay as separate rows; this only stops
+  new ones. Covered by two new tests in `test_bandcamp_mapper.py`:
+  `test_duplicate_fan_item_rejected_at_the_db_level` (bypasses `_add_fan_item` entirely, inserting two
+  identical album `FanItem` rows directly and asserting the second raises `IntegrityError` — this
+  exercises the DB constraint itself, not the application-level guard around it) and
+  `test_fan_item_album_and_track_indexes_dont_collide_on_a_shared_id` (a fan owning both an album and
+  a track whose primary-key values happen to coincide inserts cleanly — proving the two partial
+  indexes are genuinely independent, not one shared index that would false-positive on that
+  coincidence). 266/266 backend tests pass (264 + 2 new), ruff clean; `alembic upgrade head /
+  downgrade -1 / upgrade head` round-trips clean against a fresh sqlite DB, with the downgrade step
+  verified to actually exercise the real old-constraint-recreation path (not just a guard no-op) since
+  a fresh DB already carries the new indexes from `0001_baseline`'s `Base.metadata.create_all` — and
+  the resulting SQLite schema was inspected directly to confirm both partial `WHERE` clauses landed
+  exactly as intended. PR: see git history.
