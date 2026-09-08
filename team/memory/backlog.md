@@ -374,6 +374,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   Done: added `max_length=256` to `SignupIn.username` — rejected with `422` before the DB is ever
   touched, on any engine. Covered by `test_signup_rejects_overlong_username`.
 
+- [x] **`POST /api/scans/{id}/run` lets a genuinely running scan be re-queued.** *(found by the
+  hourly routine, 2026-09-08, direct source read — no Product/QA call needed)* `run_scan`
+  (`scans.py`) set `scan.status = queued` unconditionally, with no check for the current status.
+  `scan_service.claim_queued_scans` is an atomic CAS that only claims `queued` rows, and
+  `advance_scan`'s "starting fresh" reset explicitly branches on `scan.status != running` — so a
+  scripted/direct call to `/run` on a scan that's already mid-crawl (chain alive, self-
+  re-enqueuing) could flip it back to `queued`, let the poller start a *second* chain against the
+  same `scan_id`, and reset the slice counter out from under the still-running one. The UI's
+  `RetryScanButton` only ever calls this when `status === 'error'`, so this is scripted/direct-
+  caller hardening (the same class as the recompute cooldown), not a UI-reachable bug — a genuinely
+  stalled scan already self-heals via `reclaim_stalled_scans` without needing this endpoint at all.
+  Done: `run_scan` now returns `409` if `scan.status == running`, leaving the queued/error/done
+  re-run path (`test_run_requeues`) untouched. Covered by
+  `test_run_rejects_an_already_running_scan`: a scan forced to `running` status is unaffected by
+  the call (status stays `running`) and the request itself gets `409`.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
