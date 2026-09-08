@@ -163,6 +163,14 @@ export function ScanFeedPage() {
    * which can be stale in a closure captured before `armUndo` ran) to splice
    * a failed optimistic retirement back into roughly the same spot. */
   const retiredIndex = useRef<Record<string, number>>({})
+  /* Set by `retire()` when the card it's about to remove currently holds
+   * keyboard focus — React unmounts the node but never moves focus itself,
+   * so without this the browser drops focus to `document.body` and the
+   * roving-tabindex arrow keys stop responding until the reader clicks or
+   * tabs back in. The refocus effect below reads and clears it once
+   * `visibleRows`/`activeCardIndex` have settled onto the post-removal
+   * card. A ref: it's read once per removal, never rendered. */
+  const refocusPending = useRef(false)
   /* The generation the currently-rendered page was fetched under. A ref, not
    * state: it only feeds the reflow check below, never renders on its own. */
   const prevGeneration = useRef<number | null>(null)
@@ -507,6 +515,10 @@ export function ScanFeedPage() {
       setExiting((prev) => ({ ...prev, [key]: kind }))
       const timerId = window.setTimeout(() => {
         delete retireTimers.current[key]
+        const cardEl = document.getElementById(cardIdOf(rec))
+        if (cardEl && cardEl.contains(document.activeElement)) {
+          refocusPending.current = true
+        }
         let removedAt = -1
         setRows((prev) => {
           const next: Recommendation[] = []
@@ -713,6 +725,18 @@ export function ScanFeedPage() {
   // currently-active row — one card fewer, no `loadFirstPage` involved — never
   // leaves `activeIndex` pointing past the end of the rendered set.
   const activeCardIndex = visibleRows.length === 0 ? 0 : Math.min(activeIndex, visibleRows.length - 1)
+
+  /** Restores actual DOM focus after `retire()` removes the card that held
+   *  it — the index clamp above already picks the right *logical* active
+   *  card, but React never moves real focus on its own, so without this the
+   *  reader is left on `document.body` with arrow keys doing nothing. Runs
+   *  after `visibleRows`/`activeCardIndex` settle post-removal. */
+  useEffect(() => {
+    if (!refocusPending.current) return
+    refocusPending.current = false
+    if (visibleRows.length === 0) return
+    document.getElementById(cardIdOf(visibleRows[activeCardIndex]))?.focus()
+  }, [visibleRows, activeCardIndex])
 
   /** Roving tabindex, the standard WAI-ARIA pattern: ArrowDown/ArrowUp move to
    *  the next/previous card, Home/End jump to the ends. Scoped to firing only
