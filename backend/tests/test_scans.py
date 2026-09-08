@@ -145,6 +145,39 @@ async def test_run_requeues(client: AsyncClient) -> None:
     assert (await client.post("/api/scans/999999/run")).status_code == 404
 
 
+async def test_run_rejects_an_already_running_scan(sessionmaker_) -> None:  # noqa: ANN001
+    # A genuinely running scan already has a self-perpetuating job chain; requeuing
+    # it via the API would let the poller start a second chain against the same
+    # scan_id. Only `running` is rejected — `test_run_requeues` above covers the
+    # normal queued/error/done re-run path.
+    async with sessionmaker_() as s:
+        user = User(username="me", password_hash="!")
+        s.add(user)
+        await s.flush()
+        scan = Scan(user_id=user.id, name="n", kind=str(ScanKind.CUSTOM),
+                    status=str(ScanStatus.RUNNING))
+        s.add(scan)
+        await s.commit()
+        scan_id = scan.id
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker_() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post(f"/api/scans/{scan_id}/run")
+            assert r.status_code == 409
+    finally:
+        app.dependency_overrides.clear()
+
+    async with sessionmaker_() as s:
+        assert (await s.get(Scan, scan_id)).status == str(ScanStatus.RUNNING)
+
+
 async def test_delete_scan_and_protect_collection(client: AsyncClient) -> None:
     sid = (await client.post("/api/scans", json={"name": "n", "seeds": [ALBUM_URL]})).json()["id"]
     assert (await client.delete(f"/api/scans/{sid}")).status_code == 200

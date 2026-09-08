@@ -147,6 +147,14 @@ async def run_scan(
     scan = await session.get(Scan, scan_id)
     if scan is None or scan.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="scan not found")
+    if scan.status == str(ScanStatus.RUNNING):
+        # A genuinely running scan already has a self-perpetuating job chain;
+        # requeuing it here would let the poller start a second chain against
+        # the same scan_id, racing the first (see scan_service.advance_scan's
+        # "starting fresh" reset — it would fire again mid-crawl and stomp the
+        # in-flight chain's own slice count). A scan that's actually stalled
+        # self-heals via reclaim_stalled_scans instead of needing this.
+        raise HTTPException(status_code=409, detail="scan is already running")
     scan.status = str(ScanStatus.QUEUED)
     scan.error = None
     await session.commit()
