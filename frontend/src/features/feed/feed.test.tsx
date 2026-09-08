@@ -830,6 +830,42 @@ describe('scan feed', () => {
     })
   })
 
+  it('selecting two cards and clicking "Like selected" likes exactly those two items, then clears the selection', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes).toHaveLength(3)
+
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[2])
+
+    expect(await screen.findByText('2')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Like selected' }))
+
+    await waitFor(() => {
+      const likeCalls = fetchMock.mock.calls.filter(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/likes') && !url.includes('unlike') && init?.method === 'POST'
+      })
+      expect(likeCalls).toHaveLength(2)
+      const likedAlbumIds = likeCalls
+        .map(([, init]) => JSON.parse(String(init?.body)).album_id)
+        .sort((a: number, b: number) => a - b)
+      expect(likedAlbumIds).toEqual([1, 3])
+    })
+
+    // Selection clears and select mode exits once the batch settles.
+    await waitFor(() => {
+      expect(screen.queryByText('selected')).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    })
+  })
+
   it('"Cancel" in the bulk bar clears the selection without blocking anything', async () => {
     const fetchMock = mockFetch(feedRoutes(bulkRecs))
     renderApp('/scans/1')

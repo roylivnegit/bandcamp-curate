@@ -3,25 +3,31 @@ import { useEffect, useRef, useState } from 'react'
 import { BULK_CONFIRM_THRESHOLD, BULK_CONFIRM_WINDOW_MS } from '../config'
 
 /** Floating bar shown while one or more feed cards are selected in bulk-select
- *  mode — "N selected", then Cancel / Block selected. Renders nothing once
- *  the selection is empty, so mounting it unconditionally is safe.
+ *  mode — "N selected", then Cancel / Like selected / Block selected.
+ *  Renders nothing once the selection is empty, so mounting it
+ *  unconditionally is safe.
  *
  *  Above `BULK_CONFIRM_THRESHOLD`, "Block selected" arms a "Block N bands?"
  *  confirm step (same two-click, auto-reverting shape as `DeleteScanButton`)
  *  instead of firing immediately — undo already exists for a single
  *  mis-click, but a large bulk block is a bigger blast radius than that. At
- *  or below the threshold, the click still fires right away. */
+ *  or below the threshold, the click still fires right away. "Like selected"
+ *  has no confirm step at any count — liking isn't destructive the way
+ *  blocking is, so the extra click would only add friction. */
 export function BulkActionBar({
   count,
-  busy,
+  busyAction,
+  onLike,
   onBlock,
   onCancel,
 }: {
   count: number
-  busy: boolean
+  busyAction: 'like' | 'block' | null
+  onLike: () => void
   onBlock: () => void
   onCancel: () => void
 }) {
+  const busy = busyAction !== null
   const [confirming, setConfirming] = useState(false)
   const revertTimer = useRef<number | null>(null)
 
@@ -69,7 +75,7 @@ export function BulkActionBar({
       {confirming ? (
         <>
           <button type="button" className="btn ghost danger" onClick={handleConfirmClick} disabled={busy}>
-            {busy ? 'Blocking…' : `Block ${count} bands?`}
+            {busyAction === 'block' ? 'Blocking…' : `Block ${count} bands?`}
           </button>
           <button type="button" className="btn ghost" onClick={cancelConfirm} disabled={busy}>
             Cancel
@@ -80,8 +86,11 @@ export function BulkActionBar({
           <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
+          <button type="button" className="btn ghost" onClick={onLike} disabled={busy}>
+            {busyAction === 'like' ? 'Liking…' : 'Like selected'}
+          </button>
           <button type="button" className="btn" onClick={handleBlockClick} disabled={busy}>
-            {busy ? 'Blocking…' : 'Block selected'}
+            {busyAction === 'block' ? 'Blocking…' : 'Block selected'}
           </button>
         </>
       )}
