@@ -106,6 +106,22 @@ describe('exportFilename', () => {
   it('two differently-named scans on the same day get distinct filenames', () => {
     expect(exportFilename('Deep forest psy dig', date)).not.toBe(exportFilename('Ambient drift', date))
   })
+
+  it('two differently-named non-Latin scans get distinct filenames instead of both falling back to the generic form', () => {
+    const cyrillic = exportFilename('Психонавты', date)
+    const japanese = exportFilename('シガーボックス', date)
+    expect(cyrillic).not.toBe(japanese)
+    expect(cyrillic).not.toBe('bandcamp-feed-2026-09-07.csv')
+    expect(japanese).not.toBe('bandcamp-feed-2026-09-07.csv')
+  })
+
+  it('a non-Latin name still produces the same filename every time (deterministic, not random)', () => {
+    expect(exportFilename('Психонавты', date)).toBe(exportFilename('Психонавты', date))
+  })
+
+  it('still falls back to the bare generic form for all-ASCII-punctuation names, unlike a non-Latin one', () => {
+    expect(exportFilename('???', date)).toBe('bandcamp-feed-2026-09-07.csv')
+  })
 })
 
 describe('formatRecommendationsAsCsv', () => {
