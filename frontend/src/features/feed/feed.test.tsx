@@ -85,6 +85,62 @@ describe('scan list', () => {
 
     expect(await screen.findByText(/still crawling/i)).toBeInTheDocument()
   })
+
+  describe('sort control', () => {
+    // All 'done' — a 'queued'/'running' scan would arm the polling effect's
+    // setTimeout, which these synchronous order assertions don't need.
+    const threeScans = [
+      { ...fakeScan, id: 1, name: 'Bravo', last_run_at: '2026-09-05T00:00:00Z', rec_count: 30 },
+      { ...fakeScan, id: 2, name: 'Alpha', last_run_at: '2026-09-07T00:00:00Z', rec_count: 10 },
+      { ...fakeScan, id: 3, name: 'Charlie', last_run_at: null, rec_count: 50 },
+    ]
+
+    function scanNamesInOrder(): string[] {
+      return screen.getAllByText(/^(Alpha|Bravo|Charlie)$/).map((el) => el.textContent ?? '')
+    }
+
+    it('has no sort control for a single scan', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', [fakeScan]]])
+      renderApp('/scans')
+      await screen.findByText('My collection')
+
+      expect(screen.queryByRole('button', { name: /Sort ·/ })).not.toBeInTheDocument()
+    })
+
+    it('defaults to most-recent-first, with a never-run scan last', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      renderApp('/scans')
+      await screen.findByText('Alpha')
+
+      expect(screen.getByRole('button', { name: 'Sort · Most recent ▾' })).toBeInTheDocument()
+      expect(scanNamesInOrder()).toEqual(['Alpha', 'Bravo', 'Charlie'])
+    })
+
+    it('sorts by name A-Z', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Alpha')
+
+      await user.click(screen.getByRole('button', { name: 'Sort · Most recent ▾' }))
+      await user.click(screen.getByRole('button', { name: /Name \(A–Z\)/ }))
+
+      expect(scanNamesInOrder()).toEqual(['Alpha', 'Bravo', 'Charlie'])
+      expect(screen.getByRole('button', { name: 'Sort · Name (A–Z) ▾' })).toBeInTheDocument()
+    })
+
+    it('sorts by most recs', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Alpha')
+
+      await user.click(screen.getByRole('button', { name: 'Sort · Most recent ▾' }))
+      await user.click(screen.getByRole('button', { name: /Most recs/ }))
+
+      expect(scanNamesInOrder()).toEqual(['Charlie', 'Bravo', 'Alpha'])
+    })
+  })
 })
 
 describe('scan feed', () => {
