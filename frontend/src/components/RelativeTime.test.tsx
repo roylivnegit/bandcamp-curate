@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RELATIVE_TIME_REFRESH_MS } from '../config'
+import { exactTimestamp } from '../lib/format'
 import { RelativeTime } from './RelativeTime'
 
 describe('RelativeTime', () => {
@@ -42,14 +43,15 @@ describe('RelativeTime', () => {
     expect(clearIntervalSpy).toHaveBeenCalled()
   })
 
-  it('carries the raw ISO timestamp as a title, alongside the relative text', () => {
+  it('carries a human-readable exact timestamp as a title, and the raw ISO as dateTime', () => {
     vi.useFakeTimers()
     const iso = new Date().toISOString()
     render(<RelativeTime iso={iso} />)
 
     const el = screen.getByText('just now')
     expect(el.tagName).toBe('TIME')
-    expect(el).toHaveAttribute('title', iso)
+    expect(el).toHaveAttribute('title', exactTimestamp(iso))
+    expect(el).not.toHaveAttribute('title', iso)
     expect(el).toHaveAttribute('dateTime', iso)
   })
 

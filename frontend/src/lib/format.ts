@@ -8,6 +8,25 @@ export function ago(iso: string | null): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 
+/* Hoisted, not constructed per call — `RelativeTime` calls `exactTimestamp`
+ * on every render. Pinned locale/timeZone (UTC, not the viewer's) so the
+ * formatted string is deterministic: same input always produces the same
+ * output, in tests and across viewers alike, unlike `ago()` above whose
+ * whole point is to move with the clock. */
+const EXACT_TIMESTAMP_FORMAT = new Intl.DateTimeFormat('en-US', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'UTC',
+})
+
+/** A human-readable exact timestamp, for `RelativeTime`'s hover title — a
+ *  raw ISO string (`2026-09-08T14:23:00Z`) reads worse than every other
+ *  piece of formatted text in this app. */
+export function exactTimestamp(iso: string | null): string {
+  if (!iso) return ''
+  return EXACT_TIMESTAMP_FORMAT.format(new Date(iso))
+}
+
 /* Hoisted: a literal in the function body is a fresh RegExp object on every
  * call, and this one runs once per rendered feed card. No `/g`, so there's no
  * shared `lastIndex` to leak between calls. */

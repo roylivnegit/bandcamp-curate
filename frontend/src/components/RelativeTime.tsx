@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { RELATIVE_TIME_REFRESH_MS } from '../config'
-import { ago } from '../lib/format'
+import { ago, exactTimestamp } from '../lib/format'
 
 /** Self-refreshing `ago(iso)` text. A page that stops polling once nothing is
  *  in flight (e.g. `ScanListPage` once every scan is `done`) would otherwise
@@ -20,7 +20,7 @@ export function RelativeTime({ iso }: { iso: string | null }) {
   if (!iso) return null
 
   return (
-    <time dateTime={iso} title={iso}>
+    <time dateTime={iso} title={exactTimestamp(iso)}>
       {ago(iso)}
     </time>
   )
