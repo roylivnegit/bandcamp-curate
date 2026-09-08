@@ -150,6 +150,31 @@ describe('formatRecommendationsAsCsv', () => {
     expect(rows[1]?.[3]).toBe('Two\nWords')
   })
 
+  it('guards a title starting with a formula-trigger character against CSV injection', () => {
+    const csv = formatRecommendationsAsCsv([rec({ title: '=cmd|" /C calc"!A1' })])
+    const rows = parseCsv(csv)
+    expect(rows[1]?.[2]).toBe(`'=cmd|" /C calc"!A1`)
+    expect(rows[1]?.[2]?.startsWith('=')).toBe(false)
+  })
+
+  it('guards +, -, @, and tab leading characters the same way', () => {
+    const csv = formatRecommendationsAsCsv([
+      rec({ rank: 1, title: '+1 234', band_name: '-DROP TABLE', item_type: 'album' }),
+      rec({ rank: 2, title: '@mention', band_name: '\tindented', item_type: 'track' }),
+    ])
+    const rows = parseCsv(csv)
+    expect(rows[1]?.[2]).toBe("'+1 234")
+    expect(rows[1]?.[3]).toBe("'-DROP TABLE")
+    expect(rows[2]?.[2]).toBe("'@mention")
+    expect(rows[2]?.[3]).toBe("'\tindented")
+  })
+
+  it('leaves a title with an interior (non-leading) formula-trigger character untouched', () => {
+    const csv = formatRecommendationsAsCsv([rec({ title: 'A=B live set' })])
+    const rows = parseCsv(csv)
+    expect(rows[1]?.[2]).toBe('A=B live set')
+  })
+
   it('falls back to an empty field for a null title/artist/url', () => {
     const csv = formatRecommendationsAsCsv([rec({ title: null, band_name: null, url: null })])
     const rows = parseCsv(csv)
