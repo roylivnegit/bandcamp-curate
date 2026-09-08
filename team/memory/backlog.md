@@ -2736,28 +2736,29 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   pass (352 + 1), tsc/lint/build clean (chunk split intact — `CommandPalette` is part of the eagerly
   loaded app shell, mounted once in `App.tsx`).
 
-- [~] **Rank command-palette results instead of leaving them in list order.** *(proposed by the
+- [x] **Rank command-palette results instead of leaving them in list order.** *(proposed by the
   hourly routine, 2026-09-08, Architect+QA-approved)* `CommandPalette.tsx` filters actions with a
   plain `.label.toLowerCase().includes(q)` and renders them in whatever order `api.listScans()`
   returned, so on an account with a dozen+ scans a good partial match doesn't float to the top.
-  Built this run: new `rankCommands(items, query)` in `lib/commandRank.ts` — prefix match >
-  word-boundary match (after a space) > plain substring, ties within a tier keep original relative
-  order — swapped in for `CommandPalette`'s existing `useMemo` filter, no caller changes needed. 5
-  new unit tests in `commandRank.test.ts`, 1 new integration test in `CommandPalette.test.tsx`
+  Done: new `rankCommands(items, query)` in `lib/commandRank.ts` — prefix match > word-boundary
+  match (after a space) > plain substring, ties within a tier keep original relative order —
+  swapped in for `CommandPalette`'s existing `useMemo` filter, no caller changes needed. 5 new
+  unit tests in `commandRank.test.ts`, 1 new integration test in `CommandPalette.test.tsx`
   asserting rendered `option` order for a mixed-tier query. 362/362 frontend tests pass, tsc/lint/
-  build clean. PR #163, open with auto-merge armed — CI was still running when this run ended;
-  mark `[x]` once a later run (or the PR's own CI) confirms it merged.
+  build clean. CI flaked twice on this PR (two different, unrelated pre-existing tests —
+  `command palette > filters by typed text…` then `resume scroll position > restores…` — neither
+  touched by this diff), confirmed by a re-run each time; the branch also fell behind main twice
+  as sibling PRs merged, needing `update_pull_request_branch` each time. Merged (#163).
 
-- [~] **Warn on a duplicate scan name.** *(proposed by the hourly routine, 2026-09-08,
+- [x] **Warn on a duplicate scan name.** *(proposed by the hourly routine, 2026-09-08,
   Architect+QA-approved — no backend change needed, `ScanListPage` already fetches all scan names
   up front via `listScans()`)* Nothing stops two scans getting the same name, so a user who forgets
   they already made a "Deep house" scan ends up with two indistinguishable rows.
-  Built this run: `isDuplicateScanName(name, existingNames)` in `lib/format.ts` (case/whitespace-
+  Done: `isDuplicateScanName(name, existingNames)` in `lib/format.ts` (case/whitespace-
   insensitive); `ScanListPage` threads its already-fetched scan names into `NewScanForm`, which
   shows a non-blocking `.hint` under the name field on a match — warns, never blocks submission. 5
   new unit tests in `format.test.ts`, 4 new integration tests in `NewScanForm.test.tsx`. 362/362
-  frontend tests pass, tsc/lint/build clean. PR #162, open with auto-merge armed — CI was still
-  running when this run ended; mark `[x]` once a later run (or the PR's own CI) confirms it merged.
+  frontend tests pass, tsc/lint/build clean. Merged (#162).
 
 - [x] **Quick-filter search box on the scan list.** *(proposed by the hourly routine, 2026-09-08,
   Architect+QA-approved — "trivially derivative of the existing feed quick-filter pattern")*
