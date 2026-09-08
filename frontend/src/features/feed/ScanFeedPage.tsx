@@ -1020,253 +1020,259 @@ export function ScanFeedPage() {
   }
 
   return (
-    <div className="wrap feedpage">
-      <ScrollTopButton onClick={scrollToTop} />
-      <nav className="feednav">
-        <Link to="/scans" className="back">
-          ← Scans
-        </Link>
-        <h1 className="scantitle" ref={headingRef} tabIndex={-1}>
-          {scan?.name ?? 'Loading…'}
-          {scan && <span className="ktag">{scan.kind}</span>}
-        </h1>
-        {scan && scan.seeds.length > 0 && (
-          <button
-            type="button"
-            className={`btn ghost${panel === 'seeds' ? ' on' : ''}`}
-            onClick={() => setPanel((cur) => (cur === 'seeds' ? null : 'seeds'))}
-          >
-            Seeds <span className="num">({scan.seeds.length})</span>
-          </button>
-        )}
-        {scan && <DeleteScanButton scanId={scan.id} scanName={scan.name} kind={scan.kind} />}
-      </nav>
-
-      {scanError && (
-        <p className="err" role="alert">
-          {scanError}{' '}
-          <button type="button" className="btn ghost" onClick={() => void loadScan()}>
-            Retry
-          </button>
-        </p>
-      )}
-
-      {scan && scan.status !== 'done' && (
-        <div className={`banner ${scan.status}`}>
-          <span aria-hidden="true">{scan.status === 'error' ? '⚠' : '◴'}</span>
-          <span>
-            {scan.status === 'queued' &&
-              'Queued — waiting for the crawl worker to pick this up.'}
-            {scan.status === 'running' &&
-              (recCount > 0
-                ? `Running — ${recCount} found so far, more on the way…${budgetSuffix}`
-                : `Running — crawling seeds now…${budgetSuffix}`)}
-            {scan.status === 'error' && `Scan failed: ${scan.error ?? 'unknown error'}`}
-            {scan.status === 'draft' && 'Draft — not queued yet.'}
-          </span>
-          {scan.status === 'error' && <RetryScanButton scanId={scan.id} onRetried={setScan} />}
-        </div>
-      )}
-
-      {scan && panel === 'seeds' && <SeedsPanel items={scan.seeds} scanStatus={scan.status} />}
-
+    <>
+      {/* Full-bleed, not inside `.wrap.feedpage` — same reasoning as the app
+          header: a sticky toolbar reads as part of the page chrome, not the
+          content column, so it spans the real edges of the screen rather
+          than sitting inset with page background visible on either side. */}
       {showFeed && (
-        <>
-          <FilterBar
-            scanId={scanId}
-            filters={filters}
-            facetTags={facetTags}
-            seedTagFacets={seedTagFacets}
-            excludedSeedTags={excludedSeedTags}
-            onApplySeedTagExclusion={(tags) => void applySeedTagExclusion(tags)}
-            likedCount={liked.length}
-            blockedCount={blocked.length}
-            panel={panel}
-            onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
-            quickQuery={quickQuery}
-            onQuickQueryChange={setQuickQuery}
-            quickFilterRef={quickFilterRef}
-            selectMode={selectMode}
-            onToggleSelectMode={toggleSelectMode}
-            selectedCount={selected.size}
-            selectableCount={selectableKeys.length}
-            onSelectAll={selectAllLoaded}
-            exportRows={visibleRows}
-            scanName={scan?.name ?? null}
-          />
-
-          <BulkActionBar
-            count={selected.size}
-            busyAction={bulkBusyAction}
-            onLike={() => void bulkLike()}
-            onBlock={() => void bulkBlock()}
-            onCancel={cancelSelect}
-          />
-
-          {panel === 'liked' && (
-            <LikedPanel
-              items={liked}
-              onUnlike={(i) => void unlike(i)}
-              busy={(i) => likedKeyOf(i) in panelBusy}
-            />
-          )}
-          {panel === 'blocked' && (
-            <BlockedPanel
-              items={blocked}
-              onUnblock={(id) => void unblock(id)}
-              onRenew={(id, expiresAt) => void renew(id, expiresAt)}
-              onSetReason={(id, reason) => void setBlockReason(id, reason)}
-              busy={(id) => blockedKeyOf(id) in panelBusy}
-            />
-          )}
-
-          {/* Not a `<main>` — `App.tsx` already wraps every routed page in one
-           *  shared `<main id="main-content">`, the skip link's target; a second
-           *  nested landmark here would be invalid and confuse assistive tech. */}
-          <div>
-            {total !== null && (
-              <p className="countline" role="status" aria-live="polite">
-                <b className="num">{count(total)}</b> {kindWord}
-                {filters.anyActive ? ' match your filters' : ''}
-              </p>
-            )}
-
-            {error && (
-        <p className="err" role="alert">
-          {error}
-        </p>
+        <FilterBar
+          scanId={scanId}
+          filters={filters}
+          facetTags={facetTags}
+          seedTagFacets={seedTagFacets}
+          excludedSeedTags={excludedSeedTags}
+          onApplySeedTagExclusion={(tags) => void applySeedTagExclusion(tags)}
+          likedCount={liked.length}
+          blockedCount={blocked.length}
+          panel={panel}
+          onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
+          quickQuery={quickQuery}
+          onQuickQueryChange={setQuickQuery}
+          quickFilterRef={quickFilterRef}
+          selectMode={selectMode}
+          onToggleSelectMode={toggleSelectMode}
+          selectedCount={selected.size}
+          selectableCount={selectableKeys.length}
+          onSelectAll={selectAllLoaded}
+          exportRows={visibleRows}
+          scanName={scan?.name ?? null}
+        />
       )}
+      <div className="wrap feedpage">
+        <ScrollTopButton onClick={scrollToTop} />
+        <nav className="feednav">
+          <Link to="/scans" className="back">
+            ← Scans
+          </Link>
+          <h1 className="scantitle" ref={headingRef} tabIndex={-1}>
+            {scan?.name ?? 'Loading…'}
+          </h1>
+          {scan && scan.seeds.length > 0 && (
+            <button
+              type="button"
+              className={`btn ghost${panel === 'seeds' ? ' on' : ''}`}
+              onClick={() => setPanel((cur) => (cur === 'seeds' ? null : 'seeds'))}
+            >
+              Seeds <span className="num">({scan.seeds.length})</span>
+            </button>
+          )}
+          {scan && <DeleteScanButton scanId={scan.id} scanName={scan.name} kind={scan.kind} />}
+        </nav>
 
-            {updatedSinceVisit && (
-              <p className="banner reflow" role="status">
-                <span aria-hidden="true">◎</span>
-                <span>This feed has changed since your last visit.</span>
-                <button
-                  type="button"
-                  className="rm"
-                  aria-label="Dismiss"
-                  onClick={dismissUpdatedSinceVisit}
-                >
-                  ✕
-                </button>
-              </p>
-            )}
+        {scanError && (
+          <p className="err" role="alert">
+            {scanError}{' '}
+            <button type="button" className="btn ghost" onClick={() => void loadScan()}>
+              Retry
+            </button>
+          </p>
+        )}
 
-            {listUpdated && (
-              <p className="banner reflow" role="status">
-                <span aria-hidden="true">◎</span>
-                <span>The list updated — showing the latest order.</span>
-                <button type="button" className="rm" aria-label="Dismiss" onClick={dismissListUpdated}>
-                  ✕
-                </button>
-              </p>
-            )}
-
-            {undo && (
-              <p className="banner undo" role="status">
-                <span aria-hidden="true">{undo.kind === 'like' ? '♥' : '⊘'}</span>
-                <span>
-                  {undo.kind === 'like'
-                    ? 'Added to your likes.'
-                    : `Blocked ${undo.rec.band_name ?? 'that artist'}.`}
-                </span>
-                <button type="button" className="btn ghost" onClick={() => void undoRetire()}>
-                  Undo
-                </button>
-              </p>
-            )}
-
-            {bulkUndo && (
-              <p className="banner undo" role="status">
-                <span aria-hidden="true">{bulkUndo.kind === 'like' ? '♥' : '⊘'}</span>
-                <span>
-                  {bulkUndo.kind === 'like'
-                    ? `Added ${bulkUndo.recs.length} to your likes.`
-                    : `Blocked ${bulkUndo.recs.length} artists.`}
-                </span>
-                <button type="button" className="btn ghost" onClick={() => void undoBulk()}>
-                  Undo all
-                </button>
-              </p>
-            )}
-
-            {/* First page only (`rows.length === 0`) — `loadMore`'s `loading` shares
-                this flag but has real rows already on screen, so it must not
-                re-trigger the skeleton. Shaped like real cards so nothing shifts
-                when they land. */}
-            {loading && rows.length === 0 && !error && (
-              <div role="status" aria-label="Loading recommendations…">
-                {SKELETON_KEYS.map((k) => (
-                  <FeedCardSkeleton key={k} />
-                ))}
-              </div>
-            )}
-
-            {/* Every prop here is either the row itself, a per-row primitive, or a
-                stable callback — nothing is re-created per render, so a card only
-                re-renders when its own row or flags change. `active` is a single
-                index comparison, not a scan, so it's just as cheap. Maps
-                `visibleRows`, not `rows` — the quick filter narrows what's
-                rendered without re-fetching. */}
-            {visibleRows.length > 0 && (
-              <div className="cardlist" onKeyDown={onCardListKeyDown}>
-                {visibleRows.map((r, i) => {
-                  const key = keyOf(r)
-                  return (
-                    <FeedCard
-                      key={key}
-                      rec={r}
-                      cardId={cardIdOf(r)}
-                      active={i === activeCardIndex}
-                      exiting={exiting[key] ?? null}
-                      busyAction={busy[key] ?? null}
-                      selectMode={selectMode}
-                      selected={selected.has(key)}
-                      onLike={like}
-                      onBlock={block}
-                      onTagClick={includeTag}
-                      onBandClick={onBandClick}
-                      onToggleSelect={toggleSelect}
-                    />
-                  )
-                })}
-                {/* Auto-load-more: no button. Skeletons are real grid items so
-                    they slot in wherever the next row would go, rather than a
-                    separate full-width block under a multi-column grid. */}
-                {loading && SKELETON_KEYS.slice(0, 2).map((k) => <FeedCardSkeleton key={k} />)}
-              </div>
-            )}
-            {/* The IntersectionObserver's target — full-width, zero-height,
-                below the grid so it never affects card layout. */}
-            {!done && rows.length > 0 && (
-              <div
-                ref={loadMoreSentinelRef}
-                role="status"
-                aria-label={loading ? 'Loading more…' : undefined}
-              />
-            )}
-
-            {rows.length === 0 && !loading && !error && (
-              <EmptyState
-                anyActive={filters.anyActive}
-                coldStart={stats?.cold_start}
-                requestsUsed={stats?.requests_used}
-                requestBudget={stats?.request_budget}
-                onClearFilters={filters.reset}
-              />
-            )}
-
-            {/* Distinct from the true-empty message above: the server-side
-                result set isn't empty, the quick filter just hides all of
-                it — clearing it (not filters.reset(), which is unrelated) is
-                the way out. */}
-            {rows.length > 0 && visibleRows.length === 0 && !loading && !error && (
-              <p className="empty">No loaded cards match “{quickQuery.trim()}”.</p>
-            )}
-
+        {scan && scan.status !== 'done' && (
+          <div className={`banner ${scan.status}`}>
+            <span aria-hidden="true">{scan.status === 'error' ? '⚠' : '◴'}</span>
+            <span>
+              {scan.status === 'queued' &&
+                'Queued — waiting for the crawl worker to pick this up.'}
+              {scan.status === 'running' &&
+                (recCount > 0
+                  ? `Running — ${recCount} found so far, more on the way…${budgetSuffix}`
+                  : `Running — crawling seeds now…${budgetSuffix}`)}
+              {scan.status === 'error' && `Scan failed: ${scan.error ?? 'unknown error'}`}
+              {scan.status === 'draft' && 'Draft — not queued yet.'}
+            </span>
+            {scan.status === 'error' && <RetryScanButton scanId={scan.id} onRetried={setScan} />}
           </div>
-        </>
-      )}
-    </div>
+        )}
+
+        {scan && panel === 'seeds' && <SeedsPanel items={scan.seeds} scanStatus={scan.status} />}
+
+        {showFeed && (
+          <>
+            <BulkActionBar
+              count={selected.size}
+              busyAction={bulkBusyAction}
+              onLike={() => void bulkLike()}
+              onBlock={() => void bulkBlock()}
+              onCancel={cancelSelect}
+            />
+
+            {panel === 'liked' && (
+              <LikedPanel
+                items={liked}
+                onUnlike={(i) => void unlike(i)}
+                busy={(i) => likedKeyOf(i) in panelBusy}
+              />
+            )}
+            {panel === 'blocked' && (
+              <BlockedPanel
+                items={blocked}
+                onUnblock={(id) => void unblock(id)}
+                onRenew={(id, expiresAt) => void renew(id, expiresAt)}
+                onSetReason={(id, reason) => void setBlockReason(id, reason)}
+                busy={(id) => blockedKeyOf(id) in panelBusy}
+              />
+            )}
+
+            {/* Not a `<main>` — `App.tsx` already wraps every routed page in one
+             *  shared `<main id="main-content">`, the skip link's target; a second
+             *  nested landmark here would be invalid and confuse assistive tech. */}
+            <div>
+              {total !== null && (
+                <p className="countline" role="status" aria-live="polite">
+                  <b className="num">{count(total)}</b> {kindWord}
+                  {filters.anyActive ? ' match your filters' : ''}
+                </p>
+              )}
+
+              {error && (
+          <p className="err" role="alert">
+            {error}
+          </p>
+        )}
+
+              {updatedSinceVisit && (
+                <p className="banner reflow" role="status">
+                  <span aria-hidden="true">◎</span>
+                  <span>This feed has changed since your last visit.</span>
+                  <button
+                    type="button"
+                    className="rm"
+                    aria-label="Dismiss"
+                    onClick={dismissUpdatedSinceVisit}
+                  >
+                    ✕
+                  </button>
+                </p>
+              )}
+
+              {listUpdated && (
+                <p className="banner reflow" role="status">
+                  <span aria-hidden="true">◎</span>
+                  <span>The list updated — showing the latest order.</span>
+                  <button type="button" className="rm" aria-label="Dismiss" onClick={dismissListUpdated}>
+                    ✕
+                  </button>
+                </p>
+              )}
+
+              {undo && (
+                <p className="banner undo" role="status">
+                  <span aria-hidden="true">{undo.kind === 'like' ? '♥' : '⊘'}</span>
+                  <span>
+                    {undo.kind === 'like'
+                      ? 'Added to your likes.'
+                      : `Blocked ${undo.rec.band_name ?? 'that artist'}.`}
+                  </span>
+                  <button type="button" className="btn ghost" onClick={() => void undoRetire()}>
+                    Undo
+                  </button>
+                </p>
+              )}
+
+              {bulkUndo && (
+                <p className="banner undo" role="status">
+                  <span aria-hidden="true">{bulkUndo.kind === 'like' ? '♥' : '⊘'}</span>
+                  <span>
+                    {bulkUndo.kind === 'like'
+                      ? `Added ${bulkUndo.recs.length} to your likes.`
+                      : `Blocked ${bulkUndo.recs.length} artists.`}
+                  </span>
+                  <button type="button" className="btn ghost" onClick={() => void undoBulk()}>
+                    Undo all
+                  </button>
+                </p>
+              )}
+
+              {/* First page only (`rows.length === 0`) — `loadMore`'s `loading` shares
+                  this flag but has real rows already on screen, so it must not
+                  re-trigger the skeleton. Shaped like real cards so nothing shifts
+                  when they land. */}
+              {loading && rows.length === 0 && !error && (
+                <div role="status" aria-label="Loading recommendations…">
+                  {SKELETON_KEYS.map((k) => (
+                    <FeedCardSkeleton key={k} />
+                  ))}
+                </div>
+              )}
+
+              {/* Every prop here is either the row itself, a per-row primitive, or a
+                  stable callback — nothing is re-created per render, so a card only
+                  re-renders when its own row or flags change. `active` is a single
+                  index comparison, not a scan, so it's just as cheap. Maps
+                  `visibleRows`, not `rows` — the quick filter narrows what's
+                  rendered without re-fetching. */}
+              {visibleRows.length > 0 && (
+                <div className="cardlist" onKeyDown={onCardListKeyDown}>
+                  {visibleRows.map((r, i) => {
+                    const key = keyOf(r)
+                    return (
+                      <FeedCard
+                        key={key}
+                        rec={r}
+                        cardId={cardIdOf(r)}
+                        active={i === activeCardIndex}
+                        exiting={exiting[key] ?? null}
+                        busyAction={busy[key] ?? null}
+                        selectMode={selectMode}
+                        selected={selected.has(key)}
+                        onLike={like}
+                        onBlock={block}
+                        onTagClick={includeTag}
+                        onBandClick={onBandClick}
+                        onToggleSelect={toggleSelect}
+                      />
+                    )
+                  })}
+                  {/* Auto-load-more: no button. Skeletons are real grid items so
+                      they slot in wherever the next row would go, rather than a
+                      separate full-width block under a multi-column grid. */}
+                  {loading && SKELETON_KEYS.slice(0, 2).map((k) => <FeedCardSkeleton key={k} />)}
+                </div>
+              )}
+              {/* The IntersectionObserver's target — full-width, zero-height,
+                  below the grid so it never affects card layout. */}
+              {!done && rows.length > 0 && (
+                <div
+                  ref={loadMoreSentinelRef}
+                  role="status"
+                  aria-label={loading ? 'Loading more…' : undefined}
+                />
+              )}
+
+              {rows.length === 0 && !loading && !error && (
+                <EmptyState
+                  anyActive={filters.anyActive}
+                  coldStart={stats?.cold_start}
+                  requestsUsed={stats?.requests_used}
+                  requestBudget={stats?.request_budget}
+                  onClearFilters={filters.reset}
+                />
+              )}
+
+              {/* Distinct from the true-empty message above: the server-side
+                  result set isn't empty, the quick filter just hides all of
+                  it — clearing it (not filters.reset(), which is unrelated) is
+                  the way out. */}
+              {rows.length > 0 && visibleRows.length === 0 && !loading && !error && (
+                <p className="empty">No loaded cards match “{quickQuery.trim()}”.</p>
+              )}
+
+            </div>
+          </>
+        )}
+      </div>
+    </>
   )
 }

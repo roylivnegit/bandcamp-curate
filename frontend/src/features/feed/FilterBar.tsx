@@ -107,7 +107,7 @@ export function FilterBar({
           ref={quickFilterRef}
           className="input quickfilter"
           aria-label="Search"
-          placeholder="Search (/)"
+          placeholder="Search"
           value={quickQuery}
           onChange={(e) => onQuickQueryChange(e.target.value)}
           onKeyDown={(e) => {

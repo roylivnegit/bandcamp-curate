@@ -7,10 +7,19 @@
   box-sizing: border-box;
 }
 
+/* min-height, not height: `height: 100%` clamps html/body/#root to exactly
+ * one viewport tall no matter how long the actual page content is. That's
+ * harmless for a short page, but on a long feed it caps #root's own box at
+ * 100vh — the containing block `.apphead`'s `position: sticky` measures
+ * against — so the header runs out of "room" to stick in and detaches once
+ * you scroll past one viewport height, even though the page itself keeps
+ * scrolling normally past that point. min-height still guarantees a
+ * full-viewport-tall page when content is short, without capping it when
+ * content is taller. */
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
 }
 
 body {

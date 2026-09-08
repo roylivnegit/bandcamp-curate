@@ -53,38 +53,22 @@
   margin-left: auto;
 }
 
-.scantitle .ktag {
-  font-family: var(--mono);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--accent);
-  border: 1px solid var(--accent-dim);
-  border-radius: var(--r-pill);
-  padding: 2px 9px;
-  margin-left: var(--s-2);
-  vertical-align: middle;
-}
-
 /* ── filter bar: sticky, because the feed is thousands of rows long ─────── */
 
+/* Full-bleed (see ScanFeedPage: this renders outside `.wrap.feedpage` now),
+   same as `.apphead` — the two form one persistent toolbar system, so they
+   share its exact background treatment rather than a lighter card-like tint.
+   That's also a much bigger jump from `.card`'s --surface-2 than a lighter
+   surface tier would be, which is the actual point: distinguishable from
+   the cards scrolling underneath it, not just "a bit different". */
 .filterbar {
   position: sticky;
   top: 58px; /* below the app header */
   z-index: 20;
-  padding: var(--s-3);
-  margin-top: var(--s-3);
-  /* A near-opaque tint of --surface-3, not --surface-2 — that's what cards
-   * use, and sharing it made the sticky bar disappear into the card behind
-   * it while scrolling. --surface-3 is the same "elevated, floating above
-   * the page" tier ScrollTopButton uses, one step lighter than a card, so
-   * the bar reads as its own layer rather than blending into the list. */
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 40%),
-    rgba(35, 42, 59, 0.94);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  padding: var(--s-3) var(--s-4);
+  background: rgba(10, 12, 17, 0.86);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
 }
 
 .controls {
@@ -700,9 +684,12 @@
     flex-wrap: wrap;
   }
 
-  .filterbar {
-    top: 0; /* the app header itself already scrolls out of a narrow view */
-  }
+  /* No mobile override for `.filterbar`'s `top` any more — it used to assume
+     the app header scrolled out of view on a narrow viewport, which relied on
+     the same sticky bug fixed in base.css (html/body/#root's height: 100% vs
+     min-height: 100%). The header is sticky everywhere now, so the filter bar
+     keeps the base rule's `top: 58px` (below it) on every viewport instead of
+     `top: 0`, which would sit the two on top of each other. */
 
   /* One control per row. A ragged 2-per-row wrap (a search box beside half a
      dropdown label beside a stray segmented-control button) reads as broken,
