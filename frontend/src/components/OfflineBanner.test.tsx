@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { resetToastsForTests, useToasts } from '../lib/toast'
 import { OfflineBanner } from './OfflineBanner'
 
 function setNavigatorOnLine(value: boolean) {
@@ -10,7 +11,12 @@ function setNavigatorOnLine(value: boolean) {
   })
 }
 
+function ToastMessages() {
+  return <>{useToasts().map((t) => t.message)}</>
+}
+
 describe('OfflineBanner', () => {
+  beforeEach(() => resetToastsForTests())
   afterEach(() => setNavigatorOnLine(true))
 
   it('renders nothing while online', () => {
@@ -32,5 +38,41 @@ describe('OfflineBanner', () => {
     setNavigatorOnLine(false)
     render(<OfflineBanner />)
     expect(screen.getByRole('status')).toHaveTextContent(/you’re offline/i)
+  })
+
+  it('shows a "Back online" toast after a real offline→online transition', () => {
+    render(
+      <>
+        <OfflineBanner />
+        <ToastMessages />
+      </>,
+    )
+
+    act(() => window.dispatchEvent(new Event('offline')))
+    expect(screen.queryByText('Back online.')).not.toBeInTheDocument()
+
+    act(() => window.dispatchEvent(new Event('online')))
+    expect(screen.getByText('Back online.')).toBeInTheDocument()
+  })
+
+  it('does not toast on initial mount, even when starting online', () => {
+    render(
+      <>
+        <OfflineBanner />
+        <ToastMessages />
+      </>,
+    )
+    expect(screen.queryByText('Back online.')).not.toBeInTheDocument()
+  })
+
+  it('does not toast on initial mount when starting offline', () => {
+    setNavigatorOnLine(false)
+    render(
+      <>
+        <OfflineBanner />
+        <ToastMessages />
+      </>,
+    )
+    expect(screen.queryByText('Back online.')).not.toBeInTheDocument()
   })
 })

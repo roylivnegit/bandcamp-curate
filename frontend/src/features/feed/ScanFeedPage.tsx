@@ -176,6 +176,14 @@ export function ScanFeedPage() {
   /* Re-fetch when the count moves, rather than on every 4s poll tick: the scan
    * poll re-runs regardless, but the feed only changes when a slice curates. */
   const recCount = scan?.stats?.recommendations ?? 0
+  /* Same null-safe convention as `ColdStartPanel`'s own `budgetLine`: a
+   * missing or zero budget renders nothing extra, so a scan whose backend
+   * doesn't cap requests (or hasn't reported `stats` yet) shows the plain
+   * running message unchanged. */
+  const budgetSuffix =
+    stats?.requests_used != null && stats?.request_budget != null && stats.request_budget > 0
+      ? ` (${count(stats.requests_used)} of ${count(stats.request_budget)} crawl requests used)`
+      : ''
   /* The re-arm signal for `loadFirstPage` below — see `generationChanged`.
    * Bumped by every recompute, strictly more often than `recCount`: a swap
    * (one item in, one out) reorders the feed without moving the total. */
@@ -288,10 +296,17 @@ export function ScanFeedPage() {
   // `total` (not `rows.length`) is the stable "the whole result set is empty"
   // signal — a like/block animates a row out of `rows` locally without ever
   // touching `total`, so this only fires for a genuinely empty scan, not a
-  // momentary gap while the last visible card exits.
+  // momentary gap while the last visible card exits. Also kept fresh for a
+  // `running` scan that already has results — the crawl-budget readout used
+  // to only exist inside `ColdStartPanel`, which stops being reachable the
+  // moment `total` leaves zero, so a scan burning through its per-scan
+  // request budget had no visible readout at all once recs started landing.
+  // `recCount` (not the 4s scan-poll tick) is the re-arm signal here, same
+  // convention as `generation` above — the budget only actually changes when
+  // a slice curates, not on every poll.
   useEffect(() => {
-    if (total === 0) void loadStats().catch(() => {})
-  }, [total, loadStats])
+    if (total === 0 || scan?.status === 'running') void loadStats().catch(() => {})
+  }, [total, scan?.status, recCount, loadStats])
 
   // ── the feed itself ──────────────────────────────────────────────────────
   const loadFirstPage = useCallback(async () => {
@@ -897,8 +912,8 @@ export function ScanFeedPage() {
               'Queued — waiting for the crawl worker to pick this up.'}
             {scan.status === 'running' &&
               (recCount > 0
-                ? `Running — ${recCount} found so far, more on the way…`
-                : 'Running — crawling seeds now…')}
+                ? `Running — ${recCount} found so far, more on the way…${budgetSuffix}`
+                : `Running — crawling seeds now…${budgetSuffix}`)}
             {scan.status === 'error' && `Scan failed: ${scan.error ?? 'unknown error'}`}
             {scan.status === 'draft' && 'Draft — not queued yet.'}
           </span>

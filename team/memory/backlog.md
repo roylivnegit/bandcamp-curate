@@ -2684,3 +2684,40 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   intact — the same style of check #157 used, since a literal from-empty `alembic upgrade head` hits
   a pre-existing, unrelated SQLite limitation at `0008_users_and_ownership` (`op.create_unique_
   constraint` outside batch mode) that has nothing to do with this change. PR: see git history.
+
+- [x] **A running scan's crawl-budget readout disappears the moment results start landing.**
+  *(proposed by the hourly routine, 2026-09-08, self-verified against source before building)*
+  `stats.requests_used`/`stats.request_budget` only ever rendered inside `ColdStartPanel`, which
+  `ScanFeedPage` fetches and shows **only** while `total === 0` — so a `running` scan burning
+  through its fixed per-scan `crawl_max_requests_per_scan` budget had no visible readout at all
+  once recommendations started accruing (the common case: the feed fills in during the crawl, per
+  `CLAUDE.md`).
+  Done: the `total === 0` `loadStats` effect now also fires while `scan?.status === 'running'`,
+  re-armed on `recCount` (the count of curated recs) rather than the 4s scan-poll tick — same
+  "only re-fetch when something a slice curates actually changed" convention `recCount`/
+  `generation` already use elsewhere in this file. The running-status banner's text (`"Running — N
+  found so far…"` / `"Running — crawling seeds now…"`) gets a new `budgetSuffix` appended — e.g.
+  `" (742 of 1,000 crawl requests used)"` — using the exact same null-safe guard as
+  `ColdStartPanel`'s own `budgetLine` (`requests_used`/`request_budget` both non-null and budget >
+  0; otherwise nothing extra renders, so a scan with no cap or without `stats` loaded yet shows the
+  plain message unchanged). Covered by a new test in `feed.test.tsx`: a running scan with 1 rec
+  already showing and a mocked `/api/stats` response asserts the budget text renders inline in the
+  banner. 352/352 frontend tests pass (348 + 4, see the "Back online" toast below), tsc/lint/build
+  clean (chunk split intact).
+
+- [x] **Reconnecting after an offline period is silent.** *(proposed by the hourly routine,
+  2026-09-08, self-verified against source before building)* `OfflineBanner` correctly stays up for
+  the whole outage (deliberately not routed through the toast queue, since a toast's auto-dismiss
+  timer can't express "stay up until connectivity actually returns" — see its own comment), but
+  reconnecting just makes the banner vanish with no acknowledgment that it's now safe to retry
+  whatever like/block/scan action failed mid-outage.
+  Done: `OfflineBanner` (the one existing consumer of `useOnlineStatus`) now also tracks a
+  `wasOffline` ref and fires a one-shot `showToast('Back online.', 'status')` on a real
+  false→true transition — **not** on initial mount, whether the page happens to load already
+  online (the common case) or already offline. A one-shot toast is the right fit here, unlike the
+  persistent banner: it's inherently transient. Covered by three new tests in
+  `OfflineBanner.test.tsx`: an `offline` event followed by an `online` event shows the toast; no
+  toast fires on initial mount when starting online; no toast fires on initial mount when starting
+  offline (only an actual transition counts). 352/352 frontend tests pass (348 + 1 from the budget
+  item above + 3 here), tsc/lint/build clean (chunk split intact — both changes land in the eagerly
+  loaded shell/`ScanFeedPage` chunks, not a lazy route).
