@@ -10,7 +10,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 class SignupIn(BaseModel):
-    username: str
+    username: str = Field(max_length=256)
     password: str
     bandcamp_fan_url: str
     invite_code: str

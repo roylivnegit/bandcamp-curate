@@ -81,6 +81,18 @@ async def like(
     current_user: User = Depends(get_current_user),
 ) -> LikeOut:
     item_type = str(ItemType.ALBUM if payload.album_id is not None else ItemType.TRACK)
+    if payload.album_id is not None:
+        found = (
+            await session.execute(select(Album.id).where(Album.id == payload.album_id))
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(status_code=404, detail="album not found")
+    else:
+        found = (
+            await session.execute(select(Track.id).where(Track.id == payload.track_id))
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(status_code=404, detail="track not found")
     existing = (
         await session.execute(
             select(Like).where(
