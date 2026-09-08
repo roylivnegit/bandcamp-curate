@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
+import { isDuplicateScanName } from '../lib/format'
 import { deleteView, listViews, saveView, type SavedView } from '../lib/savedViews'
 import { Dropdown } from './Dropdown'
 import { RemoveButton } from './RemoveButton'
@@ -15,6 +16,10 @@ export function SavedViewsDropdown({ scanId }: { scanId: number }) {
   const navigate = useNavigate()
   const [views, setViews] = useState<SavedView[]>([])
   const [name, setName] = useState('')
+  const duplicateName = isDuplicateScanName(
+    name,
+    views.map((v) => v.name),
+  )
 
   return (
     <Dropdown
@@ -42,6 +47,9 @@ export function SavedViewsDropdown({ scanId }: { scanId: number }) {
             }}
           />
           <p className="ddempty">Saves the current filters/sort under a name, just for you.</p>
+          {duplicateName && (
+            <p className="hint">A saved view named &ldquo;{name.trim()}&rdquo; already exists.</p>
+          )}
           <div className="ddlist">
             {views.length === 0 ? (
               <p className="ddempty">No saved views yet.</p>
