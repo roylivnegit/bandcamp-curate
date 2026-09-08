@@ -2973,3 +2973,18 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   at-any-count, per-action busy labels) and a new integration test in `feed.test.tsx`: selecting two
   cards and clicking "Like selected" posts exactly those two album ids to `/api/likes`, then clears
   the selection. 393/393 frontend tests pass, tsc/lint/build clean (chunk split intact). PR #174.
+
+- [x] **Human-readable exact timestamp in `RelativeTime`'s tooltip.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved)* `RelativeTime.tsx` set `title={iso}`, so hovering "3h
+  ago" showed a raw ISO string like `2026-09-08T14:23:00Z` — every other piece of text in the app is
+  human-formatted, but this tooltip wasn't.
+  Done: new `exactTimestamp(iso)` in `lib/format.ts`, backed by a module-scope-hoisted
+  `Intl.DateTimeFormat` (not constructed per call, since `RelativeTime` calls it on every render) with
+  a pinned locale and explicit `UTC` `timeZone` so the formatted string is deterministic in tests and
+  across viewers — unlike `ago()`'s deliberately clock-relative output. `RelativeTime.tsx` now sets
+  `title={exactTimestamp(iso)}`; `dateTime` stays the raw ISO. Covered by 3 new unit tests in
+  `format.test.ts` (a fixed ISO instant formats to an exact expected string; repeated calls with the
+  same input are stable; null returns `''`); rewrote `RelativeTime.test.tsx`'s existing title
+  assertion (which had asserted the raw ISO) to assert `exactTimestamp(iso)` and explicitly check the
+  raw ISO is no longer shown. 396/396 frontend tests pass, tsc/lint/build clean (chunk split intact).
+  PR #175.
