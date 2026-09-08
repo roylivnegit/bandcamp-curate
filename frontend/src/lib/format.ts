@@ -48,6 +48,15 @@ export function normalizeSeedUrl(url: string): string {
   }
 }
 
+/** Whether `name` (trimmed, case-insensitive) matches any of `existingNames` —
+ *  drives a non-blocking "you already have a scan called this" warning in
+ *  `NewScanForm`, not a hard rejection (scan names aren't unique server-side). */
+export function isDuplicateScanName(name: string, existingNames: string[]): boolean {
+  const n = name.trim().toLowerCase()
+  if (!n) return false
+  return existingNames.some((existing) => existing.trim().toLowerCase() === n)
+}
+
 // A fan's collection page always lives at bandcamp.com/<handle> — unlike album/track
 // URLs (SEED_URL_RE in NewScanForm.tsx), which are hosted per-artist and deliberately
 // accept any host. The backend itself only checks non-empty (`api/auth.py`), so this
