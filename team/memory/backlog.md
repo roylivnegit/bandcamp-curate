@@ -298,6 +298,31 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   filter key finds nothing under it, confirming no stale cross-filter restore. 70/70 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
+- [x] **`exportFilename`'s slugify strips all non-ASCII, silently reintroducing a same-day
+  filename collision.** *(proposed by the hourly routine, 2026-09-08, Architect+QA-approved;
+  sibling of the CSV formula-injection fix in PR #164 from the same Product round)*
+  `SLUG_UNSAFE = /[^a-z0-9]+/g` strips everything but ASCII letters/digits, so a scan named
+  entirely in a non-Latin script (Cyrillic, CJK, Hebrew, …) slugified to `''` and fell back to
+  the bare generic date-only filename — exactly the same-day collision `exportFilename` exists
+  to prevent (`CLAUDE.md`: "exporting two different scans... doesn't produce two files with the
+  identical name"). Two distinct non-Latin scan names exported the same day silently overwrote
+  each other's CSV.
+  Done: new `fallbackTag(name)` (a small djb2-style hash, base36) in `lib/export.ts`. When
+  `slugify(name)` comes back empty but the name itself isn't (checked via a new `NON_ASCII =
+  /[^\p{ASCII}]/u` — written with the `\p{ASCII}` Unicode property, not a `\x00-\x7F` character
+  class, to avoid oxlint's `no-control-regex`), `exportFilename` appends the hash instead of
+  falling back to the bare generic form. A name that's merely all-ASCII-punctuation (e.g. "???")
+  is a different case — nothing distinguishing survives to encode either way — and keeps the
+  pre-existing bare-generic-form behavior unchanged, so the existing `'???'`-fallback test still
+  passes untouched, no test weakened. Covered by 3 new tests in `export.test.ts`: two distinct
+  non-Latin names (Cyrillic, Japanese) produce two distinct, non-generic filenames; the same
+  non-Latin name produces the identical filename every time (deterministic, not random); the
+  existing all-ASCII-punctuation case still falls back to the bare generic form. 374/374 frontend
+  tests pass, tsc/lint/build clean (chunk split intact — pure-logic change in an already-imported
+  file). PR: see git history.
+  **One sibling proposal from the same Product round still queued** (see PR #164's entry above):
+  `savedViews.ts`'s `saveView()` has no duplicate-name check.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
