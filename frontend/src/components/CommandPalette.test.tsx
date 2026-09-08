@@ -73,6 +73,23 @@ describe('CommandPalette', () => {
     expect(screen.queryByRole('option', { name: 'Alpha' })).not.toBeInTheDocument()
   })
 
+  it('ranks a prefix match above a word-boundary match above a buried match', () => {
+    const list: CommandAction[] = [
+      { id: 'a', label: 'My Ambient Scan', run: vi.fn() }, // word-boundary ("Scan")
+      { id: 'b', label: 'Vaporwave Deep Cuts', run: vi.fn() }, // no match at all
+      { id: 'c', label: 'Scavenger Hunt', run: vi.fn() }, // prefix
+    ]
+    renderWithControls(list)
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Jump to…' }), { target: { value: 'sca' } })
+
+    expect(screen.getAllByRole('option').map((el) => el.textContent)).toEqual([
+      'Scavenger Hunt',
+      'My Ambient Scan',
+    ])
+  })
+
   it('shows a "no matches" message instead of an empty list', () => {
     const { list } = actions()
     renderWithControls(list)
