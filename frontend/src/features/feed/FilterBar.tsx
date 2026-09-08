@@ -4,6 +4,7 @@ import type { RefObject } from 'react'
 import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { RemoveButton } from '../../components/RemoveButton'
+import { SavedViewsDropdown } from '../../components/SavedViewsDropdown'
 import { downloadCsv, exportFilename, formatRecommendationsAsCsv } from '../../lib/export'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
@@ -21,6 +22,7 @@ const TYPES: Array<{ value: '' | 'album' | 'track'; label: string }> = [
 ]
 
 export function FilterBar({
+  scanId,
   filters,
   facetTags,
   seedTagFacets,
@@ -41,6 +43,9 @@ export function FilterBar({
   exportRows,
   scanName,
 }: {
+  /** Which scan's filters this bar controls — `SavedViewsDropdown` scopes its
+   *  saved views to it. */
+  scanId: number
   filters: FeedFilters
   facetTags: Facet[]
   /** Genres carried by the caller's own collection (`GET /api/facets`'s
@@ -160,6 +165,7 @@ export function FilterBar({
             excluded={excludedSeedTags}
             onApply={onApplySeedTagExclusion}
           />
+          <SavedViewsDropdown scanId={scanId} />
 
           <div className="spacer" />
 

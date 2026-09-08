@@ -85,3 +85,8 @@ export const BULK_CONFIRM_WINDOW_MS = 4000
  *  for blocks, a long one) — without a cap the side panel just keeps
  *  growing. */
 export const SIDEPANEL_PAGE_SIZE = 20
+
+/** Max saved filter views kept per scan (see `lib/savedViews.ts`) — the
+ *  oldest is evicted first once a save would exceed this, so the list stays
+ *  a quick "views I actually use" set rather than growing forever. */
+export const SAVED_VIEWS_CAP = 8

@@ -2506,3 +2506,47 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   asserting it matches `bandcamp-feed-my-collection-YYYY-MM-DD.csv` for the fixture scan named "My
   collection". 318/318 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
   history.
+
+- [x] **Saved filter views.** *(proposed by the hourly routine, 2026-09-08, Architect+QA-approved)*
+  Product's round proposed three ideas; two were cut before building. A "copy link for the current
+  filtered view" idea was rejected by the routine itself, not QA — grepping the current tree found no
+  `CopyLinkButton` anywhere and `COPY_LINK_FEEDBACK_MS` was explicitly deleted as dead code in a past
+  PR (#135), so this would have resurrected functionality Roy removed on purpose (same trap as the
+  score-badge/"via tags" catches in `tried-and-failed.md`). A "recently added" sort was cut by
+  Architect+QA on a real technical ground, not scope: `Recommendation` has no `created_at` (only
+  `computed_at`), and recommendations are wholesale cleared and reinserted on every recompute inside
+  one transaction — so every row from a given recompute gets essentially the same timestamp, making
+  "recent" degenerate into "last recompute's insert order," not a real recency signal. Doing this
+  properly needs a `first_seen_at` that survives clear+insert, which is a schema + curation-logic
+  change, not a one-hour add-a-sort-key task — left unqueued rather than built half-right.
+  The surviving idea: someone checking the same filter combination repeatedly (e.g. "house, excluding
+  my genres") had to rebuild it by hand every visit even though `useFeedFilters` already expresses
+  every view as a URL.
+  Done: new `lib/savedViews.ts` — pure `listViews`/`saveView`/`deleteView` against a
+  `crate-digger.savedViews:<scanId>` `localStorage` key (`try`-wrapped the same way `api/client.ts`'s
+  token storage is), capped at `SAVED_VIEWS_CAP` (8, new in `config.ts`) with the oldest evicted first.
+  New `components/SavedViewsDropdown.tsx` — a `Dropdown` (reusing the shared component, no new
+  popover mechanics) with a name input ("press Enter to save", matching `ContainsDropdown`'s existing
+  Enter-to-add convention) that saves `location.search` under the typed name, plus a list of saved
+  views below it: each row is a `.ddrow` "apply" button (navigates to `${location.pathname}${v.
+  search}`) paired with a `RemoveButton` for delete — two independent actions, so unlike every other
+  `.ddlist` row this can't be one `<button className="ddrow">` (nested buttons are invalid HTML), a
+  new `.ddviewrow` wrapper in `Dropdown.css` handles the pairing. `RemoveButton`'s `.rm` styling is
+  ancestor-scoped (`.fpill .rm`, `.seed .rm` — no bare `.rm{}` rule), so `.ddviewrow .rm` needed its
+  own small rule mirroring `.fpill .rm`'s, also added to the coarse-pointer touch-target block in
+  `base.css` alongside the other two. Wired into `FilterBar.tsx` next to `MyGenresDropdown`, which
+  needed a new required `scanId: number` prop threaded from `ScanFeedPage.tsx`'s already-narrowed
+  (non-null past its own early return) `scanId`. Storage is per-scan and purely local — nothing
+  server-side to sync, so switching scans naturally shows a different list with no extra state to
+  clear. Covered by 10 new tests in `savedViews.test.ts` (round-trip, per-scan isolation, delete by id
+  and delete-of-missing-id as a no-op, cap eviction keeps the most recent oldest-first, corrupted/
+  non-array-of-views stored values fall back to empty, both functions degrade silently rather than
+  throwing when `localStorage` itself throws) and 5 new integration tests in `feed.test.tsx`'s new
+  "saved filter views" block: saving lists it in the dropdown and updates the trigger's own count
+  label; a saved view survives closing and reopening the dropdown (real persistence, not just local
+  component state); clicking a saved view navigates back to its stored filter query after the live
+  filter was cleared; deleting a view removes it without navigating anywhere; two different scan ids
+  keep entirely separate `localStorage` keys. 334/334 frontend tests pass (319 + 15), tsc/lint/build
+  clean (chunk split intact — the new component lands inside the `ScanFeedPage` chunk, its only
+  importer, confirmed by the chunk's gzip size moving from 11.21 kB to 11.73 kB while the eager
+  `index-*.js` chunk was untouched). PR: see git history.
