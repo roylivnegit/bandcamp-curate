@@ -2957,3 +2957,19 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   duration and it dismisses once the pointer leaves; focus moving between a toast's own buttons keeps
   it paused, only resuming once focus leaves the toast entirely). 388/388 frontend tests pass,
   tsc/lint/build clean (chunk split intact). PR #173.
+
+- [x] **"Like selected" action in bulk-select mode.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved — confirmed a near-exact mirror of the existing `bulkBlock`, `api.like`
+  already exists with no new endpoint needed)* Bulk-select mode (`BulkActionBar`) only ever offered
+  "Block selected" — liking several good recommendations at once still meant clicking each card's own
+  ♥ individually.
+  Done: `BulkActionBar.tsx` gained a "Like selected" button with no confirm-threshold step at any
+  count (unlike block) since liking isn't destructive; its boolean `busy` prop became
+  `busyAction: 'like' | 'block' | null` so each action's own button independently shows
+  "Liking…"/"Blocking…" while both stay disabled during either. `ScanFeedPage.tsx`'s new `bulkLike` is
+  an exact mirror of `bulkBlock` — calls the existing per-card `like` handler once per selected row
+  (same optimistic retire/undo/error handling as a single click), clearing the selection and exiting
+  select mode once the batch settles. Covered by extended `BulkActionBar.test.tsx` cases (no-confirm-
+  at-any-count, per-action busy labels) and a new integration test in `feed.test.tsx`: selecting two
+  cards and clicking "Like selected" posts exactly those two album ids to `/api/likes`, then clears
+  the selection. 393/393 frontend tests pass, tsc/lint/build clean (chunk split intact). PR #174.
