@@ -1,6 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { expiresLabel, isDuplicateScanName, isValidFanUrl, normalizeSeedUrl } from './format'
+import { exactTimestamp, expiresLabel, isDuplicateScanName, isValidFanUrl, normalizeSeedUrl } from './format'
+
+describe('exactTimestamp', () => {
+  it('formats a fixed ISO instant deterministically (pinned locale/timeZone)', () => {
+    expect(exactTimestamp('2026-09-08T14:23:00Z')).toBe('Sep 8, 2026, 2:23 PM')
+  })
+
+  it('is stable across repeated calls with the same input', () => {
+    const iso = '2026-01-01T00:00:00Z'
+    expect(exactTimestamp(iso)).toBe(exactTimestamp(iso))
+  })
+
+  it('returns an empty string for a null iso', () => {
+    expect(exactTimestamp(null)).toBe('')
+  })
+})
 
 describe('isValidFanUrl', () => {
   it('accepts a plain bandcamp.com fan URL', () => {
