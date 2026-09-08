@@ -601,6 +601,39 @@ def phase2_grooming(cycle: Cycle, situation: str) -> dict:
     return ruling
 
 
+SCREENSHOTS = TEAM / "artifacts" / "screenshots"
+
+
+def capture_ui_screenshots(cycle: Cycle) -> list[Path]:
+    """Run team/tools/ui-screenshot.sh so design/build turns can Read what the UI actually
+    looks like today, instead of guessing. Frontend-only, since it boots the sandbox + a
+    real browser — skip it for a backend-only item. Non-fatal: a broken sandbox shouldn't
+    sink the whole cycle over a nice-to-have; the roles just design/build without it.
+    """
+    cycle.log("  capturing UI screenshots …")
+    proc = subprocess.run(
+        [str(TEAM / "tools" / "ui-screenshot.sh")], cwd=ROOT, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        cycle.log(f"    screenshot capture failed ({proc.returncode}) — continuing without it")
+        cycle.transcript.note("UI screenshot capture failed; design/build proceeded without it.")
+        return []
+    paths = sorted(SCREENSHOTS.glob("*.png"))
+    cycle.log(f"    {len(paths)} screenshot(s)")
+    return paths
+
+
+def _screenshot_note(paths: list[Path]) -> str:
+    if not paths:
+        return ""
+    listed = "\n".join(f"- {p}" for p in paths)
+    return f"""
+        Before you go further, look at what the UI actually looks like right now (sandbox
+        data, same styles/components as production). Read each of these image files:
+        {listed}
+        """
+
+
 def phase3_design(cycle: Cycle, ruling: dict) -> dict:
     """Architect writes the ADR, Product sanity-checks it, Lead approves."""
     cycle.log("phase 3 — design")
@@ -612,12 +645,17 @@ def phase3_design(cycle: Cycle, ruling: dict) -> dict:
     slug = ruling.get("slug") or "untitled"
     adr_path = DECISIONS / f"ADR-{adr_number:04d}-{slug}.md"
 
+    screenshots = (
+        capture_ui_screenshots(cycle)
+        if ruling.get("assignee") in ("frontend-dev", "both") else []
+    )
+
     design = ask(cycle, "architect", brief(cycle, "Architect", f"""
         The Lead chose: **{ruling.get('chosen')}**
 
         Why: {ruling.get('why')}
         Explicitly out of scope: {ruling.get('scope_limit')}
-
+        {_screenshot_note(screenshots)}
         Write the ADR. The `invariants` field matters most — write each one so a reviewer can
         check it against a diff, one by one. Also fill in `rejected`: in three months that is
         the most valuable part of the file.
@@ -653,6 +691,7 @@ def phase3_design(cycle: Cycle, ruling: dict) -> dict:
 
     design["_adr_path"] = str(adr_path.relative_to(ROOT))
     design["_adr_number"] = adr_number
+    design["_screenshot_paths"] = [str(p) for p in screenshots]
     return design
 
 
@@ -710,6 +749,11 @@ def phase4_build(cycle: Cycle, ruling: dict, design: dict) -> None:
         if resume_branch and cycle.branch == resume_branch else ""
     )
 
+    screenshot_note = (
+        _screenshot_note([Path(p) for p in design.get("_screenshot_paths") or []])
+        if "frontend-dev" in devs else ""
+    )
+
     for dev in devs:
         if dev in ("none", "researcher"):
             continue
@@ -717,6 +761,7 @@ def phase4_build(cycle: Cycle, ruling: dict, design: dict) -> None:
             Implement this ADR. You are in a git worktree at {cycle.worktree} on branch
             `{cycle.branch}`. Work only there.
             {resume_note}
+            {screenshot_note if dev == "frontend-dev" else ""}
             {json.dumps(design, indent=2)}
 
             Out of scope, per the Lead: {ruling.get('scope_limit')}
