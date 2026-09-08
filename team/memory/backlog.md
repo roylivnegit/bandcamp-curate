@@ -311,20 +311,49 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   payload (`=cmd|" /C calc"!A1`) round-trips with a leading `'` and no longer starts with `=`;
   `+`/`-`/`@`/tab leading characters across two rows are all guarded the same way; a non-leading
   `=` is left alone. 374/374 frontend tests pass, tsc/lint/build clean (chunk split intact — this
-  is a pure-logic change in an already-imported file, no new import graph). PR: see git history.
-  **Two sibling proposals from the same Product round queued below, not built this task** (this
-  run's Option C task budget is one implementation per task; picked the security fix first per
-  Architect+QA's own priority order):
-  - **`exportFilename`'s slugify strips all non-ASCII, silently reintroducing the exact same-day
-    collision the feature exists to prevent** for a scan named entirely in a non-Latin script
-    (slugifies to `''`, falls back to the bare generic date-only filename). Fix: when `slugify(name)`
-    is empty but `name` isn't, fall back to a deterministic suffix (hash of `name`, or the scan id)
-    instead of the bare generic form. Verify: two distinct non-Latin scan names must produce two
-    different filenames in `export.test.ts`.
-  - **`savedViews.ts`'s `saveView()` has no duplicate-name check**, unlike the scan list which
-    already warns on a duplicate scan name — two views both named "faves" are indistinguishable in
-    `SavedViewsDropdown`. Fix: warn/reject a case-insensitive duplicate view name, mirroring the
-    scan-list pattern. Verify: unit test in `savedViews.test.ts`.
+  is a pure-logic change in an already-imported file, no new import graph). PR #164.
+  **Two sibling proposals from the same Product round**, picked up as this run's next two tasks:
+
+- [x] **`exportFilename`'s slugify strips all non-ASCII, silently reintroducing a same-day
+  filename collision.** *(proposed by the hourly routine, 2026-09-08, Architect+QA-approved;
+  sibling of the CSV formula-injection fix in PR #164 from the same Product round)*
+  `SLUG_UNSAFE = /[^a-z0-9]+/g` strips everything but ASCII letters/digits, so a scan named
+  entirely in a non-Latin script (Cyrillic, CJK, Hebrew, …) slugified to `''` and fell back to
+  the bare generic date-only filename — exactly the same-day collision `exportFilename` exists
+  to prevent (`CLAUDE.md`: "exporting two different scans... doesn't produce two files with the
+  identical name"). Two distinct non-Latin scan names exported the same day silently overwrote
+  each other's CSV.
+  Done: new `fallbackTag(name)` (a small djb2-style hash, base36) in `lib/export.ts`. When
+  `slugify(name)` comes back empty but the name itself isn't (checked via a new `NON_ASCII =
+  /[^\p{ASCII}]/u` — written with the `\p{ASCII}` Unicode property, not a `\x00-\x7F` character
+  class, to avoid oxlint's `no-control-regex`), `exportFilename` appends the hash instead of
+  falling back to the bare generic form. A name that's merely all-ASCII-punctuation (e.g. "???")
+  is a different case — nothing distinguishing survives to encode either way — and keeps the
+  pre-existing bare-generic-form behavior unchanged, so the existing `'???'`-fallback test still
+  passes untouched, no test weakened. Covered by 3 new tests in `export.test.ts`: two distinct
+  non-Latin names (Cyrillic, Japanese) produce two distinct, non-generic filenames; the same
+  non-Latin name produces the identical filename every time (deterministic, not random); the
+  existing all-ASCII-punctuation case still falls back to the bare generic form. 374/374 frontend
+  tests pass, tsc/lint/build clean (chunk split intact — pure-logic change in an already-imported
+  file). PR #165.
+
+- [x] **`savedViews.ts`'s `saveView()` has no duplicate-name check.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved; third sibling proposal from the same round as PR
+  #164/#165)* Unlike the scan list, which already warns on a duplicate scan name
+  (`isDuplicateScanName`/`NewScanForm`), `SavedViewsDropdown`'s name input let a user save two
+  views both called e.g. "faves" with no warning — indistinguishable afterward when picking one
+  to apply or delete.
+  Done: reused the existing `isDuplicateScanName(name, existingNames)` from `lib/format.ts`
+  as-is (no new matcher needed — it's already generic over "a name" and "a list of existing
+  names", not scan-specific) in `SavedViewsDropdown.tsx`, checked against the currently-open
+  dropdown's own `views` list. Shows the identical non-blocking `.hint` pattern `NewScanForm`
+  uses — warns, never blocks the save, matching the QA note's "warn/reject" landing on "warn"
+  to mirror the scan-list precedent exactly rather than inventing a stricter rejection behavior.
+  Covered by a new test in `feed.test.tsx`'s "saved filter views" block: saving a view, then
+  typing a case/whitespace-different repeat of its name shows the warning, and pressing Enter
+  anyway still saves it as a second, distinct view (2 total) rather than being blocked. 372/372
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR #166.
+  All three sibling proposals from this Product round (#164, #165, #166) are now done.
 
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
