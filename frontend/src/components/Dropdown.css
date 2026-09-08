@@ -135,6 +135,20 @@
   color: var(--text);
 }
 
+/* The armed, second-click-confirms state of a saved view's remove control —
+   same danger color `.btn.ghost.danger` uses elsewhere for a destructive
+   action awaiting confirmation. */
+.ddviewrow .rm.confirm {
+  color: var(--danger);
+  font-weight: 600;
+  padding: 0 8px;
+}
+
+.ddviewrow .rm.confirm:hover {
+  background: var(--surface-2);
+  color: var(--danger);
+}
+
 .ddempty {
   color: var(--muted);
   font-size: var(--fs-tiny);
