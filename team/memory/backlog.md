@@ -2922,3 +2922,38 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   Updated the existing "deletes a saved view" test to the new two-click behavior and added a new one
   mirroring `DeleteScanButton`'s own revert-on-timeout test. 381/381 frontend tests pass, tsc/lint/
   build clean (chunk split intact). Merged (#171).
+
+- [x] **Type-ahead letter jump in `Dropdown` menus.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `Dropdown.tsx`'s arrow-key nav (Up/Down/Home/End) had no jump-to-letter — a
+  keyboard user opening a dropdown with many rows (e.g. `SavedViewsDropdown` once you have several
+  saved views) could only reach an option by stepping through every row. A sibling proposal from the
+  same Product round, pausing a toast's auto-dismiss while hovered/focused, is the next item below.
+  Done: pressing a single printable letter (no modifier held) in the panel now jumps focus to the
+  next `.ddrow` whose visible text starts with it, wrapping around; pressing the same letter again
+  advances to the *next* match rather than always returning to the first — the standard native
+  `<select>` behavior. Modifier-held presses and the existing Arrow/Home/End handling are untouched.
+  Covered by 2 new tests in `Dropdown.test.tsx`: repeated `a` presses cycle `Apple → Avocado → Apple`;
+  a held `Ctrl+A` is ignored. 385/385 frontend tests pass, tsc/lint/build clean (chunk split intact).
+  PR #172.
+
+- [x] **Pause a toast's auto-dismiss while hovered or focused.** *(proposed by the hourly routine,
+  2026-09-08, Architect+QA-approved with a scope caveat — keep the timer-ownership move contained to
+  `lib/toast.ts` + `ToastStack.tsx`, no caller changes — honored below)* A toast with an action button
+  (Undo after like/block, Retry on a failed mutation) still auto-dismissed on its fixed
+  `TOAST_DURATION_MS` timer even while the pointer or keyboard focus was on it, so a slow reader could
+  lose the action mid-reach.
+  Done: `lib/toast.ts`'s dismiss-timer ownership moved from a bare fire-and-forget `setTimeout` into a
+  per-toast entry (`timerId`/`remaining`/`startedAt`/`pauseCount`) tracked in a module-scope `Map`.
+  `pauseToast(id)`/`resumeToast(id)` freeze and restart the countdown for the time actually left;
+  `pauseCount` is a reference count, not a boolean, since a toast can be both hovered and keyboard-
+  focused at once and the timer should only really resume once every pause has a matching resume.
+  `ToastStack.tsx` wires this to each toast's `onMouseEnter`/`Leave` and `onFocus`/`Blur`, with a
+  containment check (`!e.currentTarget.contains(e.relatedTarget)`) on both focus and blur — mirrored,
+  not just on blur — so moving focus between two buttons inside the same toast (Retry → dismiss ×)
+  neither re-pauses nor resumes mid-transition. No `showToast` call site needed to change. Covered by
+  3 new tests in `toast.test.ts` (freezes then resumes for exactly the time left, using fake timers;
+  overlapping hover+focus only resumes once both actually clear; pause/resume on an already-gone id is
+  a no-op) and 2 new integration tests in `ToastStack.test.tsx` (hovering keeps a toast alive past its
+  duration and it dismisses once the pointer leaves; focus moving between a toast's own buttons keeps
+  it paused, only resuming once focus leaves the toast entirely). 388/388 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR #173.
