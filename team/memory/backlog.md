@@ -2550,3 +2550,33 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   clean (chunk split intact — the new component lands inside the `ScanFeedPage` chunk, its only
   importer, confirmed by the chunk's gzip size moving from 11.21 kB to 11.73 kB while the eager
   `index-*.js` chunk was untouched). PR: see git history.
+
+- [x] **Sort control on the scans list.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `ScanListPage` rendered `GET /api/scans` in whatever order the API
+  returned with zero way to reorder — once someone has more than a handful of scans, finding the one
+  they want meant scanning the whole list top to bottom. A sibling proposal from the same round (a
+  filter box in the Liked/Blocked side panels, `SidePanels.tsx`) was left unqueued: QA called it
+  sound and testable but realistically 70-90 minutes rather than one sitting once you account for the
+  two panels needing near-identical filter logic and each needing a *third* empty-state branch ("no
+  items at all" vs. "items exist but none match the filter") beyond their current single
+  `items.length === 0` check — flagged for whoever picks it up next to extract a small shared
+  hook/component first rather than copy-pasting the filter logic into both panels inline.
+  Done: `ScanListPage.tsx` gets `ScanSortKey = 'recent' | 'name' | 'recs'` and a pure
+  `compareScans(a, b, key)` — `'recent'` puts a never-run scan (`last_run_at === null`) last, same
+  null-handling convention `SidePanels.tsx`'s `byExpirySoonestFirst` already uses for a not-quite
+  parallel case (there it's ascending-soonest for an expiry; here it's descending-latest for a run
+  time, but a null sorts last in both). `sortedScans = useMemo(() => scans ? [...scans].sort(...) :
+  null, [scans, sortKey])` is a plain derived value, not an effect — `scans` is replaced wholesale on
+  every poll tick, so this just re-sorts on the next array identity with no ticket/race concern (this
+  isn't a filtered fetch like `ScanFeedPage`'s `feedSeq` guards against). A `Dropdown` (the shared
+  component, not a copy of `FilterBar`'s server-side Sort control — QA's one correction to the
+  original pitch: that one drives an API query param via `useFeedFilters`/`useSearchParams`, this one
+  is a new, purely client-side array sort, only the `Dropdown` shell and `ddrow`/`sel` visual
+  convention are actually reused) renders next to "+ New scan" inside a new `.scanhead-actions` flex
+  wrapper, shown only once there's more than one scan to reorder. Defaults to `'recent'`. Covered by
+  4 new tests in `feed.test.tsx`'s `scan list > sort control` block: no sort control at all for a
+  single scan; the default order is most-recent-first with a never-run scan last; selecting "Name
+  (A-Z)" or "Most recs" re-orders the rendered `.scan-nm` text nodes accordingly (all three scans
+  given `status: 'done'` so the polling effect's `setTimeout` never arms during the assertions).
+  338/338 frontend tests pass (334 + 4), tsc/lint/build clean (chunk split intact — lands inside the
+  `ScanListPage` chunk, its only importer). PR: see git history.

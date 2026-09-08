@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { Scan } from '../../api/types'
 import { useAuth } from '../../auth/context'
 import { RelativeTime } from '../../components/RelativeTime'
+import { Dropdown } from '../../components/Dropdown'
 import { count, plural } from '../../lib/format'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { NewScanForm } from './NewScanForm'
@@ -14,13 +15,41 @@ import { SCAN_POLL_MS } from '../../config'
 
 const SKELETON_KEYS = ['sk-0', 'sk-1', 'sk-2']
 
+type ScanSortKey = 'recent' | 'name' | 'recs'
+
+const SCAN_SORTS: Record<ScanSortKey, string> = {
+  recent: 'Most recent',
+  name: 'Name (A–Z)',
+  recs: 'Most recs',
+}
+
+/** `'recent'` puts a scan that's never run (`last_run_at === null`) last,
+ *  same null-handling convention as `SidePanels.tsx`'s `byExpirySoonestFirst`. */
+function compareScans(a: Scan, b: Scan, key: ScanSortKey): number {
+  if (key === 'name') return a.name.localeCompare(b.name)
+  if (key === 'recs') return b.rec_count - a.rec_count
+  if (a.last_run_at === null && b.last_run_at === null) return 0
+  if (a.last_run_at === null) return 1
+  if (b.last_run_at === null) return -1
+  return new Date(b.last_run_at).getTime() - new Date(a.last_run_at).getTime()
+}
+
 export function ScanListPage() {
   useDocumentTitle('Scans')
   const { me, refresh } = useAuth()
   const [scans, setScans] = useState<Scan[] | null>(null)
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
+  const [sortKey, setSortKey] = useState<ScanSortKey>('recent')
   const headingRef = useRef<HTMLHeadingElement>(null)
+
+  // Derived, not stored: `scans` is replaced wholesale on every poll tick, so
+  // re-sorting here just re-runs on the next array identity — no ticket/race
+  // concern like ScanFeedPage's `feedSeq` (this isn't a filtered fetch).
+  const sortedScans = useMemo(
+    () => (scans ? [...scans].sort((a, b) => compareScans(a, b, sortKey)) : null),
+    [scans, sortKey],
+  )
 
   // A keyboard/screen-reader user landing here from another route should land
   // on the page's own heading, not wherever focus happened to be (often an
@@ -81,11 +110,35 @@ export function ScanListPage() {
         <h1 className="eyebrow" ref={headingRef} tabIndex={-1}>
           Your scans
         </h1>
-        {!creating && (
-          <button type="button" className="btn" onClick={() => setCreating(true)}>
-            ＋ New scan
-          </button>
-        )}
+        <div className="scanhead-actions">
+          {scans && scans.length > 1 && (
+            <Dropdown label={`Sort · ${SCAN_SORTS[sortKey]} ▾`} width={180}>
+              {(close) => (
+                <div>
+                  {(Object.keys(SCAN_SORTS) as ScanSortKey[]).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      className={`ddrow${sortKey === k ? ' sel' : ''}`}
+                      onClick={() => {
+                        setSortKey(k)
+                        close()
+                      }}
+                    >
+                      <span className="tick">✓</span>
+                      <span className="nm">{SCAN_SORTS[k]}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Dropdown>
+          )}
+          {!creating && (
+            <button type="button" className="btn" onClick={() => setCreating(true)}>
+              ＋ New scan
+            </button>
+          )}
+        </div>
       </div>
 
       {creating && (
@@ -115,9 +168,9 @@ export function ScanListPage() {
         </div>
       )}
 
-      {scans && (
+      {sortedScans && (
         <div className="cards">
-          {scans.map((s) => (
+          {sortedScans.map((s) => (
             <ScanCard key={s.id} scan={s} />
           ))}
           {!creating && (
