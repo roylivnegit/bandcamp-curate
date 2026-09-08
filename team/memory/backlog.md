@@ -2867,7 +2867,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   356/356 frontend tests pass, tsc/lint/build clean (chunk split intact — `panelFilter` now lands in
   a small chunk shared between `ScanListPage` and `ScanFeedPage`, its two importers). Merged (#161).
 
-- [~] **Keyboard focus vanishes after a like/block removes the focused card.** *(proposed by the
+- [x] **Keyboard focus vanishes after a like/block removes the focused card.** *(proposed by the
   hourly routine, 2026-09-08, self-verified against source before building — the `l`/`b` shortcuts
   and roving-tabindex system are both already shipped, this closes a gap in their interaction)*
   `activeCardIndex`'s clamp (`Math.min(activeIndex, visibleRows.length - 1)`) already picks the
@@ -2881,7 +2881,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   sitting at that index. Two new tests in `feed.test.tsx`: liking a focused non-last card moves
   focus to its replacement; blocking a focused *last* card moves focus to the new last card (the
   boundary case), neither ever landing on `document.body`. 380/380 frontend tests pass, tsc/lint/
-  build clean (chunk split intact). PR #169, auto-merge enabled — awaiting CI.
+  build clean (chunk split intact). Merged (#169).
   Two sibling proposals from the same Product round were disqualified before reaching Architect+QA:
   debouncing the scan-list/Liked/Blocked quick-filter search boxes (same "premature optimization on
   an already-cheap small-list filter" reason a near-identical feed quick-filter debounce proposal
@@ -2891,3 +2891,35 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   more careful grep after an initial `files_with_matches`-only check wrongly suggested no `<img>`
   existed at all — worth remembering for future rounds: a `Grep` call needs `output_mode: "content"`
   to actually see whether a match is real, not just that a file matched.
+
+- [~] **Escape doesn't cancel an in-progress block-reason edit.** *(proposed by the hourly routine,
+  2026-09-08, self-verified against source, Architect+QA-approved — the smaller/better-scoped of two
+  proposals from the same Product round; the other, confirm-before-delete on a saved view, is queued
+  below since it needs new per-row confirm state, not a drop-in reuse)* `SidePanels.tsx`'s reason
+  input only handled Enter (commit) and blur (commit, unconditionally — a deliberate earlier fix so
+  clicking away doesn't silently discard a typed reason). There was no way to actually back out of
+  an edit: pressing Escape did nothing, so a stray or changed-your-mind edit still got saved on the
+  next blur.
+  Done: Escape now resets the input to the row's last-saved reason and blurs, without calling
+  `commitReason` itself — its existing `trimmed !== b.reason` check then naturally no-ops the save
+  once `blurReason` runs against the just-reverted value, so no separate "was this an abort" flag was
+  needed. Two new tests in `SidePanels.test.tsx`: Escape reverts a changed reason to its prior saved
+  value and never calls `onSetReason`; Escape on a band with no reason yet reverts to blank the same
+  way. 380/380 frontend tests pass, tsc/lint/build clean (chunk split intact). PR #170, auto-merge
+  enabled — awaiting CI.
+
+- [ ] **Confirm before deleting a saved view.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved, queued rather than built this run — needs new per-row confirm state, not
+  a drop-in reuse, so it's a slightly bigger task than the Escape fix built alongside it)*
+  `SavedViewsDropdown.tsx`'s remove button (`RemoveButton` at line ~69-72) deletes a saved filter
+  view on a single click, immediately, with no confirmation and no undo — a stray click permanently
+  destroys a filter combination the user may have spent real time assembling. `DeleteScanButton.tsx`
+  already implements a proven two-click arm/confirm pattern (`CONFIRM_WINDOW_MS`, `arm()`/`cancel()`/
+  `confirm()`) for the same class of destructive action elsewhere in this exact codebase. QA note:
+  not a literal copy-paste of `DeleteScanButton` — that component only ever guards one button, but
+  `SavedViewsDropdown` renders a *list* of views, so the confirm state needs to be keyed per-row
+  (e.g. a `confirmingId`, not a bare boolean) plus its own revert timer. Verify: RTL + fake timers —
+  first click on remove leaves the view in the list and flips that row's button into an armed/confirm
+  state; a second click actually removes it; letting the confirm window elapse without a second click
+  reverts it back to the plain remove button (mirroring `DeleteScanButton.test.tsx`'s existing timing
+  tests).
