@@ -174,8 +174,20 @@ export function BlockedPanel({
                     if (trimmed && trimmed !== b.reason) onSetReason(b.band_id, trimmed)
                   }
                   const saveReason = (e: KeyboardEvent<HTMLInputElement>) => {
-                    if (e.key !== 'Enter') return
-                    commitReason(e.currentTarget.value)
+                    if (e.key === 'Enter') {
+                      commitReason(e.currentTarget.value)
+                      return
+                    }
+                    // Without this, Escape did nothing — the typed text stayed
+                    // in the input and `blurReason` (below) would still commit
+                    // it on the very next blur, so there was no way to actually
+                    // back out of an edit. Resetting to the last-saved value
+                    // before blurring means `commitReason`'s own `trimmed !==
+                    // b.reason` check naturally no-ops the save.
+                    if (e.key === 'Escape') {
+                      e.currentTarget.value = b.reason ?? ''
+                      e.currentTarget.blur()
+                    }
                   }
                   // Clicking away, tabbing to the next control, or closing the
                   // panel without pressing Enter used to discard a typed reason
