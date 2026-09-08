@@ -236,3 +236,40 @@ fresh Product round comes up empty — they've already been vetted (grep-confirm
 checked as not a resurrection candidate), so re-verifying and executing them costs less than another
 `claude -p` round that risks yet another duplicate proposal against an already heavily-mined
 backlog.
+
+## 2026-09-08 — hourly routine: backlog.md's own "Done" prose is stale for several items; a bigger resurrection-trap class than previously logged
+
+While picking up a stray in-flight PR and then running an Option C round, grepped the actual source
+tree for several features `backlog.md` describes as built-and-merged, expecting to reuse their code
+as a pattern. They're gone: `CopyLinkButton`/`CopyMarkdownButton` (the "Copy link"/"Copy as Markdown"
+items), `lib/density.ts` (the density toggle), and `lib/visited.ts` (the "seen" marker) have zero
+references anywhere in the current frontend tree — not just unused, entirely absent as files. This
+is the same class of thing the score-badge/"via tags" catches above already warned about (Roy removes
+UI he doesn't want, and this repo's own history around those two commits (#103/#122) shows it happens
+in batches), but the scale is bigger than one or two isolated items: `backlog.md`'s prose was never
+retroactively corrected for any of these later removals the way the tried-and-failed.md entries above
+document for the two known cases. **Practical upshot: `backlog.md`'s "[x] Done: …" writeup describes
+what was true the day it was written, not necessarily what's in the tree today.** Do not trust it as
+a live index of what exists — grep the actual `frontend/src` tree before reusing "already-built"
+code as a reference pattern, and before assuming a described component is available to import.
+(One data point on *why* the git history can't just be consulted instead: this sandbox's clone was
+shallow — `--depth 50` — for most of this session, which made `git log -S` over the full project
+history silently incomplete until `git fetch --unshallow` was run. If a `git log -S` search for a
+removal commit comes back empty, confirm the clone isn't shallow before trusting that as "no removal
+happened.")
+
+Concretely for future Product/Option-C rounds: a "copy the current filtered view's link" proposal is
+a resurrection trap exactly like the score badge and "via tags" ones — `COPY_LINK_FEEDBACK_MS` was
+explicitly deleted as dead code in a real past commit (#135), which only makes sense if the button
+using it was already gone by then. **Do not re-propose a copy-link/copy-as-markdown button, a density
+toggle, or a "seen" marker on visited cards without Roy asking for one explicitly** — same standing
+rule as the theme toggle and score badge above.
+
+Also cut this round, for a different (non-resurrection) reason: a **"recently added" sort** proposal
+was technically unsound as specified, caught by the Architect+QA call rather than self-caught —
+`Recommendation` has `computed_at`, not `created_at`, and recommendations are wholesale cleared and
+reinserted on every recompute inside one transaction, so every row from one recompute gets
+essentially the same timestamp. "Recent" would degenerate into "last recompute's insert order," not
+a real recency signal — building it properly needs a `first_seen_at` that survives clear+insert
+(schema + curation-logic change), not a one-hour sort-key add. Don't re-propose the naive version;
+a `first_seen_at`-backed version would be a legitimately different, larger proposal.

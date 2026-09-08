@@ -86,6 +86,7 @@ a {
   .fpill .rm,
   .fpill .tog,
   .seed .rm,
+  .ddviewrow .rm,
   .act,
   .listen {
     min-width: 44px;
@@ -94,7 +95,8 @@ a {
 
   /* The ✕ glyphs are centred text in a now-taller box. */
   .fpill .rm,
-  .seed .rm {
+  .seed .rm,
+  .ddviewrow .rm {
     display: inline-flex;
     align-items: center;
     justify-content: center;

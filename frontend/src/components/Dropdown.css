@@ -103,6 +103,38 @@
   font-size: var(--fs-tiny);
 }
 
+/* A `.ddrow` (the apply action) paired with a separate delete control —
+   `SavedViewsDropdown`'s saved-view rows. Two independent actions, so unlike
+   every other `.ddlist` row this can't be one `<button className="ddrow">`
+   (a nested button would be invalid HTML). */
+.ddviewrow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ddviewrow .ddrow {
+  flex: 1;
+  min-width: 0;
+}
+
+.ddviewrow .rm {
+  flex: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.ddviewrow .rm:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
 .ddempty {
   color: var(--muted);
   font-size: var(--fs-tiny);

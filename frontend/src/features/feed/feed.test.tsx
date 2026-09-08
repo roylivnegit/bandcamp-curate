@@ -2321,3 +2321,105 @@ describe('global keyboard shortcuts help', () => {
     expect(dialog).toHaveTextContent('Like the focused recommendation')
   })
 })
+
+describe('saved filter views', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const feedRoutes = (recs = [fakeRec()]) =>
+    [
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: recs.length }],
+      ['/api/recommendations', recs],
+      ['/api/facets', { tags: [{ value: 'psybient', label: 'psybient', count: 12 }], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ] as Array<[string, unknown, number?]>
+
+  it('saves the current filters under a name and lists it in the dropdown', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    const input = screen.getByPlaceholderText('Name this view — press Enter to save')
+    await user.type(input, 'House only{Enter}')
+
+    expect(await screen.findByRole('button', { name: 'House only' })).toBeInTheDocument()
+    // The trigger's own label updates to reflect the saved count.
+    expect(screen.getByRole('button', { name: 'Views (1) ▾' })).toBeInTheDocument()
+  })
+
+  it('a saved view survives closing and reopening the dropdown (persisted, not just local state)', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('button', { name: 'House only' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Views (1) ▾' }))
+    expect(await screen.findByRole('button', { name: 'House only' })).toBeInTheDocument()
+  })
+
+  it('clicking a saved view navigates to its stored filter query', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+    await user.keyboard('{Escape}')
+
+    // Clear the live filter, then use the saved view to bring it back.
+    await user.click(screen.getByRole('button', { name: 'Remove psybient' }))
+    expect(currentLocation().search).not.toContain('tag=psybient')
+
+    await user.click(screen.getByRole('button', { name: 'Views (1) ▾' }))
+    await user.click(await screen.findByRole('button', { name: 'House only' }))
+
+    expect(currentLocation().pathname).toBe('/scans/1')
+    expect(currentLocation().search).toContain('tag=psybient')
+  })
+
+  it('deletes a saved view without applying it', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+
+    await user.click(screen.getByRole('button', { name: 'Delete saved view "House only"' }))
+
+    expect(screen.queryByRole('button', { name: 'House only' })).not.toBeInTheDocument()
+    expect(screen.getByText('No saved views yet.')).toBeInTheDocument()
+    // Deleting didn't navigate anywhere.
+    expect(currentLocation().pathname).toBe('/scans/1')
+  })
+
+  it('keeps different scans on separate saved-view lists', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+
+    expect(localStorage.getItem('crate-digger.savedViews:2')).toBeNull()
+    const stored = JSON.parse(localStorage.getItem('crate-digger.savedViews:1') ?? '[]')
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ name: 'House only' })
+  })
+})

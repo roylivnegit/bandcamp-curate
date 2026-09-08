@@ -911,6 +911,7 @@ export function ScanFeedPage() {
       {showFeed && (
         <>
           <FilterBar
+            scanId={scanId}
             filters={filters}
             facetTags={facetTags}
             seedTagFacets={seedTagFacets}
