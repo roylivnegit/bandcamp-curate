@@ -2907,7 +2907,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   value and never calls `onSetReason`; Escape on a band with no reason yet reverts to blank the same
   way. 380/380 frontend tests pass, tsc/lint/build clean (chunk split intact). Merged (#170).
 
-- [~] **Confirm before deleting a saved view.** *(proposed by the hourly routine, 2026-09-08,
+- [x] **Confirm before deleting a saved view.** *(proposed by the hourly routine, 2026-09-08,
   Architect+QA-approved)* `SavedViewsDropdown.tsx`'s remove button deleted a saved filter view on a
   single click, immediately, with no confirmation and no undo — a stray click permanently destroyed
   a filter combination the user may have spent real time assembling. `DeleteScanButton.tsx`/
@@ -2921,4 +2921,4 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   window as the two existing precedents) if untouched, and also clears on dropdown close/reopen.
   Updated the existing "deletes a saved view" test to the new two-click behavior and added a new one
   mirroring `DeleteScanButton`'s own revert-on-timeout test. 381/381 frontend tests pass, tsc/lint/
-  build clean (chunk split intact). PR #171, auto-merge enabled — awaiting CI.
+  build clean (chunk split intact). Merged (#171).
