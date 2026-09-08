@@ -2580,3 +2580,31 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   given `status: 'done'` so the polling effect's `setTimeout` never arms during the assertions).
   338/338 frontend tests pass (334 + 4), tsc/lint/build clean (chunk split intact — lands inside the
   `ScanListPage` chunk, its only importer). PR: see git history.
+
+- [x] **Filter box in the Liked/Blocked side panels.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved earlier this run, queued with a scoping note in the "Sort control on the
+  scans list" entry above — picked up as this run's next task rather than left for later)*
+  `LikedPanel`/`BlockedPanel` (`SidePanels.tsx`) already hold their full item list in memory (used
+  for the existing "Show more"/`SIDEPANEL_PAGE_SIZE` slicing), with no way to search it — finding one
+  entry among many meant clicking "Show more" repeatedly and scanning by eye.
+  Done, following QA's own scoping note (extract the shared logic first, then wire both panels, to
+  keep it inside one sitting instead of copy-pasting near-identical filter code twice): new
+  `lib/panelFilter.ts` — pure `matchesPanelQuery(fields, query)`, a case-insensitive substring match
+  against any of the given fields, same "empty query matches everything" convention as
+  `lib/quickFilter.ts`'s `matchesQuery`. Both panels get a `query` state and a search `<input>`
+  (`aria-label="Search liked items"` / `"Search blocked artists"`), filtering **before** the existing
+  slice — QA's flagged gotcha: filtering `visible` after the slice would have silently shown fewer
+  real matches than `SIDEPANEL_PAGE_SIZE` implies. `BlockedPanel` filters before its existing
+  `byExpirySoonestFirst` sort, not after (order doesn't matter for correctness there, but matches the
+  existing code's "filter, then sort" shape). Each panel also gained the QA-flagged **third**
+  empty-state branch: "nothing at all" (existing copy, search box hidden — no point searching an
+  empty list) vs. "items exist but none match" (new "No matches for &ldquo;query&rdquo;." message,
+  search box still shown so it can be cleared) vs. the normal list. `Show more`'s visibility check
+  now compares against the filtered count, not the raw item count. Covered by `lib/
+  panelFilter.test.ts` (4 unit tests: cross-field match, no-match, empty/whitespace query passthrough,
+  null/undefined field tolerance) and 6 new integration tests in `SidePanels.test.tsx` (3 per panel):
+  narrows to matching rows by the right fields (title/band name for Liked; band name/reason for
+  Blocked); shows the distinct no-match message instead of the "nothing yet" one, with zero action
+  buttons rendered; no search box at all when the list itself is empty. 348/348 frontend tests pass
+  (338 + 10), tsc/lint/build clean (chunk split intact — the new `lib/panelFilter.ts` lands inside the
+  `ScanFeedPage` chunk, `SidePanels.tsx`'s only importer). PR: see git history.

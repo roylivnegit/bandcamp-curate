@@ -53,6 +53,40 @@ describe('LikedPanel row cap', () => {
   })
 })
 
+describe('LikedPanel search', () => {
+  it('narrows to matching rows by title or band name', () => {
+    const items = makeLiked(3)
+    items[0].title = 'Eyes of Infinity'
+    items[1].title = 'Minds Collide'
+    items[2].band_name = 'Infinity Records'
+    render(<LikedPanel items={items} onUnlike={() => {}} busy={() => false} />)
+
+    fireEvent.change(screen.getByLabelText('Search liked items'), { target: { value: 'infinity' } })
+
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.getByText('Infinity Records')).toBeInTheDocument()
+    expect(screen.queryByText('Minds Collide')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'unlike' })).toHaveLength(2)
+  })
+
+  it('shows a distinct message when nothing matches, not the "nothing liked yet" one', () => {
+    render(<LikedPanel items={makeLiked(3)} onUnlike={() => {}} busy={() => false} />)
+
+    fireEvent.change(screen.getByLabelText('Search liked items'), { target: { value: 'nope' } })
+
+    expect(screen.getByText('No matches for “nope”.')).toBeInTheDocument()
+    expect(screen.queryByText(/Nothing liked yet/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'unlike' })).not.toBeInTheDocument()
+  })
+
+  it('shows no search box at all when there is nothing liked', () => {
+    render(<LikedPanel items={[]} onUnlike={() => {}} busy={() => false} />)
+
+    expect(screen.queryByLabelText('Search liked items')).not.toBeInTheDocument()
+    expect(screen.getByText(/Nothing liked yet/)).toBeInTheDocument()
+  })
+})
+
 describe('BlockedPanel row cap', () => {
   it('renders only the first page of rows, with a Show more button', () => {
     render(
@@ -199,6 +233,53 @@ describe('BlockedPanel reason', () => {
     fireEvent.blur(input)
 
     expect(onSetReason).not.toHaveBeenCalled()
+  })
+})
+
+describe('BlockedPanel search', () => {
+  it('narrows to matching rows by band name or reason', () => {
+    const items = makeBlocked(3)
+    items[0].band_name = 'Noisy Label'
+    items[1].band_name = 'Quiet Label'
+    items[1].reason = 'too repetitive'
+    items[2].band_name = 'Another Act'
+    render(
+      <BlockedPanel items={items} onUnblock={() => {}} onRenew={() => {}} onSetReason={() => {}} busy={() => false} />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Search blocked artists'), { target: { value: 'repetitive' } })
+
+    expect(screen.getByText(/Quiet Label/)).toBeInTheDocument()
+    expect(screen.queryByText(/Noisy Label/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Another Act/)).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'unblock' })).toHaveLength(1)
+  })
+
+  it('shows a distinct message when nothing matches, not the "nothing blocked yet" one', () => {
+    render(
+      <BlockedPanel
+        items={makeBlocked(3)}
+        onUnblock={() => {}}
+        onRenew={() => {}}
+        onSetReason={() => {}}
+        busy={() => false}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Search blocked artists'), { target: { value: 'nope' } })
+
+    expect(screen.getByText('No matches for “nope”.')).toBeInTheDocument()
+    expect(screen.queryByText(/Nothing blocked yet/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'unblock' })).not.toBeInTheDocument()
+  })
+
+  it('shows no search box at all when there is nothing blocked', () => {
+    render(
+      <BlockedPanel items={[]} onUnblock={() => {}} onRenew={() => {}} onSetReason={() => {}} busy={() => false} />,
+    )
+
+    expect(screen.queryByLabelText('Search blocked artists')).not.toBeInTheDocument()
+    expect(screen.getByText(/Nothing blocked yet/)).toBeInTheDocument()
   })
 })
 
