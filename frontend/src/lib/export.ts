@@ -1,11 +1,21 @@
 import type { Recommendation } from '../api/types'
 
-/** RFC-4180 field escaping: wrap in quotes and double any embedded quote
- *  whenever the value contains a comma, quote, or line break — the
- *  characters that would otherwise break a naive comma-split read. */
+/* Hoisted per rule 9 (js-hoist-regexp, frontend/CLAUDE.md). Matches the
+ * leading character a spreadsheet app (Excel/Sheets) treats as a formula
+ * trigger: a Bandcamp band/track title starting with one of these would
+ * otherwise execute as a formula instead of displaying as text. */
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/
+
+/** RFC-4180 field escaping, plus a CSV-injection guard: a value starting
+ *  with `=`, `+`, `-`, `@`, tab, or CR gets a leading `'` so a spreadsheet
+ *  app renders it as text rather than executing it as a formula. Then wraps
+ *  in quotes and doubles any embedded quote whenever the (possibly
+ *  guarded) value contains a comma, quote, or line break — the characters
+ *  that would otherwise break a naive comma-split read. */
 function csvField(value: string): string {
-  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
-  return value
+  const guarded = FORMULA_TRIGGER.test(value) ? `'${value}` : value
+  if (/[",\r\n]/.test(guarded)) return `"${guarded.replace(/"/g, '""')}"`
+  return guarded
 }
 
 const HEADERS = ['Rank', 'Type', 'Title', 'Artist', 'Score', 'Co-owners', 'Genre match', 'URL']

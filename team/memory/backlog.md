@@ -298,6 +298,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   filter key finds nothing under it, confirming no stale cross-filter restore. 70/70 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
+- [x] **CSV export is vulnerable to formula injection.** *(proposed by the hourly routine,
+  2026-09-08, Architect+QA-approved, security fix — shipped as this run's Option C follow-through
+  rather than left queued)* `frontend/src/lib/export.ts`'s `csvField()` only quoted on embedded
+  quote/comma/CR/LF — a band or track title starting with `=`, `+`, `-`, or `@` (or a leading
+  tab/CR) opens as an executable formula instead of plain text when the exported CSV is opened in
+  Excel/Sheets, the standard CSV-injection failure mode.
+  Done: `csvField()` now prefixes any value matching a new leading `FORMULA_TRIGGER` regex
+  (`^[=+\-@\t\r]`) with a single `'` before the existing quote-wrapping logic runs — the standard
+  mitigation, applied only to the leading character so an interior `=`/`+`/etc. (e.g. "A=B live
+  set") is untouched. Covered by three new tests in `export.test.ts`: a title crafted as a formula
+  payload (`=cmd|" /C calc"!A1`) round-trips with a leading `'` and no longer starts with `=`;
+  `+`/`-`/`@`/tab leading characters across two rows are all guarded the same way; a non-leading
+  `=` is left alone. 374/374 frontend tests pass, tsc/lint/build clean (chunk split intact — this
+  is a pure-logic change in an already-imported file, no new import graph). PR #164.
+  **Two sibling proposals from the same Product round**, picked up as this run's next two tasks:
+
 - [x] **`exportFilename`'s slugify strips all non-ASCII, silently reintroducing a same-day
   filename collision.** *(proposed by the hourly routine, 2026-09-08, Architect+QA-approved;
   sibling of the CSV formula-injection fix in PR #164 from the same Product round)*
@@ -319,9 +335,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   non-Latin name produces the identical filename every time (deterministic, not random); the
   existing all-ASCII-punctuation case still falls back to the bare generic form. 374/374 frontend
   tests pass, tsc/lint/build clean (chunk split intact — pure-logic change in an already-imported
-  file). PR: see git history.
-  **One sibling proposal from the same Product round still queued** (see PR #164's entry above):
-  `savedViews.ts`'s `saveView()` has no duplicate-name check.
+  file). PR #165.
+
+- [x] **`savedViews.ts`'s `saveView()` has no duplicate-name check.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved; third sibling proposal from the same round as PR
+  #164/#165)* Unlike the scan list, which already warns on a duplicate scan name
+  (`isDuplicateScanName`/`NewScanForm`), `SavedViewsDropdown`'s name input let a user save two
+  views both called e.g. "faves" with no warning — indistinguishable afterward when picking one
+  to apply or delete.
+  Done: reused the existing `isDuplicateScanName(name, existingNames)` from `lib/format.ts`
+  as-is (no new matcher needed — it's already generic over "a name" and "a list of existing
+  names", not scan-specific) in `SavedViewsDropdown.tsx`, checked against the currently-open
+  dropdown's own `views` list. Shows the identical non-blocking `.hint` pattern `NewScanForm`
+  uses — warns, never blocks the save, matching the QA note's "warn/reject" landing on "warn"
+  to mirror the scan-list precedent exactly rather than inventing a stricter rejection behavior.
+  Covered by a new test in `feed.test.tsx`'s "saved filter views" block: saving a view, then
+  typing a case/whitespace-different repeat of its name shows the warning, and pressing Enter
+  anyway still saves it as a second, distinct view (2 total) rather than being blocked. 372/372
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR #166.
+  All three sibling proposals from this Product round (#164, #165, #166) are now done.
 
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
