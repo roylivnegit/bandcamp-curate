@@ -1266,3 +1266,53 @@ async def test_neighbour_size_report_empty_without_neighbours(session: AsyncSess
     scan = await ensure_collection_scan(session, user)
 
     assert await neighbour_size_report(session, scan, user) == []
+
+
+async def test_duplicate_like_rejected_at_the_db_level(session: AsyncSession) -> None:
+    # Same NULL-pattern gap `FanItem.uq_fan_item` had (see test_bandcamp_mapper.py's
+    # test_duplicate_fan_item_rejected_at_the_db_level) -- bypasses the API's
+    # get-or-create path entirely, exercising the DB constraint itself.
+    from sqlalchemy.exc import IntegrityError
+
+    fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(fan)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=fan.id)
+    session.add(user)
+    band = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
+    session.add(band)
+    await session.flush()
+    album = Album(bandcamp_id=1, title="A", band_id=band.id)
+    session.add(album)
+    await session.flush()
+
+    session.add(Like(user_id=user.id, item_type=ItemType.ALBUM, album_id=album.id))
+    await session.flush()
+
+    session.add(Like(user_id=user.id, item_type=ItemType.ALBUM, album_id=album.id))
+    with pytest.raises(IntegrityError):
+        await session.flush()
+
+
+async def test_duplicate_recommendation_rejected_at_the_db_level(session: AsyncSession) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(fan)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=fan.id)
+    session.add(user)
+    band = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
+    session.add(band)
+    await session.flush()
+    album = Album(bandcamp_id=1, title="A", band_id=band.id)
+    session.add(album)
+    await session.flush()
+    scan = await ensure_collection_scan(session, user)
+
+    session.add(Recommendation(scan_id=scan.id, item_type=ItemType.ALBUM, album_id=album.id))
+    await session.flush()
+
+    session.add(Recommendation(scan_id=scan.id, item_type=ItemType.ALBUM, album_id=album.id))
+    with pytest.raises(IntegrityError):
+        await session.flush()
