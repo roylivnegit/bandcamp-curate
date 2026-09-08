@@ -116,9 +116,8 @@ async def _seed_ids(session: AsyncSession, scan: Scan, me: Fan) -> tuple[set[int
     """(seed_album_ids, seed_track_ids) — the ids whose supporters form this
     scan's taste-neighbour set.
 
-    collection → your owned albums (album-level only — owned standalone tracks
-    don't yet feed neighbours here); custom → the scan's resolved album AND
-    track seeds, any mix.
+    collection → your owned albums AND standalone tracks; custom → the scan's
+    resolved album AND track seeds, any mix.
     """
     if scan.kind == str(ScanKind.COLLECTION):
         album_ids = await _scalar_set(
@@ -129,7 +128,15 @@ async def _seed_ids(session: AsyncSession, scan: Scan, me: Fan) -> tuple[set[int
                 FanItem.album_id.isnot(None),
             ),
         )
-        return album_ids, set()
+        track_ids = await _scalar_set(
+            session,
+            select(FanItem.track_id).where(
+                FanItem.fan_id == me.id,
+                FanItem.is_wishlist.is_(False),
+                FanItem.track_id.isnot(None),
+            ),
+        )
+        return album_ids, track_ids
     album_ids = await _scalar_set(
         session,
         select(ScanSeed.resolved_album_id).where(
@@ -839,12 +846,17 @@ async def curate(
 
 
 async def seed_tags(session: AsyncSession, user: User) -> list[tuple[str, int]]:
-    """Genres of your own crawled albums (the seeds), with how many albums carry each.
+    """Genres of your own crawled albums and tracks (the seeds), with how many
+    items carry each.
 
-    These are the values the "exclude by seed genre" filter offers.
+    These are the values the "exclude by seed genre" filter offers. Combines
+    album-tag and track-tag matches — an inner join on AlbumTag alone never
+    matches a standalone owned track (its album_id is NULL), so a genre
+    carried only by a track silently never showed up here. Same bug class
+    already fixed for GET /api/facets's `tags` list in app/api/feed.py.
     """
     me = await get_me(session, user)
-    rows = (
+    album_rows = (
         await session.execute(
             select(Tag.name, func.count(func.distinct(AlbumTag.album_id)))
             .select_from(FanItem)
@@ -852,10 +864,22 @@ async def seed_tags(session: AsyncSession, user: User) -> list[tuple[str, int]]:
             .join(Tag, Tag.id == AlbumTag.tag_id)
             .where(FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False))
             .group_by(Tag.name)
-            .order_by(func.count(func.distinct(AlbumTag.album_id)).desc(), Tag.name)
         )
     ).all()
-    return [(name, n) for name, n in rows]
+    track_rows = (
+        await session.execute(
+            select(Tag.name, func.count(func.distinct(TrackTag.track_id)))
+            .select_from(FanItem)
+            .join(TrackTag, TrackTag.track_id == FanItem.track_id)
+            .join(Tag, Tag.id == TrackTag.tag_id)
+            .where(FanItem.fan_id == me.id, FanItem.is_wishlist.is_(False))
+            .group_by(Tag.name)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for name, n in (*album_rows, *track_rows):
+        counts[name] = counts.get(name, 0) + n
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
 # Upper bounds of the recorded-collection-size buckets `neighbour_size_report` groups
@@ -971,7 +995,7 @@ async def cold_start_diagnostics(
     seed_album_ids, seed_track_ids = await _seed_ids(session, scan, me)
     neighbours = await _scan_neighbours(session, seed_album_ids, seed_track_ids, me)
 
-    reasons = {"owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0}
+    reasons = {"owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0, "liked": 0}
     if not neighbours:
         return ColdStartDiagnostics(neighbour_count=0, candidates=0, excluded_by_reason=reasons)
 
@@ -1038,6 +1062,26 @@ async def cold_start_diagnostics(
     bl_album_ids = await _scalar_set(session, select(Blacklist.album_id).where(*bl_where))
     bl_track_ids = await _scalar_set(session, select(Blacklist.track_id).where(*bl_where))
     bl_band_ids = await _scalar_set(session, select(Blacklist.band_id).where(*bl_where))
+    # Liked items/bands (see build_exclusions — a like excludes the item AND its
+    # band). Missing this bucket used to leave a liked candidate unaccounted for
+    # in every reason count, misleadingly implying nothing excluded it.
+    liked_album_ids = await _scalar_set(
+        session, select(Like.album_id).where(Like.user_id == user.id)
+    )
+    liked_track_ids = await _scalar_set(
+        session, select(Like.track_id).where(Like.user_id == user.id)
+    )
+    liked_band_ids = await _scalar_set(
+        session,
+        select(Album.band_id).select_from(Like)
+        .join(Album, Album.id == Like.album_id)
+        .where(Like.user_id == user.id),
+    ) | await _scalar_set(
+        session,
+        select(Track.band_id).select_from(Like)
+        .join(Track, Track.id == Like.track_id)
+        .where(Like.user_id == user.id),
+    )
 
     def _is_followed(band_id: int | None, url: str | None) -> bool:
         return band_id in followed_band_ids or url_host(url) in followed_hosts
@@ -1051,6 +1095,8 @@ async def cold_start_diagnostics(
             reasons["followed"] += 1
         if album_id in bl_album_ids or band_id in bl_band_ids:
             reasons["blacklisted"] += 1
+        if album_id in liked_album_ids or band_id in liked_band_ids:
+            reasons["liked"] += 1
 
     for track_id, band_id, url in track_rows:
         if track_id in my_owned_tracks:
@@ -1061,6 +1107,8 @@ async def cold_start_diagnostics(
             reasons["followed"] += 1
         if track_id in bl_track_ids or band_id in bl_band_ids:
             reasons["blacklisted"] += 1
+        if track_id in liked_track_ids or band_id in liked_band_ids:
+            reasons["liked"] += 1
 
     return ColdStartDiagnostics(
         neighbour_count=len(neighbours), candidates=candidates, excluded_by_reason=reasons

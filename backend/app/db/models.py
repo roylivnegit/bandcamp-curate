@@ -17,11 +17,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -63,6 +65,10 @@ class Album(Base, TimestampMixin):
     url: Mapped[str | None] = mapped_column(String(512), index=True)
     title: Mapped[str | None] = mapped_column(String(512))
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)
+    # Bandcamp's opaque art asset id (`art_id` in the page JSON) — combine with a
+    # size code to build an image URL, e.g. f"https://f4.bcbits.com/img/a{art_id}_10.jpg".
+    # Not a URL itself: Bandcamp's own asset host can change, the id doesn't.
+    art_id: Mapped[int | None] = mapped_column(BigInteger)
 
     band: Mapped["Band | None"] = relationship(back_populates="albums")
     tracks: Mapped[list["Track"]] = relationship(back_populates="album")
@@ -79,6 +85,14 @@ class Track(Base, TimestampMixin):
     title: Mapped[str | None] = mapped_column(String(512))
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id"), index=True)
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), index=True)
+    # See Album.art_id — a standalone track (or single) can carry its own art,
+    # separate from any parent album's.
+    art_id: Mapped[int | None] = mapped_column(BigInteger)
+    # Position within its album's tracklist and length in seconds. Only ever
+    # populated from an album page's trackinfo[] (ingest_album) — a standalone
+    # track page carries neither field.
+    track_num: Mapped[int | None] = mapped_column(Integer)
+    duration: Mapped[float | None] = mapped_column(Float)
 
     album: Mapped["Album | None"] = relationship(back_populates="tracks")
     band: Mapped["Band | None"] = relationship(back_populates="tracks")
@@ -141,8 +155,36 @@ class FanItem(Base):
     """Ownership edge: a fan owns an album or a track."""
 
     __tablename__ = "fan_items"
+    # NOT a plain UniqueConstraint on (fan_id, item_type, album_id, track_id) --
+    # an album row always has track_id NULL and a track row always has album_id
+    # NULL, and standard SQL treats NULL as distinct from NULL even inside a
+    # unique constraint, so that constraint never actually rejected a duplicate
+    # (verified: two identical album FanItem rows both insert without error).
+    # `_add_fan_item`/`_add_edge_or_false` (app/bandcamp/mapper.py) rely on this
+    # as their concurrent-worker race backstop -- two crawl workers ingesting
+    # overlapping collection pages for the same fan is the common case, not the
+    # exotic one -- so the race silently produced duplicate rows, inflating the
+    # owned/wishlist counts `GET /api/stats` and `neighbour_size_report` compute.
+    # Two partial unique indexes (one per item type) close the gap for real;
+    # `item_type` itself is redundant once split this way, since album_id is only
+    # ever set on an album row and track_id only ever on a track row.
     __table_args__ = (
-        UniqueConstraint("fan_id", "item_type", "album_id", "track_id", name="uq_fan_item"),
+        Index(
+            "uq_fan_item_album",
+            "fan_id",
+            "album_id",
+            unique=True,
+            sqlite_where=text("track_id IS NULL"),
+            postgresql_where=text("track_id IS NULL"),
+        ),
+        Index(
+            "uq_fan_item_track",
+            "fan_id",
+            "track_id",
+            unique=True,
+            sqlite_where=text("album_id IS NULL"),
+            postgresql_where=text("album_id IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -197,6 +239,12 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(256))
     fan_id: Mapped[int | None] = mapped_column(ForeignKey("fans.id"), unique=True, index=True)
     bandcamp_fan_url: Mapped[str | None] = mapped_column(String(512))
+    # Login lockout: a failed login increments the counter; hitting
+    # `Settings.auth_login_max_attempts` sets `locked_until` (mirrors
+    # `Blacklist.expires_at` — expiry is a plain timestamp comparison at read
+    # time, no sweeper job needed). A successful login resets both.
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ── Curation & control ───────────────────────────────────────────────────────
@@ -221,8 +269,30 @@ class Like(Base):
     reflects the real action."""
 
     __tablename__ = "likes"
+    # NOT a plain UniqueConstraint on (user_id, item_type, album_id, track_id) --
+    # same NULL-pattern gap as `FanItem.uq_fan_item` had (see its comment): an
+    # album row always has track_id NULL and a track row always has album_id
+    # NULL, and standard SQL treats NULL as distinct from NULL even inside a
+    # unique constraint, so that shape never actually rejects a duplicate.
+    # `item_type` is redundant once split this way, since album_id is only ever
+    # set on an album row and track_id only ever on a track row.
     __table_args__ = (
-        UniqueConstraint("user_id", "item_type", "album_id", "track_id", name="uq_like_item"),
+        Index(
+            "uq_like_item_album",
+            "user_id",
+            "album_id",
+            unique=True,
+            sqlite_where=text("track_id IS NULL"),
+            postgresql_where=text("track_id IS NULL"),
+        ),
+        Index(
+            "uq_like_item_track",
+            "user_id",
+            "track_id",
+            unique=True,
+            sqlite_where=text("album_id IS NULL"),
+            postgresql_where=text("album_id IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -317,9 +387,24 @@ class Recommendation(Base):
     """A computed feed entry with an explainable score. Belongs to one scan."""
 
     __tablename__ = "recommendations"
+    # Same NULL-pattern gap as `FanItem.uq_fan_item`/`Like.uq_like_item` -- see
+    # their comments. `item_type` is redundant once split this way.
     __table_args__ = (
-        UniqueConstraint(
-            "scan_id", "item_type", "album_id", "track_id", name="uq_recommendation_item"
+        Index(
+            "uq_recommendation_item_album",
+            "scan_id",
+            "album_id",
+            unique=True,
+            sqlite_where=text("track_id IS NULL"),
+            postgresql_where=text("track_id IS NULL"),
+        ),
+        Index(
+            "uq_recommendation_item_track",
+            "scan_id",
+            "track_id",
+            unique=True,
+            sqlite_where=text("album_id IS NULL"),
+            postgresql_where=text("album_id IS NULL"),
         ),
     )
 
@@ -370,6 +455,14 @@ class CrawlFrontier(Base, TimestampMixin):
     # Distance from the seed (seed=0). Bounds the supporter→collection fan-out.
     depth: Mapped[int] = mapped_column(Integer, default=0, index=True)
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Consecutive TimeoutErrors, independent of `attempts` (the fairness-pass
+    # counter, bumped on every claim including an ordinary `mark_partial`
+    # re-page). A large collection legitimately needs several claims to fully
+    # page, which used to push `attempts` past `MAX_ENTRY_TIMEOUTS` with zero
+    # real timeouts — the very next timeout then failed it permanently instead
+    # of allowing the intended number of retries. Reset to 0 by `mark_done`/
+    # `mark_partial` (real progress), incremented only in the TimeoutError path.
+    timeout_count: Mapped[int] = mapped_column(Integer, default=0)
     # Resumable-pagination bookmark. A fan collection can run to thousands of items
     # (p90 here is ~1,700), far more than one job should page in one sitting, so a
     # visit pages a bounded slice and parks the next-page tokens here; the entry

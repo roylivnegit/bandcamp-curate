@@ -85,3 +85,105 @@ describe('Dropdown arrow-key navigation', () => {
     expect(input).toHaveFocus()
   })
 })
+
+describe('Dropdown type-ahead', () => {
+  function renderOpenLetterDropdown() {
+    render(
+      <Dropdown label="Genre">
+        {() => (
+          <div>
+            <button type="button" className="ddrow">
+              Apple
+            </button>
+            <button type="button" className="ddrow">
+              Banana
+            </button>
+            <button type="button" className="ddrow">
+              Avocado
+            </button>
+          </div>
+        )}
+      </Dropdown>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Genre' }))
+    return screen.getAllByRole('button', { name: /^(Apple|Banana|Avocado)$/ })
+  }
+
+  it('jumps to the next row starting with the pressed letter, cycling on repeat presses', () => {
+    const rows = renderOpenLetterDropdown()
+    const [apple, , avocado] = rows
+    apple.focus()
+
+    fireEvent.keyDown(apple, { key: 'a' })
+    expect(avocado).toHaveFocus()
+
+    fireEvent.keyDown(avocado, { key: 'a' })
+    expect(apple).toHaveFocus()
+  })
+
+  it('ignores a letter key held with a modifier', () => {
+    const rows = renderOpenLetterDropdown()
+    const apple = rows[0]
+    apple.focus()
+
+    fireEvent.keyDown(apple, { key: 'a', ctrlKey: true })
+
+    expect(apple).toHaveFocus()
+  })
+})
+
+describe('Dropdown open/close focus management', () => {
+  it('moves focus to the first row when the panel opens', () => {
+    const rows = renderOpenDropdown()
+    expect(rows[0]).toHaveFocus()
+  })
+
+  it('restores focus to the trigger button on Escape', () => {
+    renderOpenDropdown()
+    const trigger = screen.getByRole('button', { name: 'Sort' })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(trigger).toHaveFocus()
+  })
+
+  it('restores focus to the trigger button after selecting a row (the panel closing programmatically)', () => {
+    render(
+      <Dropdown label="Sort">
+        {(close) => (
+          <button type="button" className="ddrow" onClick={close}>
+            Newest
+          </button>
+        )}
+      </Dropdown>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Sort' })
+    fireEvent.click(trigger)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Newest' }))
+
+    expect(trigger).toHaveFocus()
+  })
+
+  it('does not steal focus back to the trigger on an outside click', () => {
+    render(
+      <div>
+        <Dropdown label="Sort">
+          {() => (
+            <button type="button" className="ddrow">
+              Newest
+            </button>
+          )}
+        </Dropdown>
+        <button type="button">Elsewhere</button>
+      </div>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Sort' }))
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' })
+    elsewhere.focus()
+
+    fireEvent.mouseDown(elsewhere)
+
+    expect(elsewhere).toHaveFocus()
+  })
+})

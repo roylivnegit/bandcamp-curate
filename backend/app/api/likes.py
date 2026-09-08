@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import get_current_user
+from app.curation.generation import bump_generations
 from app.db.models import Album, Band, Like, Recommendation, Scan, Track, User
 from app.db.session import get_session
 from app.enums import ItemType
@@ -80,6 +81,18 @@ async def like(
     current_user: User = Depends(get_current_user),
 ) -> LikeOut:
     item_type = str(ItemType.ALBUM if payload.album_id is not None else ItemType.TRACK)
+    if payload.album_id is not None:
+        found = (
+            await session.execute(select(Album.id).where(Album.id == payload.album_id))
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(status_code=404, detail="album not found")
+    else:
+        found = (
+            await session.execute(select(Track.id).where(Track.id == payload.track_id))
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(status_code=404, detail="track not found")
     existing = (
         await session.execute(
             select(Like).where(
@@ -126,6 +139,10 @@ async def like(
                 Recommendation.track_id == payload.track_id,
             )
         )
+    # Without this, another already-open session (a different device, a
+    # second tab) keeps its cached ETag for these scans indefinitely — the
+    # rows changed but nothing told its cache so.
+    await bump_generations(session, user_scan_ids)
     await session.commit()
     rows = await _like_rows(session, current_user.id)
     match = next(
@@ -154,5 +171,9 @@ async def unlike(
     if existing is None:
         raise HTTPException(status_code=404, detail="not liked")
     await session.delete(existing)
+    # No rows change here (curation just won't exclude this item/band next
+    # time it actually re-curates), but bump anyway — same reasoning as block.
+    user_scan_ids = select(Scan.id).where(Scan.user_id == current_user.id)
+    await bump_generations(session, user_scan_ids)
     await session.commit()
     return {"unliked": True}

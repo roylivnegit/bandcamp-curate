@@ -87,7 +87,10 @@ export function useFeedFilters(scanId: number | null) {
 
   const label = useMemo<LabelFilter | null>(() => {
     const id = searchParams.get(LABEL_ID)
-    if (id === null) return null
+    // `Number('')` is `0`, and `Number.isInteger(0)` is true, so an empty
+    // `label_id=` (a hand-edited or partially-stripped bookmarked URL) would
+    // otherwise parse as a real filter on band id 0 instead of "no filter".
+    if (id === null || id === '') return null
     const parsed = Number(id)
     if (!Number.isInteger(parsed)) return null
     return { id: parsed, name: searchParams.get(LABEL_NAME) ?? 'unknown' }
@@ -272,6 +275,29 @@ export function useFeedFilters(scanId: number | null) {
     [setSearchParams],
   )
 
+  /** Drops one or more `tag=` (include-mode) entries in a single update — used
+   *  to auto-clear a stale filter (a tag that no longer appears in the scan's
+   *  current recommendations, e.g. after a recompute) rather than leaving it
+   *  silently matching nothing. Deliberately only ever called with `by`-mode
+   *  keys: an `exclude_tag` for a value that's currently absent is a harmless
+   *  no-op, not a "silently empty feed" bug, so it's left alone. */
+  const pruneTags = useCallback(
+    (stale: string[]) => {
+      if (stale.length === 0) return
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          const map = readModes(next, TAG, EXCLUDE_TAG)
+          for (const t of stale) delete map[t]
+          writeModes(next, TAG, EXCLUDE_TAG, map)
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
+
   const reset = useCallback(() => {
     setSearchParams(
       (prev) => {
@@ -299,6 +325,7 @@ export function useFeedFilters(scanId: number | null) {
     includeTag,
     toggleTagMode,
     removeTag,
+    pruneTags,
     commitTags,
     addContains,
     toggleContainsMode,

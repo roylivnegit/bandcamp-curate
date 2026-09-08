@@ -490,6 +490,43 @@ async def test_reuse_skips_the_fetch_and_replays_the_fanout(
         assert album_entry.status == CrawlStatus.DONE
 
 
+async def test_reused_replay_also_skips_the_seed_fan(
+    sessionmaker_: async_sessionmaker[AsyncSession],
+) -> None:
+    """The replay path (another scan already crawled this album) must agree with
+    the live crawl on skipping the seed fan — scan 2's owner is guron (fan_id
+    9985893), one of the album's 3 supporters."""
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    async with sessionmaker_() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=1)
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=2)
+        await s.commit()
+
+    async with sessionmaker_() as s:  # scan 1: the real crawl, no seed
+        await runner.process_one(
+            s, fetcher, scan_id=1, supporters_client=FakeSupportersClient(), max_depth=3
+        )
+
+    async with sessionmaker_() as s:  # scan 2: same album, owned by guron
+        second = await runner.process_one(
+            s, fetcher, scan_id=2, seed_fan_id=9985893,
+            supporters_client=FakeSupportersClient(), max_depth=3,
+        )
+    assert second is not None and second.reused is True
+
+    async with sessionmaker_() as s:
+        fans = (await s.execute(
+            select(CrawlFrontier).where(
+                CrawlFrontier.scan_id == 2,
+                CrawlFrontier.kind == CrawlKind.FAN_COLLECTION,
+            )
+        )).scalars().all()
+        assert {f.url for f in fans} == {
+            "https://bandcamp.com/moth_lord",
+            "https://bandcamp.com/deepcrate",
+        }  # guron (the seed) excluded
+
+
 async def test_the_owners_own_page_is_never_reused(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -1499,6 +1536,43 @@ async def test_crawl_album_at_max_depth_enqueues_nothing(session: AsyncSession) 
     assert await _count(session, CrawlFrontier) == 0
 
 
+async def test_crawl_album_skips_the_seed_fan_among_supporters(session: AsyncSession) -> None:
+    """guron (fan_id 9985893) is one of this album's 3 supporters in the fixture —
+    if guron is also the scan owner, their own collection must not get queued as a
+    'neighbour'; it was already crawled at depth 0."""
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    outcome = await crawl_album(
+        session, fetcher, ALBUM_URL, supporters_client=FakeSupportersClient(),
+        seed_fan_id=9985893, scan_id=SCAN,
+    )
+
+    assert outcome.supporters == 3  # still fully ingested
+    assert outcome.enqueued == 2  # moth_lord + deepcrate only
+    assert outcome.skipped_self == 1
+    fans = (
+        await session.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
+        )
+    ).scalars().all()
+    assert {f.url for f in fans} == {
+        "https://bandcamp.com/moth_lord",
+        "https://bandcamp.com/deepcrate",
+    }
+
+
+async def test_crawl_album_skips_the_seed_fan_by_url_when_fan_id_unknown(
+    session: AsyncSession,
+) -> None:
+    """The DOM-anchor fallback has no fan_id — seed_url must still catch it."""
+    fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML})
+    outcome = await crawl_album(
+        session, fetcher, ALBUM_URL, supporters_client=FakeSupportersClient(),
+        seed_url="https://bandcamp.com/guron", scan_id=SCAN,
+    )
+    assert outcome.skipped_self == 1
+    assert outcome.enqueued == 2
+
+
 async def test_crawl_track_ingests_supporters_and_enqueues_them(
     session: AsyncSession,
 ) -> None:
@@ -1545,6 +1619,27 @@ async def test_crawl_track_at_max_depth_enqueues_nothing(session: AsyncSession) 
     assert outcome.supporters == 3  # still ingested
     assert outcome.enqueued == 0
     assert await _count(session, CrawlFrontier) == 0
+
+
+async def test_crawl_track_skips_the_seed_fan_among_supporters(session: AsyncSession) -> None:
+    """guron (fan_id 9985893) is one of this track's 3 supporters in the fixture too."""
+    fetcher = FakeFetcher({TRACK_URL: TRACK_HTML})
+    outcome = await crawl_track(
+        session, fetcher, TRACK_URL, supporters_client=FakeSupportersClient(),
+        seed_fan_id=9985893, scan_id=SCAN,
+    )
+    assert outcome.supporters == 3  # still fully ingested
+    assert outcome.enqueued == 2  # tim-bruisson + synth_wanderer only
+    assert outcome.skipped_self == 1
+    fans = (
+        await session.execute(
+            select(CrawlFrontier).where(CrawlFrontier.kind == CrawlKind.FAN_COLLECTION)
+        )
+    ).scalars().all()
+    assert {f.url for f in fans} == {
+        "https://bandcamp.com/tim-bruisson",
+        "https://bandcamp.com/synth_wanderer",
+    }
 
 
 async def test_runner_dispatches_track_kind(
@@ -1636,11 +1731,12 @@ async def test_runner_threads_seed_fan_id_into_the_filter(
 async def test_budget_stops_the_run(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:
-    # Pre-log 5 provider requests, then seed. With max_requests=5 the budget is
-    # already spent, so run_until_empty must process nothing.
+    # Pre-log 5 requests attributed to THIS scan, then seed. With
+    # max_requests_per_scan=5 the budget is already spent, so run_until_empty
+    # must process nothing.
     async with sessionmaker_() as s:
         for _ in range(5):
-            s.add(ProviderUsage(provider="nimble", ok=True))
+            s.add(ProviderUsage(provider="nimble", ok=True, scan_id=SCAN))
         await seed_fan_collection(s, SEED_URL, scan_id=SCAN)
         await s.commit()
 
@@ -1648,7 +1744,7 @@ async def test_budget_stops_the_run(
     outcomes = await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
-        max_requests=5, max_iterations=25,
+        max_requests_per_scan=5, max_iterations=25,
         scan_id=SCAN,
     )
     assert outcomes == []  # budget exhausted before any work
@@ -1658,14 +1754,17 @@ async def test_budget_stops_the_run(
 
 
 async def test_budget_helpers(session: AsyncSession) -> None:
-    assert await runner.budget_exhausted(session, None) is False  # no cap
+    assert await runner.scan_budget_exhausted(session, SCAN, None) is False  # no cap
     for _ in range(3):
-        session.add(ProviderUsage(provider="nimble", ok=True))
-    session.add(ProviderUsage(provider="nimble", ok=False))  # failures don't count
+        session.add(ProviderUsage(provider="nimble", ok=True, scan_id=SCAN))
+    session.add(ProviderUsage(provider="nimble", ok=False, scan_id=SCAN))  # failures don't count
+    session.add(ProviderUsage(provider="nimble", ok=True, scan_id=SCAN + 1))  # a different scan
     await session.commit()
-    assert await runner.requests_used(session) == 3
-    assert await runner.budget_exhausted(session, 3) is True
-    assert await runner.budget_exhausted(session, 4) is False
+    assert await runner.requests_used_by_scan(session, SCAN) == 3
+    assert await runner.scan_budget_exhausted(session, SCAN, 3) is True
+    assert await runner.scan_budget_exhausted(session, SCAN, 4) is False
+    # A different scan's spend never counts against this one — no aggregation.
+    assert await runner.requests_used_by_scan(session, SCAN + 1) == 1
 
 
 async def test_page_render_fetches_are_tagged_with_their_scan(
@@ -1709,43 +1808,20 @@ async def _make_scan(session: AsyncSession, user_id: int) -> Scan:
     return scan
 
 
-async def test_user_budget_helpers(session: AsyncSession) -> None:
-    alice = await _make_user(session)
-    bob = await _make_user(session)
-    alice_scan = await _make_scan(session, alice.id)
-    bob_scan = await _make_scan(session, bob.id)
-    await session.commit()
-
-    assert await runner.user_budget_exhausted(session, alice.id, None) is False  # no cap
-    assert await runner.user_budget_exhausted(session, None, 3) is False  # no user to check
-
-    for _ in range(3):
-        session.add(ProviderUsage(provider="nimble", ok=True, scan_id=alice_scan.id))
-    session.add(ProviderUsage(provider="nimble", ok=False, scan_id=alice_scan.id))  # doesn't count
-    session.add(ProviderUsage(provider="nimble", ok=True, scan_id=bob_scan.id))  # not alice's
-    session.add(ProviderUsage(provider="nimble", ok=True))  # unattributed — nobody's
-    await session.commit()
-
-    assert await runner.user_requests_used(session, alice.id) == 3
-    assert await runner.user_requests_used(session, bob.id) == 1
-    assert await runner.user_budget_exhausted(session, alice.id, 3) is True
-    assert await runner.user_budget_exhausted(session, alice.id, 4) is False
-    assert await runner.user_budget_exhausted(session, bob.id, 3) is False
-
-
-async def test_user_budget_stops_the_run_even_without_a_global_cap(
+async def test_a_scans_own_spend_never_blocks_a_different_scan(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> None:
-    # Alice has already spent her own budget on an earlier scan; a fresh scan of
-    # hers must not process anything, even though no global `max_requests` is
-    # set and Bob (a different user) would still have plenty of room.
+    # Alice already spent 5 requests on an EARLIER scan of her own. A fresh scan
+    # (hers or anyone else's) must not inherit that spend — the budget is
+    # per-scan, not per-user and not global, so a brand new scan starts at zero
+    # even for the same owner.
     async with sessionmaker_() as s:
         alice = await _make_user(s)
         earlier = await _make_scan(s, alice.id)
         for _ in range(5):
             s.add(ProviderUsage(provider="nimble", ok=True, scan_id=earlier.id))
         new_scan = await _make_scan(s, alice.id)
-        alice_id, scan_id = alice.id, new_scan.id
+        scan_id = new_scan.id
         await seed_fan_collection(s, SEED_URL, scan_id=scan_id)
         await s.commit()
 
@@ -1753,13 +1829,12 @@ async def test_user_budget_stops_the_run_even_without_a_global_cap(
     outcomes = await runner.run_until_empty(
         sessionmaker_, fetcher, seed_url=SEED_URL,
         collection_client=FakeCollectionClient(), supporters_client=FakeSupportersClient(),
-        user_id=alice_id, max_requests_per_user=5, max_iterations=25,
+        max_requests_per_scan=5, max_iterations=25,
         scan_id=scan_id,
     )
-    assert outcomes == []  # her own budget was already exhausted
-    assert fetcher.calls == []
+    assert outcomes != []  # the new scan's own budget is untouched — it can still run
     async with sessionmaker_() as s:
-        assert await frontier.pending_count(s, scan_id=scan_id) == 1  # seed still pending
+        assert await runner.requests_used_by_scan(s, earlier.id) == 5  # unchanged
 
 
 async def test_runner_respects_max_depth(
@@ -1960,3 +2035,50 @@ async def test_an_entry_that_always_times_out_eventually_fails(
         entry = (await s.execute(select(CrawlFrontier))).scalar_one()
         assert entry.status == CrawlStatus.ERROR  # stopped being re-queued
         assert "timed out" in entry.last_error
+
+
+async def test_ordinary_reclaims_do_not_count_toward_the_timeout_cap(
+    concurrent_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """`attempts` (the fairness-pass counter) bumps on every claim, including an
+    ordinary `mark_partial` re-page — a large-but-healthy collection needs several
+    of those to fully page through, with zero real timeouts. Before `timeout_count`
+    existed, that alone could push `attempts` past `MAX_ENTRY_TIMEOUTS`, so a single
+    genuine timeout afterward failed the entry immediately instead of allowing the
+    intended number of retries."""
+    async with concurrent_sessionmaker() as s:
+        await frontier.enqueue(s, ALBUM_URL, CrawlKind.ALBUM, scan_id=SCAN)
+        await s.commit()
+
+    # Several ordinary partial-page re-claims, no timeout involved — enough to
+    # push `attempts` past MAX_ENTRY_TIMEOUTS purely from normal pagination.
+    for _ in range(runner.MAX_ENTRY_TIMEOUTS + 1):
+        async with concurrent_sessionmaker() as s:
+            entry = await frontier.claim_next(s, scan_id=SCAN)
+            await s.commit()
+            await frontier.mark_partial(s, entry, {"collection": "tok"})
+
+    async with concurrent_sessionmaker() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        assert entry.attempts > runner.MAX_ENTRY_TIMEOUTS  # the old bug's trigger
+        assert entry.timeout_count == 0  # but nothing has actually timed out
+
+    class HangsOnce(FakeFetcher):
+        async def fetch(self, request: FetchRequest) -> FetchResult:
+            import asyncio as _asyncio
+
+            await _asyncio.sleep(30)
+            return await super().fetch(request)
+
+    async with concurrent_sessionmaker() as s:
+        await runner.process_one(
+            s, HangsOnce({ALBUM_URL: ALBUM_HTML}), scan_id=SCAN,
+            supporters_client=FakeSupportersClient(), max_depth=0, entry_seconds=0.2,
+        )
+
+    async with concurrent_sessionmaker() as s:
+        entry = (await s.execute(select(CrawlFrontier))).scalar_one()
+        # One real timeout, after many ordinary re-claims, must re-queue — not
+        # fail — since only one actual timeout has happened so far.
+        assert entry.status == CrawlStatus.PENDING
+        assert entry.timeout_count == 1

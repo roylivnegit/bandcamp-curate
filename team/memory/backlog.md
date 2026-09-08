@@ -206,6 +206,190 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   explains what it recommended. Covered by
   `test_seed_tag_provenance_falls_back_to_band_tags`. PR: see git history.
 
+- [x] **"Copy link" for the current filtered feed.** *(proposed by the hourly routine,
+  2026-09-02)* Filters live in the URL now (`useFeedFilters`/`useSearchParams`), so a filtered
+  view is shareable/bookmarkable in principle, but nothing in the UI tells a reader that or
+  gives them an easy way to do it — a polished app surfaces this instead of relying on someone
+  noticing the address bar. Architect+QA: sound, testable by mocking `navigator.clipboard.
+  writeText` and asserting the button's accessible label toggles to "Copied" and back (fake
+  timers), small.
+  Done: new `components/CopyLinkButton.tsx` — reads the current route via `useLocation()`
+  (not `window.location.href`, which a `MemoryRouter`-backed test never updates; the real app's
+  `BrowserRouter` does, but building the URL from `location.pathname`/`location.search` +
+  `window.location.origin` works identically in both and is what makes this testable without a
+  browser) and calls `navigator.clipboard.writeText`. Shows "Copied" for
+  `COPY_LINK_FEEDBACK_MS` (2000ms, new in `config.ts`) on success; on a rejected write (denied
+  permission, insecure context) it silently no-ops rather than claiming a copy that didn't
+  happen. Wired into `FilterBar.tsx` next to the Liked/Blocked buttons. Covered by three new
+  tests in `CopyLinkButton.test.tsx` (standalone RTL render, no api/store mocking needed): the
+  written string is the full URL including the query string; the "Copied" confirmation reverts
+  to "Copy link" after the feedback window (`vi.useFakeTimers({ shouldAdvanceTime: true })` +
+  `advanceTimersByTimeAsync`, the same pattern the Undo-banner tests use); a rejected clipboard
+  write leaves the button reading "Copy link". 55/55 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). PR: see git history.
+
+- [x] **"?" keyboard-shortcuts help panel.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* The `l`/`b` like/block shortcuts and the Dropdown arrow-key
+  navigation both shipped but are invisible — nothing told a user they exist.
+  Done: new `components/ShortcutsHelp.tsx`, mounted once in `ScanFeedPage.tsx` (the page the
+  shortcuts it documents actually apply to). A document-level `keydown` listener (always
+  attached, not just while open, so `?` can open it from anywhere on the page) toggles the
+  panel — guarded against firing while the target is an `<input>`/`<textarea>`/
+  contenteditable element, so typing a literal `?` into the genre-search or tag-contains
+  fields doesn't hijack it. While open, `role="dialog" aria-modal aria-labelledby` plus the
+  same outside-click/Escape-close pattern `Dropdown.tsx` already uses (a `document`
+  `mousedown` listener checking `panelRef.contains`, effect-scoped to `[open]`); closing —
+  by Escape, outside click, or the panel's own Close button — restores focus to whatever
+  had it before the panel opened, via the same effect's cleanup. `ShortcutsHelp.css` adds a
+  centered, dimmed overlay; its one animation (a 150ms fade-in) needs no explicit
+  reduced-motion guard since `base.css`'s existing global block already zeroes all
+  `animation-duration`. Covered by five new tests in `ShortcutsHelp.test.tsx` (standalone RTL
+  render, no router/api mocking needed): `?` opens the panel and lists both shortcuts; `?`
+  while a text field is focused does nothing; Escape closes it and returns focus to the
+  previously-focused control; a click on the panel itself doesn't close it but a click
+  outside does; a second `?` press toggles it back closed. 60/60 frontend tests pass,
+  tsc/lint/build clean (chunk split intact — the new CSS/JS lands inside the `ScanFeedPage`
+  chunk, since that's its only importer). PR: see git history.
+
+- [x] **Roving-tabindex arrow-key navigation across feed cards.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved)* The shortcuts help panel documents `l`/`b` and
+  the Dropdown arrow-key nav, but there was no keyboard way to move *between* feed cards —
+  reaching the next one meant Tabbing through every focusable element inside the current one.
+  Done: `ScanFeedPage` keeps `activeIndex` state (an index into `rows`, reset to 0 whenever
+  `loadFirstPage` lands a fresh set, and clamped at render time so a like/block removing the
+  active row never leaves it pointing past the end) — every `FeedCard`'s `active` prop is one
+  `i === activeCardIndex` comparison in the existing `rows.map`, not a per-card scan, per the
+  Architect/QA scoping note. Rows are wrapped in a new `.cardlist` div carrying one
+  `onKeyDown`; `FeedCard`'s `<article>` gets `id={cardId}` and `tabIndex={active ? 0 : -1}`.
+  ArrowDown/ArrowUp move to the next/previous card and clamp at the ends (no wrap, unlike
+  `Dropdown`'s menu nav — a feed list has a definite start/end, not a cycling menu);
+  Home/End jump to the first/last. Scoped to fire only when the event target itself carries
+  the `card` class (mirrors `Dropdown.tsx`'s `.ddrow` scoping), so it can't hijack arrow keys
+  typed into a filter field elsewhere on the page. `ShortcutsHelp`'s existing ↑/↓ and Home/End
+  rows were reworded to cover both contexts (menus and the card list) rather than adding
+  duplicate rows. Covered by two new tests in `feed.test.tsx` with three distinct cards: only
+  the first card is a tab stop initially and ArrowDown moves both the DOM focus and the
+  `tabindex` attributes to the next card; ArrowUp/ArrowDown don't move past the first/last
+  card, and Home/End jump straight to them. `FeedCard.test.tsx` updated for the two new
+  required props. 68/68 frontend tests pass, tsc/lint/build clean (chunk split intact). PR:
+  see git history.
+
+- [x] **Resume feed scroll position across route changes.** *(proposed by the hourly routine,
+  2026-09-02)* Clicking away from the feed (or navigating between scans) and back dropped the
+  reader at the top of a long list, losing their place.
+  Two other Product proposals from this round were cut before reaching Architect+QA — both
+  turned out to already be implemented: an in-flight guard against duplicate rapid like/block
+  calls (`ScanFeedPage.tsx`'s `inFlight` ref already does this) and a pluralization util for
+  feed counts (`lib/format.ts`'s `plural()` already does this, already used everywhere counts
+  render).
+  Done: new `useResumeScroll(storageKey, ready)` hook (`features/feed/useResumeScroll.ts`).
+  `storageKey` is `crate-digger.feedScroll:<scanId><location.search>` — the filter query
+  string is already the live filter state (`useFeedFilters`/`useSearchParams`), so a different
+  filter set is simply a different `sessionStorage` key; nothing has to detect "filters
+  changed" and explicitly clear anything. A passive `scroll` listener writes
+  `window.scrollY` under that key on every scroll; a separate effect, gated on `ready`
+  (`showFeed && rows.length > 0`, not just `showFeed`, so it never fires against an empty
+  page) and guarded by a `restoredFor` ref so it applies at most once per key, reads the
+  stored value back and calls `window.scrollTo(0, y)`. Wired into `ScanFeedPage` via one
+  `useLocation()` call and one hook call. Covered by two new tests in `feed.test.tsx`:
+  scrolling, unmounting (JSDOM's stand-in for "the page goes away and comes back"), and
+  remounting the same `/scans/1` route calls `scrollTo(0, 400)`; scrolling under
+  `/scans/1?tag=psybient` and then remounting plain `/scans/1` does NOT restore — a different
+  filter key finds nothing under it, confirming no stale cross-filter restore. 70/70 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **CSV export is vulnerable to formula injection.** *(proposed by the hourly routine,
+  2026-09-08, Architect+QA-approved, security fix — shipped as this run's Option C follow-through
+  rather than left queued)* `frontend/src/lib/export.ts`'s `csvField()` only quoted on embedded
+  quote/comma/CR/LF — a band or track title starting with `=`, `+`, `-`, or `@` (or a leading
+  tab/CR) opens as an executable formula instead of plain text when the exported CSV is opened in
+  Excel/Sheets, the standard CSV-injection failure mode.
+  Done: `csvField()` now prefixes any value matching a new leading `FORMULA_TRIGGER` regex
+  (`^[=+\-@\t\r]`) with a single `'` before the existing quote-wrapping logic runs — the standard
+  mitigation, applied only to the leading character so an interior `=`/`+`/etc. (e.g. "A=B live
+  set") is untouched. Covered by three new tests in `export.test.ts`: a title crafted as a formula
+  payload (`=cmd|" /C calc"!A1`) round-trips with a leading `'` and no longer starts with `=`;
+  `+`/`-`/`@`/tab leading characters across two rows are all guarded the same way; a non-leading
+  `=` is left alone. 374/374 frontend tests pass, tsc/lint/build clean (chunk split intact — this
+  is a pure-logic change in an already-imported file, no new import graph). PR #164.
+  **Two sibling proposals from the same Product round**, picked up as this run's next two tasks:
+
+- [x] **`exportFilename`'s slugify strips all non-ASCII, silently reintroducing a same-day
+  filename collision.** *(proposed by the hourly routine, 2026-09-08, Architect+QA-approved;
+  sibling of the CSV formula-injection fix in PR #164 from the same Product round)*
+  `SLUG_UNSAFE = /[^a-z0-9]+/g` strips everything but ASCII letters/digits, so a scan named
+  entirely in a non-Latin script (Cyrillic, CJK, Hebrew, …) slugified to `''` and fell back to
+  the bare generic date-only filename — exactly the same-day collision `exportFilename` exists
+  to prevent (`CLAUDE.md`: "exporting two different scans... doesn't produce two files with the
+  identical name"). Two distinct non-Latin scan names exported the same day silently overwrote
+  each other's CSV.
+  Done: new `fallbackTag(name)` (a small djb2-style hash, base36) in `lib/export.ts`. When
+  `slugify(name)` comes back empty but the name itself isn't (checked via a new `NON_ASCII =
+  /[^\p{ASCII}]/u` — written with the `\p{ASCII}` Unicode property, not a `\x00-\x7F` character
+  class, to avoid oxlint's `no-control-regex`), `exportFilename` appends the hash instead of
+  falling back to the bare generic form. A name that's merely all-ASCII-punctuation (e.g. "???")
+  is a different case — nothing distinguishing survives to encode either way — and keeps the
+  pre-existing bare-generic-form behavior unchanged, so the existing `'???'`-fallback test still
+  passes untouched, no test weakened. Covered by 3 new tests in `export.test.ts`: two distinct
+  non-Latin names (Cyrillic, Japanese) produce two distinct, non-generic filenames; the same
+  non-Latin name produces the identical filename every time (deterministic, not random); the
+  existing all-ASCII-punctuation case still falls back to the bare generic form. 374/374 frontend
+  tests pass, tsc/lint/build clean (chunk split intact — pure-logic change in an already-imported
+  file). PR #165.
+
+- [x] **`savedViews.ts`'s `saveView()` has no duplicate-name check.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved; third sibling proposal from the same round as PR
+  #164/#165)* Unlike the scan list, which already warns on a duplicate scan name
+  (`isDuplicateScanName`/`NewScanForm`), `SavedViewsDropdown`'s name input let a user save two
+  views both called e.g. "faves" with no warning — indistinguishable afterward when picking one
+  to apply or delete.
+  Done: reused the existing `isDuplicateScanName(name, existingNames)` from `lib/format.ts`
+  as-is (no new matcher needed — it's already generic over "a name" and "a list of existing
+  names", not scan-specific) in `SavedViewsDropdown.tsx`, checked against the currently-open
+  dropdown's own `views` list. Shows the identical non-blocking `.hint` pattern `NewScanForm`
+  uses — warns, never blocks the save, matching the QA note's "warn/reject" landing on "warn"
+  to mirror the scan-list precedent exactly rather than inventing a stricter rejection behavior.
+  Covered by a new test in `feed.test.tsx`'s "saved filter views" block: saving a view, then
+  typing a case/whitespace-different repeat of its name shows the warning, and pressing Enter
+  anyway still saves it as a second, distinct view (2 total) rather than being blocked. 372/372
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR #166.
+  All three sibling proposals from this Product round (#164, #165, #166) are now done.
+
+- [x] **`POST /api/likes` 500s on a nonexistent album/track id.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved)* `likes.py`'s `like()` inserts a `Like` row with
+  zero lookup of the `Album`/`Track` it references, unlike the sibling `blacklist.py`'s `block()`
+  which already looks up the `Band` and 404s if missing. A stale client cache or a race with a
+  delete produces a raw uncaught error instead of a clean 404 (an FK violation on Postgres; QA
+  flagged that sqlite, used in this sandbox's tests, doesn't enforce FKs by default and would
+  instead silently commit an orphan row — the fix and its regression test are DB-agnostic either
+  way since they check the row exists before any insert happens).
+  Done: mirrors `blacklist.py`'s exact pattern — look up the `Album`/`Track` (whichever id is set)
+  before constructing the `Like`, `raise HTTPException(404)` if not found. Covered by
+  `test_like_nonexistent_album_returns_404` / `test_like_nonexistent_track_returns_404`.
+- [x] **Signup 500s on an over-length username.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `SignupIn.username` had no `max_length`, but `User.username` is a
+  `String(256)` column — an over-256-char username passed Pydantic, then hit the DB and raised a
+  `DataError` the existing `except IntegrityError` handler doesn't catch, producing a raw 500
+  instead of a normal validation error.
+  Done: added `max_length=256` to `SignupIn.username` — rejected with `422` before the DB is ever
+  touched, on any engine. Covered by `test_signup_rejects_overlong_username`.
+
+- [x] **`POST /api/scans/{id}/run` lets a genuinely running scan be re-queued.** *(found by the
+  hourly routine, 2026-09-08, direct source read — no Product/QA call needed)* `run_scan`
+  (`scans.py`) set `scan.status = queued` unconditionally, with no check for the current status.
+  `scan_service.claim_queued_scans` is an atomic CAS that only claims `queued` rows, and
+  `advance_scan`'s "starting fresh" reset explicitly branches on `scan.status != running` — so a
+  scripted/direct call to `/run` on a scan that's already mid-crawl (chain alive, self-
+  re-enqueuing) could flip it back to `queued`, let the poller start a *second* chain against the
+  same `scan_id`, and reset the slice counter out from under the still-running one. The UI's
+  `RetryScanButton` only ever calls this when `status === 'error'`, so this is scripted/direct-
+  caller hardening (the same class as the recompute cooldown), not a UI-reachable bug — a genuinely
+  stalled scan already self-heals via `reclaim_stalled_scans` without needing this endpoint at all.
+  Done: `run_scan` now returns `409` if `scan.status == running`, leaving the queued/error/done
+  re-run path (`test_run_requeues`) untouched. Covered by
+  `test_run_rejects_an_already_running_scan`: a scan forced to `running` status is unaffected by
+  the call (status stays `running`) and the request itself gets `409`.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
@@ -230,9 +414,22 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   `excluded_by_reason.followed` is nonzero and accounts for every candidate),
   `test_cold_start_diagnostics_no_neighbours`, and an API-level assertion in `test_stats`.
   235/235 backend tests pass, ruff clean. PR: see git history.
-  **Left open:** no frontend surfacing yet — the data is in `/api/stats` but nothing in
-  `frontend/` reads `cold_start` yet. A follow-up can add the "why is my feed empty" UI on
-  top of this without touching the backend again.
+  **Frontend follow-up landed (2026-09-02):** new `features/feed/ColdStartPanel.tsx` — a
+  pure presentational component (`{neighbour_count, candidates, excluded_*}` in, prose out,
+  matching the actual `ColdStartOut` shape exactly rather than an invented `reason` enum a
+  previous Architect+QA round had rejected) — renders under `ScanFeedPage`'s existing "No
+  recommendations in this scan yet." message (only in that branch, not the "nothing matches
+  your filters" one — a narrow filter isn't a cold-start problem). `Stats`/`ColdStart` added
+  to `api/types.ts`, mirroring `StatsOut`/`ColdStartOut` field-for-field. `ScanFeedPage` fetches
+  `/api/stats` only when `total === 0` — deliberately keyed on `total`, not `rows.length`,
+  since a like/block animates a row out of `rows` locally without moving `total`, so a
+  transient one-row gap during that animation never triggers an extra fetch. Covered by 4 new
+  tests in `ColdStartPanel.test.tsx` (standalone RTL render: renders every count and exclusion
+  reason; a distinct message when there are no neighbours at all rather than an exclusion
+  story; renders nothing for `null`/`undefined`) and 2 new integration tests in
+  `feed.test.tsx` (a `count: 0` scan shows the diagnostics with the right numbers; a scan with
+  rows never fetches `/api/stats` at all). 61/61 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). PR: see git history.
 
 - [x] **The feed can silently reflow under a user who's mid-scroll.** *(proposed by the hourly
   routine, 2026-09-02)* Done: `scans.recompute_generation` (migration `0013`, guarded), bumped
@@ -285,6 +482,12 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   and `crawl_fan_collection`'s collection/wishlist/follows pagination plus `crawl_album`/
   `crawl_track`'s supporters pagination now pass their `scan_id`. The cap no longer undercounts
   collection-heavy scans. See `CLAUDE.md` "Immediate next steps" #2. PR: see git history.
+  **Superseded (2026-09-02, Roy's own request):** both this per-user cap and the original global
+  `crawl_max_requests` are gone, replaced by a single per-scan budget
+  (`crawl_max_requests_per_scan`, default 1000) — simpler, and it's what Roy actually wanted:
+  every scan starts at zero and never inherits spend from another scan or user. Also dropped
+  level-3 crawling (`crawl_max_depth` default 3→2) in the same change, spending the freed budget
+  on more rounds of level-2 paging instead. See `CLAUDE.md`'s crawl depth/budget bullet.
 
 - [x] **A secondary budget cap** — max total frontier size, or max fetches per run, on top of
   the depth bound. Depth 3 on a popular album still fans out very wide. Same source.
@@ -400,13 +603,2421 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   proposal from the same Product round was NOT built this task (routine hit its per-run task cap)
   and is queued below: validating seed URLs before they're added to a new scan.
 
-- [ ] **Validate seed URLs before they're added.** *(proposed by the hourly routine, 2026-09-02,
-  Architect+QA-approved, not yet built)* `NewScanForm.addSeed()` accepts any non-empty string —
-  typos or non-Bandcamp links sit silently in the seed list until the backend rejects the whole
-  scan on submit. Reject anything that doesn't match a Bandcamp album/track URL shape at
-  `addSeed()` time, showing the existing `role="alert"` error styling instead of adding it to the
-  list. QA caveat: check the backend's actual URL validation (`app/bandcamp/urls.py` or wherever
-  `NewScanForm`'s submit-time validation lives today, if any) before writing the regex — don't
-  invent a stricter pattern than the API itself accepts. Verify: an RTL test types a non-Bandcamp
-  string, clicks Add, asserts the seed list stays empty and the alert text appears; a second test
-  with a valid `.../album/...` or `.../track/...` URL asserts it's added with no alert.
+- [x] **Validate seed URLs before they're added.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `NewScanForm.addSeed()` accepted any non-empty string — typos or
+  non-Bandcamp links sat silently in the seed list until the backend rejected the whole scan on
+  submit.
+  Done: added `SEED_URL_RE` in `NewScanForm.tsx`, deliberately mirroring the backend's own
+  acceptance shape — `app.crawl.scan_service._SEED_RE`
+  (`^(https?://[^/]+/(album|track)/[^/?#]+)`, any host, no bandcamp.com check) — rather than a
+  stricter, invented pattern, per the QA caveat. `addSeed()` now rejects anything that doesn't
+  match, showing the existing `role="alert"` error styling instead of adding it to the seed list;
+  a subsequent valid add clears the error. Covered by five new tests in
+  `NewScanForm.test.tsx` (a standalone RTL render, no router/api mocking needed since
+  `addSeed()`/validation has no dependency on either): a non-URL string is rejected with an
+  alert and nothing added; a well-formed but non-album/track path (`/merch/...`) is rejected the
+  same way; a valid `/album/...` URL is added with no alert; a valid `/track/...` URL is added
+  and clears an earlier error; an invalid URL submitted via Enter (not the Add button) is
+  rejected too. 52/52 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
+  history.
+
+- [x] **"Clear filters" button inside the zero-result empty state.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved)* When active filters return zero rows, the empty
+  state (`ScanFeedPage.tsx`, around the "Nothing matches these filters" message) is just text —
+  no button. The existing "Clear all filters" control in `ActivePills` (`FilterBar.tsx`) only
+  renders once 2+ filter facets are active, so a single active filter has no clear-action
+  anywhere on screen.
+  Done: added a `btn ghost` "Clear filters" button next to the empty-state message, shown only
+  when `filters.anyActive` (mirroring the existing cold-start-panel branch's condition) and
+  wired to the existing `filters.reset()` — no new state or styling. Covered by a new test in
+  `feed.test.tsx`: opening `/scans/1?tag=psybient` against a mock returning zero recommendations
+  shows the empty-filtered message and the button; clicking it clears `tag=` from the URL. 71/71
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **`useDocumentTitle` hook.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `document.title` is hardcoded to "crate digger" in `index.html` and
+  never updated, so every route/scan looks identical in the tab bar and browser history.
+  Done: new `lib/useDocumentTitle.ts` — a single effect that sets `document.title` to
+  `<title> · crate digger` (new `APP_NAME` constant in `config.ts`) whenever its `title` argument
+  is truthy, and leaves the previous title alone while it's `null`/`undefined` (a page's real
+  title, like a scan's name, is often only known after a fetch resolves — this avoids a flash of
+  bare "crate digger" in between). Wired into `ScanListPage` (`useDocumentTitle('Scans')`) and
+  `ScanFeedPage` (`useDocumentTitle(scan?.name)`). Covered by three standalone hook tests in
+  `useDocumentTitle.test.ts` (`renderHook`: sets the suffixed title; updates on a changed
+  argument; holds the previous title while the argument is null) and one integration test in
+  `feed.test.tsx` ("document title" describe block, mirroring the existing "focus on route
+  change" test's `combinedRoutes`/navigation shape): landing on `/scans` shows "Scans · crate
+  digger", clicking into a scan shows "My collection · crate digger", navigating back updates it
+  again. 74/74 frontend tests pass, tsc/lint/build clean (chunk split intact — the hook lands in
+  its own small shared chunk between the two lazy routes). PR: see git history.
+
+- [x] **Toast/notification primitive.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA: sound but flagged as two sittings' worth)* There was no shared toast/notification
+  primitive anywhere in the frontend — every screen invented its own inline `role="alert"`, and
+  `CopyLinkButton.tsx`'s clipboard-rejection catch block swallowed failure with no user feedback
+  at all (a denied-permission click looked like nothing happened).
+  Done, built as one item rather than QA's suggested (a)/(b) split: a primitive with no caller
+  wired in would have been a half-finished component sitting unused in the tree, and the wiring
+  turned out to be a two-line addition once the primitive existed, so splitting it would only
+  have deferred that trivial half to a second task for no real risk reduction.
+  `lib/toast.ts` — a module-scope `{id, message, variant}` queue behind `useSyncExternalStore`
+  (not `useState` mirroring, per QA's leakage caveat: a toast can be raised from any event
+  handler, not just one with a toast-owning component in its own render tree). `showToast(message,
+  variant?, durationMs?)` is the imperative entry point (no hook, callable from anywhere);
+  `dismissToast(id)` removes one and no-ops if it's already gone (an auto-dismiss timer and a
+  manual dismiss can race). New `components/ToastStack.tsx`, mounted once in `App.tsx` next to
+  `AppHeader` (signed-in shell only — the only current caller, `CopyLinkButton`, only renders
+  there), subscribes via `useToasts()` and renders each queued toast with `role={variant}`
+  (`'alert'` vs `'status'`, so a failure interrupts a screen reader the way `.err` elements
+  already do elsewhere, per `frontend/CLAUDE.md`'s "errors get `role=alert`" rule) plus a dismiss
+  button. New `TOAST_DURATION_MS` (4000) in `config.ts`. `CopyLinkButton.tsx`'s clipboard-rejection
+  catch now calls `showToast(..., 'alert')` instead of a bare silent return.
+  Testing hit one real cross-test leak worth recording: the queue's module scope means a toast
+  raised by a test that never even rendered `<ToastStack>` still sits in it afterward, and a
+  test that triggers one under real timers (no `vi.useFakeTimers()`) leaves a *real* pending
+  dismiss timeout that a later fake-timer test's `advanceTimersByTimeAsync` cannot touch — exactly
+  the kind of leakage QA flagged, just across tests rather than across mounts. Fixed with an
+  exported test-only `resetToastsForTests()`, called from `beforeEach` in every test file that
+  exercises `showToast`. Covered by `ToastStack.test.tsx` (renders nothing on an empty queue;
+  shows a status toast and auto-dismisses it after `TOAST_DURATION_MS`; an alert-variant toast
+  gets `role="alert"` instead of `"status"`; two toasts stack and dismiss independently) and a
+  new `CopyLinkButton.test.tsx` case (a rejected clipboard write now raises an `alert`-role toast
+  with the failure message, which itself auto-dismisses). 76/76 frontend tests pass (stable
+  across repeated runs), tsc/lint/build clean (the new files land in the eagerly-loaded shared
+  chunk via `App.tsx`, not a lazy route chunk — expected, since `ToastStack` must be mounted
+  before either route is). PR: see git history.
+
+- [x] **Live-updating relative timestamps.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Scan cards show `ago(scan.last_run_at)` ("3m ago"), but the text only
+  updates when something else forces a re-render — `ScanListPage`'s poll stops once every scan is
+  `done`, so a tab left open on a finished scan list silently goes stale.
+  Done: new `components/RelativeTime.tsx` — owns its own `window.setInterval`
+  (`RELATIVE_TIME_REFRESH_MS`, 30s, new in `config.ts`), effect-scoped per rule 7 in
+  `frontend/CLAUDE.md` (closure `id`, not a ref, so StrictMode's double-invoke can't leak the
+  first timer). Renders `ago(iso)`; no timer at all for a `null` iso, since there's nothing to
+  advance. Swapped in for the one call site, `ScanListPage.tsx`'s `{ago(scan.last_run_at)}` →
+  `<RelativeTime iso={scan.last_run_at} />`. Covered by four new tests in
+  `RelativeTime.test.tsx` (standalone RTL render, no router/api mocking needed): text advances
+  from "just now" to "1m ago" after `RELATIVE_TIME_REFRESH_MS` of fake-timer advance with no prop
+  change or remount; a `null` iso starts no interval and renders nothing; unmount clears the
+  interval; the boundary crossing lands exactly on `RELATIVE_TIME_REFRESH_MS`, not some other
+  cadence. 84/84 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
+  lands inside the `ScanListPage` chunk, its only importer). PR: see git history.
+
+- [x] **Pending-state microcopy on like/block.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved with one caveat)* `FeedCard`'s like/block buttons went `disabled` while
+  busy but kept the same label ("♥ like"), so a click read as unresponsive for roughly
+  `CARD_EXIT_MS` before the card animated out.
+  Done, addressing QA's caveat first: `ScanFeedPage.tsx`'s `busyKeys: Set<string>` (a single
+  boolean per card) became `busy: Record<string, 'like' | 'block'>`, mirroring the existing
+  `exiting` state's per-key/per-action shape — `markBusy(key, action)` now takes the action
+  (`'like' | 'block' | null`) instead of a boolean, so a card can distinguish which button is
+  in flight. `FeedCard`'s `busy: boolean` prop became `busyAction: 'like' | 'block' | null`;
+  both buttons still disable on any in-flight action (`busy = busyAction !== null`), but only
+  the acting one swaps its label — like button reads "Liking…" only when `busyAction === 'like'`,
+  block reads "Blocking…" only when `busyAction === 'block'`, so a like in flight doesn't also
+  relabel the (still-disabled) block button. Covered by four new tests in
+  `FeedCard.test.tsx`'s "pending-state microcopy" block: plain labels when nothing is busy; only
+  the like button relabels (and the block label is untouched) while a like is in flight, and
+  vice versa; both buttons are disabled while either action is in flight. 88/88 frontend tests
+  pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **"Back to top" affordance for long feeds.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* The feed grows to hundreds of rows via "load more," but there's no fast
+  way back to the filter bar/top once scrolled deep.
+  Done: new `components/ScrollTopButton.tsx` — a `useState` initialized from `window.scrollY`
+  (so a mount deep in an already-scrolled page shows correctly, not just after the next scroll
+  event) plus a passive `scroll` listener toggling visibility past `SCROLL_TOP_THRESHOLD_PX`
+  (600, new in `config.ts`). Renders `null` below the threshold rather than hiding via CSS, so
+  it's never a focusable-but-invisible control. Icon-only (`↑`, `aria-hidden`) with an
+  `aria-label="Back to top"` per the icon-only-controls rule in `frontend/CLAUDE.md`'s UI/UX
+  section. Wired into `ScanFeedPage.tsx` next to `ShortcutsHelp`; its `onClick` is a new
+  `scrollToTop` callback that calls `window.scrollTo({top:0, behavior:'smooth'})` then
+  `headingRef.current?.focus()` — the same heading ref the existing focus-on-route-change effect
+  already uses, so clicking it reads as the same kind of navigation. Covered by four standalone
+  tests in `ScrollTopButton.test.tsx` (absent below threshold, appears above it, disappears again
+  on scrolling back up, calls `onClick`) and one integration test in `feed.test.tsx`
+  ("scroll-to-top button" describe block): scrolling a real rendered feed past the threshold,
+  clicking the button, and asserting both the `scrollTo` call and that the page heading receives
+  focus. 85/85 frontend tests pass, tsc/lint/build clean (chunk split intact — the component
+  lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **Conditional GET (ETag) on `/api/recommendations` and `/api/facets`.** *(proposed by the
+  hourly routine, 2026-09-02, Architect+QA-approved with a correction)* Every feed poll re-transfers
+  the full payload even when nothing changed.
+  Done: `ETag: "gen-{scan_id}-{generation}"` (quoted per the HTTP ETag grammar; `{scan_id}` is the
+  literal string `none` for a brand-new user with no scan yet) on both responses, computed by a new
+  `_scan_generation()`/`_generation_etag()` pair in `app/api/feed.py` that reuses
+  `scans.recompute_generation` — no new state, per QA's correction that generation is per-scan, not
+  global. A matching `If-None-Match` short-circuits to a real `304` with an empty body (returning a
+  raw `Response(status_code=304, ...)`, which FastAPI passes through unvalidated even though the
+  route declares a `response_model` — returning `[]`/`{}` instead would have serialized to a
+  non-empty JSON body, which a `304` must not carry). For `/recommendations` specifically, the
+  generation is computed *before* the filtered/joined main query runs, so a cache hit skips that
+  query entirely rather than only skipping re-serialization — the actual point of the
+  optimization. `/facets`'s `seed_tags` facet (the caller's own album tags) isn't strictly tied to
+  `recompute_generation` and could in theory go stale without a recompute — noted in a comment,
+  accepted as the same scope this scan's other read endpoints already share, not worth a second
+  cache key for. Covered by `test_recommendations_etag_conditional_get` and
+  `test_facets_etag_conditional_get`: first GET returns a non-empty ETag; replaying it via
+  `If-None-Match` gets `304` with `r.content == b""`; a recompute in between changes the ETag and
+  makes the stale `If-None-Match` return a fresh `200` instead. 241/241 backend tests pass (239 +
+  2 new), ruff clean. PR: see git history.
+
+- [x] **`POST /api/blacklist` silently no-ops on a past `expires_at`.** *(found by the hourly
+  routine, 2026-09-02, Product read the actual endpoint code rather than brainstorming —
+  Architect+QA-approved)* `BlockIn.expires_at` had no lower-bound check. A past `expires_at` (a
+  date-picker typo, a client bug) created a row and returned a normal-looking `200`, but both
+  `list_blocked` and the curation exclusion query filter on `expires_at > now()` — so the band was
+  never actually excluded from recs and never showed up as blocked either. The caller believes
+  they blocked something; nothing happened, no error anywhere.
+  Done: `BlockIn` gets a `model_validator(mode="after")` (matching `LikeIn`'s existing pattern in
+  `likes.py`) rejecting a non-null `expires_at` that isn't strictly in the future — a naive
+  datetime (no tzinfo) is treated as UTC before comparing, so a bare `"2020-01-01T00:00:00"` is
+  still caught, not silently accepted as some other timezone's future. Pydantic turns the
+  `ValueError` into FastAPI's standard `422`, same as `LikeIn`'s existing one-of-album/track
+  validator. Covered by `test_block_rejects_past_expires_at`: posting a 2020 `expires_at` returns
+  `422` and confirms no row appears in `GET /api/blacklist` afterward — the existing
+  `test_block_with_expiry_round_trips` (a real future date) is untouched and still passes.
+  242/242 backend tests pass (241 + 1 new), ruff clean. PR: see git history.
+
+- [x] **`POST /api/scans` seed list has no size cap.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved)* `scan_service.create_scan` takes `urls: list[str]` and
+  inserts one `ScanSeed` row per de-duped URL with no upper bound — the same class of problem
+  `Settings.crawl_max_frontier_size` was added to solve for frontier growth *during* a crawl (see
+  CLAUDE.md "Immediate next steps" #1), but that cap doesn't cover the initial seed batch, which
+  lands straight in `ScanSeed` before crawling even starts. Add `Settings.max_scan_seeds` (default
+  e.g. 500), checked in `create_scan`, raising `ValueError` → the existing 400 handler in
+  `scans.py`. Verify: `pytest` — posting 501 seed URLs to `POST /api/scans` returns `400`; posting
+  500 still succeeds.
+  Done: `Settings.max_scan_seeds` (default 500). `create_scan` gained a keyword-only `max_seeds`
+  param, defaulting to `get_settings().max_scan_seeds` when omitted — same "default param falls
+  back to settings, tests override explicitly" shape as `frontier.enqueue`'s
+  `max_frontier_size`. The check runs after de-duplication (a scan with 501 URLs where one repeats
+  should still pass at 500 distinct seeds), raising `ValueError` which the existing `scans.py`
+  handler already turns into `400`. Covered by `test_create_scan_seed_cap`: 501 distinct seed URLs
+  → `400` with "too many seed" in the detail message; the same list trimmed to exactly 500 → `201`
+  with `seed_count == 500`. 243/243 backend tests pass (242 + 1 new), ruff clean. PR: see git
+  history.
+
+- [x] **Per-user rate limit on `POST /api/recommendations/recompute`.** *(proposed by the hourly
+  routine, 2026-09-02, Architect+QA-approved)* `app/api/feed.py`'s recompute endpoint does a full
+  unowned-catalog scoring pass with zero throttling today — confirmed live gap, not speculative.
+  No UI button calls it yet (recomputes are automatic, server-side, after each crawl slice), so
+  this guards scripted/direct callers, not a user-facing bug.
+  Done: new `Settings.recompute_cooldown_seconds` (default `0` = disabled, unchanged behavior —
+  same "off by default, an operator opts in via env" convention as
+  `crawl_max_requests_per_user`/`crawl_max_frontier_size` above). Chose default-off deliberately
+  after finding several existing tests call recompute twice in the same test with no delay between
+  calls (e.g. `test_like_removes_and_excludes_then_unlike`'s like → recompute → unlike → recompute
+  round trip) — a nonzero default would have broken them, and weakening those tests to work around
+  a new feature would be backwards. When enabled, `app/api/feed.py` tracks `_last_recompute_at`
+  per user id (a module-scope in-memory dict — this is scripted-caller hardening, not something
+  that needs to survive a restart) and rejects a call inside the cooldown window with `429` + a
+  `Retry-After` header
+  (seconds remaining, rounded up). The timestamp is recorded *before* `curate()` runs, so two
+  rapid calls can't both slip past the check while the first is still in flight. Time comes from a
+  small `_now()` helper (not an inline `datetime.now(UTC)`) specifically so tests can monkeypatch
+  it. Covered by `test_recompute_no_cooldown_by_default` (two back-to-back calls both succeed,
+  documenting the default) and `test_recompute_rate_limited_when_cooldown_enabled` (overrides
+  `get_settings` to `recompute_cooldown_seconds=30`, monkeypatches `_now`: first call 200, an
+  immediate second call 429 with a positive `Retry-After`, then advancing the mocked clock past
+  the window makes a third call succeed again). A `_reset_recompute_cooldown_for_tests()` helper
+  clears the module-scope dict — needed because pytest's fresh-sqlite-per-test fixture reassigns
+  user id 1 in nearly every test, so a leftover timestamp from an earlier test could otherwise leak
+  into this one, the same class of cross-test leakage the frontend toast primitive hit earlier this
+  cycle. 239/239 backend tests pass (237 + 2 new), ruff clean. PR: see git history.
+
+- [x] **"Copy feed as Markdown" export.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved — confirmed `Recommendation.url` exists end-to-end so no link needs
+  deriving, with the caveat that a `null` url must not fabricate one)* Users who want to share or
+  paste their current filtered feed (e.g. into Discord/notes) had no way out except manually
+  retyping band/track names.
+  Done: new `lib/markdown.ts` — `recsToMarkdown(recs)`, a pure formatter: `- [Band – Title](url)`
+  per row, falling back to whichever of `title`/`band_name` is present (`'Untitled'` if neither),
+  and — the QA caveat — a row with a `null` `url` (the discover-by-id convention) renders as plain
+  `- label` text rather than a fabricated link. `[`/`]` in a label are backslash-escaped so an
+  in-title bracket can't break the Markdown link syntax. New `components/CopyMarkdownButton.tsx`
+  mirrors `CopyLinkButton`'s clipboard-write + toast-on-failure pattern exactly (same
+  `COPY_LINK_FEEDBACK_MS` "Copied" reversion, same `showToast(..., 'alert')` on a rejected write)
+  and is `disabled` when there are no rows to export. Wired into `FilterBar.tsx` next to
+  `CopyLinkButton`, which needed a new `rows: Recommendation[]` prop threaded from
+  `ScanFeedPage.tsx`'s existing `rows` state (the currently loaded/filtered page, not a re-fetch of
+  the full feed). Covered by 6 new tests in `markdown.test.ts` (band+title link, multi-row
+  newline-joining, null-url omits the link, title-only/band-only/neither fallback, bracket
+  escaping, empty list) and 4 in `CopyMarkdownButton.test.tsx` (copies the formatted text; disabled
+  on an empty row list; "Copied" reverts after the feedback window; a rejected write raises a toast
+  and leaves the button unchanged). 106/106 frontend tests pass, tsc/lint/build clean (chunk split
+  intact — lands inside the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **Unlike/unblock from the side panels have no re-entry guard or error handling.**
+  *(found by the hourly routine, 2026-09-02, Option C round 4 — Architect+QA-approved)* Every
+  other mutation in `ScanFeedPage.tsx` (`like`, `block`, `undoRetire`) uses an `inFlight` ref
+  guard and a try/catch → `setError(...)` on failure — this round's pending-state-microcopy item
+  even added visible busy labels for `like`/`block`. `unlike`/`unblock` (called from the
+  Liked/Blocked side panels) were bare `async function`s with neither: a fast double-click could
+  fire the request twice, and a failed request was a silently swallowed unhandled rejection with
+  zero user feedback.
+  Done: `unlike`/`unblock` now follow the exact same shape as `like`/`block` — an `inFlight.
+  current.has(key)` guard, `setError(...)` in a catch block, and a new `panelBusy: Record<string,
+  true>` state (kept separate from `busy`, since a panel row's identity — a liked item's id, a
+  blocked band's id — isn't a feed-card key; new `likedKeyOf`/`blockedKeyOf` module-scope
+  helpers). Per QA's scope-trap warning, the side panels (`SidePanels.tsx`) hold no state of
+  their own — `LikedPanel`/`BlockedPanel` gained a `busy: (item) => boolean` prop that's a pure
+  lookup into `ScanFeedPage`'s single source of truth, so a busy row disables its button and
+  swaps the label to "Unliking…"/"Unblocking…" without inventing a second local busy-tracking
+  mechanism. Covered by three new tests in `feed.test.tsx`'s "unlike/unblock from the side
+  panels" block: the busy label appears and disables the row while an unlike is held behind an
+  unresolved promise, then clears once it resolves; a rejected unblock surfaces a `role="alert"`
+  error and leaves the row usable again (not stuck busy); two rapid clicks on the same row call
+  the API exactly once. 91/91 frontend tests pass, tsc/lint/build clean. PR: see git history.
+
+- [x] **Optimistic like/block, with rollback on failure.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved with a scoping caveat)* Like/block already awaited the
+  network round trip *before* even starting the card's exit animation (`CARD_EXIT_MS`, 800ms),
+  so every click felt laggy compared to a modern app — the wait was pure dead time, since the
+  card was going to leave either way once the request succeeded.
+  Done, scoped per QA's caveat (row removal/re-insertion only, facets/liked/blocked untouched on
+  failure — those are only ever loaded after a *successful* call, so there's nothing on that side
+  to roll back): `retire(rec, kind)` — previously called only after `await api.like/block()`
+  resolved — is now called immediately on click, before that await, so the exit animation starts
+  in the same tick as the click. `retire`'s exit-timer id is now tracked in a new `retireTimers`
+  ref (keyed by card key), and the index a card was actually spliced out of `rows` at is recorded
+  in a new `retiredIndex` ref once that timer fires (not read from `undo` state, which can be
+  stale in a closure captured before `armUndo` ran). A new `cancelRetire(rec)`, called from
+  `like`/`block`'s catch block, undoes the optimistic `retire()`: if the exit timer hasn't fired
+  yet, it just clears the timer and the `exiting` CSS class — the row was never actually removed
+  from `rows`; if the timer already fired (the row is gone and "Undo" may already be armed for
+  it), it splices the row back in at its recorded index and drops that now-meaningless undo offer
+  — the failure already reverted it, so there's nothing left to undo. Covered by three new tests
+  in `feed.test.tsx`'s "optimistic like/block" block: a held-promise gate on the like request
+  proves the exit animation's CSS class is applied synchronously on click, before the request
+  resolves; a like that fails before `CARD_EXIT_MS` elapses restores the card and shows the
+  error, and advancing past `CARD_EXIT_MS` afterward doesn't belatedly remove it (the timer was
+  cancelled, not outrun); a block whose failure is deliberately held until *after* the exit timer
+  already fired and armed Undo restores the card, shows the error, and clears the now-stale Undo
+  button. 109/109 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
+  history.
+
+- [x] **Focus trap for the shortcuts-help panel.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* `ShortcutsHelp.tsx` is a real `role="dialog" aria-modal` overlay that
+  already restores focus to its trigger on close, but nothing stopped Tab/Shift+Tab from leaving
+  the open dialog and landing on the page behind it — a keyboard user could tab straight out of a
+  modal that's supposed to own focus while open.
+  Done: the panel's existing `keydown` effect (already handling Escape) now also traps `Tab` —
+  queries `panelRef`'s focusable descendants fresh on every press (a `FOCUSABLE_SELECTOR` constant,
+  hoisted to module scope per rule 9) rather than caching the list once, per QA's note that the
+  panel has exactly one focusable element today (the Close button) but a hardcoded version would
+  silently stop working if a future row added a link or button. Tab from the last element (or from
+  outside the tracked list, which covers the initial state where the panel div itself holds focus)
+  wraps to the first; Shift+Tab from the first wraps to the last — today's single-button case
+  degenerates to "Tab keeps focus on Close," which is the correct trap behavior for that case, not
+  a bug. Covered by two new tests in `ShortcutsHelp.test.tsx`: Tab from the initially-focused panel
+  lands on the Close button and a second Tab keeps it there; Shift+Tab does the same in reverse.
+  111/111 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Skip-to-content link.** *(proposed by the hourly routine, 2026-09-02, Architect+QA-approved)*
+  A keyboard/screen-reader user landing on any page had to tab through the whole header before
+  reaching the actual content, every single page load. `frontend/CLAUDE.md`'s "Known conflicts and
+  deferred items" flagged this as an acknowledged, deliberately-deferred gap ("revisit if nav
+  grows") — the nav has grown since (shortcuts panel, roving tabindex, several keyboard-only
+  affordances), so it was worth picking up.
+  Done, per QA's scoping notes: one shared signed-in shell (`App.tsx`, wrapping `AppHeader` + the
+  routed pages), so the skip link and its target landmark live there once, not per page.
+  `App.tsx` now wraps `<Suspense><Routes>…</Routes></Suspense>` in `<main id="main-content">`, with
+  a `<a className="sr-only" href="#main-content">Skip to content</a>` as the very first element in
+  the signed-in tree, ahead of `<AppHeader />`. `ScanFeedPage`'s own inner `<main>` (which only ever
+  mounted inside `{showFeed && …}`, so it couldn't have been the skip target on its own) is now a
+  plain `<div>` — two nested `<main>` landmarks would have been invalid and confused assistive tech;
+  `ScanListPage`'s `<div className="wrap">` was never a `<main>` to begin with, so it needed no
+  change. New `.sr-only` utility in `base.css` (clip-based, not `display:none`, so it's still
+  reachable in the tab order) that reveals itself — fixed position, padded, `var(--surface)`
+  background — on `:focus`, reusable for future visually-hidden-until-focused content, not just this
+  link. Covered by a new `skip to content` describe block in `feed.test.tsx`, mounting the real
+  signed-in shell (same pattern as "focus on route change"/"document title"): the link renders with
+  `href="#main-content"`, an element with that id exists and is a real `<main>`, and the link
+  precedes the header (`role="banner"`) in DOM order — the third assertion is what actually proves
+  it's reachable by a single Tab from page load, not merely present somewhere on the page. 110/110
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Density toggle (comfortable/compact), persisted.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved — "smallest of the three, sound, trivially testable")* The feed
+  is one fixed row height regardless of list length — someone with a big crawl scanning hundreds of
+  recs has no way to see more per screen, a normal control in every "grown-up" list app (Gmail,
+  Linear, Notion) whose absence made this feel unfinished by comparison. A sibling Product proposal
+  from the same round, shared `Button`/`Badge` primitives to de-duplicate 8 hand-rolled `className=
+  "btn ..."` call sites, was cut by Architect+QA on size (1.5-2 sittings, not one) — left unqueued
+  since it wasn't concrete enough to pick up later without re-scoping.
+  Done: `lib/density.ts` — pure `getDensity()`/`setDensity()` against a `crate-digger.density`
+  localStorage key, `try`-wrapped the same way `api/client.ts`'s token storage is (private mode /
+  storage-disabled browsers fall back to the `'comfortable'` default instead of throwing). New
+  `lib/useDensity.ts` hook (`useState(() => getDensity())`, a real-work lazy init per rule 12 in
+  `frontend/CLAUDE.md`) lives in `ScanFeedPage` — the one place that owns both the `.cardlist` wrapper
+  the attribute lands on and the `FilterBar` the toggle button lives in, so no context/prop-drilling
+  scheme was needed beyond passing `density`/`onToggleDensity` down one level. `FilterBar.tsx` gets a
+  `btn ghost` toggle (`☰ Compact` / `☰ Comfortable`, `aria-pressed`) next to the Copy Link/Markdown
+  buttons; `ScanFeedPage.tsx` sets `data-density={density}` on the `.cardlist` div. `feed.css` adds
+  `[data-density='compact'] .card`/`.score` rules (tighter padding/margin/gap, a smaller score box) —
+  pure CSS, no dependency, composes with the existing `content-visibility: auto` rule per rule 6 in
+  the UI/UX guidelines. Covered by 4 new tests in `lib/density.test.ts` (defaults to comfortable when
+  unset; round-trips a written value; falls back to comfortable on a corrupted stored value; both
+  functions degrade to a silent no-op/default rather than throwing when `localStorage` itself throws,
+  simulated via a `Storage.prototype` spy) and 2 new integration tests in `feed.test.tsx`'s "density
+  toggle" block (clicking the toggle flips its own label/`aria-pressed`, the `.cardlist`'s
+  `data-density` attribute, and the persisted `localStorage` value in the same assertion; a page load
+  with `'compact'` already persisted starts in that state). 119/119 frontend tests pass, tsc/lint/build
+  clean (chunk split intact — the new files land inside the `ScanFeedPage` chunk, their only
+  importer). PR: see git history.
+
+- [x] **Command palette (Cmd/Ctrl+K).** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved — "sound, testable entirely in jsdom/RTL, scope is contained because it
+  explicitly reuses `ShortcutsHelp`'s existing focus-trap rather than building one")* Getting to
+  Feed / Scans / Blacklist or triggering "New scan" / "Recompute" takes multiple clicks through nav —
+  there's no fast path for the one person actually using this daily.
+  **Scoped down on build**, from what QA sanity-checked: `NewScanForm` isn't a route (it's an
+  inline toggle on `ScanListPage`) and there is no manual "Recompute" control anywhere in the UI
+  (a previous round already confirmed recomputes are automatic, server-side) — so "navigate +
+  the two mutating actions" turned out to describe actions that don't exist as standalone
+  commands. Built as **navigation only**: jump straight to the scans list or to any scan by name,
+  which is the real, currently-missing fast path (today that's several clicks through the list
+  page every time).
+  Done: `components/CommandPalette.tsx` is generic and prop-driven — `actions: CommandAction[]`
+  (`{id, label, hint?, run}`) plus an `onOpen?` callback the caller uses to refresh whatever backs
+  those actions — so the component itself needs no router/API mocking to test at all, only a
+  callback spy. Reuses `ShortcutsHelp`'s exact focus-trap/restore-focus effect shape (the same
+  module-scoped `FOCUSABLE_SELECTOR`, Escape/outside-click/Tab-trap logic) but not its "?"
+  text-entry guard — Ctrl/Cmd+K isn't something anyone types into a field, so that guard doesn't
+  apply here. Filtering is a substring match on `label` (case-insensitive); the highlighted row is
+  an `activeIndex` moved by ArrowUp/Down (clamped, no wrap) rather than real DOM focus per row —
+  standard command-palette UX (type continuously, arrow to pick) rather than `Dropdown`'s
+  focus-per-row menu pattern. `App.tsx` wires it in next to `ToastStack` (only in the signed-in
+  shell): a `useState<Scan[]>([])` + `useCallback`'d `loadScansForPalette` (stable identity is load-
+  bearing — `onOpen` is a real effect dependency in `CommandPalette`, documented on the component
+  — an inline arrow there would reset the search on every unrelated App re-render) fetches
+  `api.listScans()` each time the palette opens; `paletteActions` is `[{Go to Scans}, ...scans
+  mapped to per-scan jump actions]`.
+  Caught one real accessibility bug before it shipped: the hint text (`"scan"`/`"your
+  collection"`) rendered as a sibling `<span>` with no separator, so an option's accessible name
+  concatenated straight into it — `"Psy digscan"` — because accessible-name computation ignores
+  flex-layout spacing between text nodes. Fixed by marking the hint `aria-hidden`; the label alone
+  is the option's name, matching how the rest of this app treats decorative/secondary text.
+  Covered by 12 new tests in `CommandPalette.test.tsx` (a standalone RTL render, no router/api
+  mocking needed): opens on Ctrl+K and Cmd+K, focuses the input, lists every action; calls
+  `onOpen` on each open (not just the first); filters to matching labels and shows a "no matches"
+  message for none; ArrowDown+Enter runs exactly the highlighted action (spy assertions) and
+  ArrowDown doesn't run past the last row; a mouse click runs and closes; Escape closes and
+  restores focus; outside-click closes, inside-click doesn't; a second Ctrl+K toggles closed;
+  reopening resets the query/highlight. Plus 3 integration tests in `feed.test.tsx`'s new
+  "command palette" block, mounting the real signed-in shell: Ctrl+K from the scans list shows
+  "Go to Scans" and every real scan; typing narrows to one match and Enter navigates there
+  (asserted via `currentLocation()`); a mouse click on a scan option navigates the same way.
+  134/134 frontend tests pass, tsc/lint/build clean (lands in the eagerly-loaded shared chunk via
+  `App.tsx`, same as `ToastStack` — not a lazy route chunk, which is correct since it must be
+  mounted before either route is). PR: see git history.
+
+- [x] **Successful clipboard copies are silent for screen-reader users.** *(proposed by the
+  hourly routine, 2026-09-02, Architect+QA-approved — "1-line addition, testable in jsdom, trivially
+  under an hour")* Clicking "Copy link" or "Copy as Markdown" only swapped the button's own text to
+  "Copied" — a screen-reader user got no confirmation, while a *failed* copy already raised a proper
+  `showToast(..., 'alert')`. The failure path was announced; the success path wasn't.
+  Done: `CopyLinkButton.tsx`/`CopyMarkdownButton.tsx` now call `showToast('Link copied to
+  clipboard.', 'status')` / `showToast('Feed copied as Markdown.', 'status')` right after
+  `setCopied(true)` — the exact same toast infra the failure branch already used, just the other
+  variant. Covered by one new test per component (`CopyLinkButton.test.tsx`,
+  `CopyMarkdownButton.test.tsx`), mirroring the existing failure-toast test's shape: click the
+  button, `findByRole('status')` has the expected text, advance past `TOAST_DURATION_MS` and
+  confirm it's gone (so it doesn't leak into the next test via the module-scope toast queue).
+  136/136 frontend tests pass, tsc/lint/build clean, chunk split intact. PR: see git history.
+
+- [x] **Paste several seed URLs into a new scan at once.** *(proposed by the hourly routine,
+  2026-09-02, Architect+QA-approved — "sound, `fireEvent.paste` testable in jsdom, small, one
+  function")* `NewScanForm`'s seed field accepted one URL per Enter press, so seeding a scan from
+  5-10 album/track links already copied meant paste-Enter, paste-Enter, repeated — a "tighter flow"
+  gap when queuing a scan from a batch of open tabs.
+  Done: `NewScanForm.tsx` gets an `onPaste` handler on the seed-url input. A single-line paste is
+  left alone (`e.clipboardData.getData('text')` has no `\r`/`\n` → the handler returns without
+  calling `preventDefault`, so it falls through to today's unchanged behavior — still requires
+  Enter/Add, same as typing one in). A multi-line paste is `preventDefault()`'d, split into lines,
+  each validated against the existing `SEED_URL_RE`, and added in one `setSeeds` call that dedupes
+  against both the already-added seeds and duplicate lines within the same paste. A paste with zero
+  valid lines shows the same `role="alert"` rejection message the single-URL path already uses,
+  rather than silently doing nothing. Covered by 4 new tests in a new `NewScanForm multi-URL paste`
+  block in `NewScanForm.test.tsx`: 3 valid lines + 1 garbage line yields exactly 3 seed-list items
+  and no alert; an all-garbage paste shows the alert and adds nothing; a paste that repeats an
+  already-added seed and repeats a line within itself still lands exactly 2 new distinct items; a
+  single-line paste adds nothing on its own (proving the multi-line branch didn't grow to swallow
+  the single-URL case too). 140/140 frontend tests pass, tsc/lint/build clean, chunk split intact.
+  PR: see git history.
+
+- [x] **`RemoveButton({ label, onClick })` — dedupe the `×` "remove" pattern.** *(proposed by the
+  hourly routine, 2026-09-02, Architect+QA-approved — "mechanical dedup, not a new-behavior change;
+  testable via `tsc` + one render test")* The smaller slice of an earlier-rejected "shared
+  Button/Badge primitives" proposal (that one needed migrating 8 call sites and a visual pass — cut
+  as too large for one sitting), scoped down to just the 3 sites that already share one exact
+  pattern: `Pill`'s `.rm` button (`FilterBar.tsx`), `NewScanForm`'s seed-list `.rm` button, and the
+  "Clear artist filter" `.rm` button (also `FilterBar.tsx`) — all three already pass an `aria-label`
+  today, so this is a mechanical dedup, not new behavior. (`ToastStack`'s dismiss `×` is a distinct
+  semantic — not in scope.) Idea: one `components/RemoveButton.tsx` with `aria-label` as a
+  **required** prop (not optional), so a call site that forgets one fails `tsc`, not just an a11y
+  audit; the three sites above switch to it. Verify: `tsc -b` refuses to compile a call site missing
+  `aria-label` (a deliberate compile-error check, or at minimum confirm the type signature makes it
+  impossible to omit); one render test per usage confirming the accessible name comes through
+  unchanged. Not built this round — left queued behind the paste-multiple-URLs proposal above.
+  Done: new `components/RemoveButton.tsx` — `{ label, onClick }`, `label` required (not optional),
+  so a call site missing it fails `tsc` rather than only an a11y audit. Swapped in at all 3 sites:
+  `FilterBar.tsx`'s `Pill` "remove filter" button, `FilterBar.tsx`'s "Clear artist filter" button,
+  and `NewScanForm.tsx`'s seed-list remove button. No CSS changes needed — `.rm` styling in
+  `base.css` is scoped by ancestor selector (`.fpill .rm`, `.seed .rm`), not the component itself.
+  `ToastStack`'s dismiss `×` stayed untouched, per the proposal's own scoping (a distinct semantic).
+  Covered by a new `RemoveButton.test.tsx` (accessible name renders, `onClick` fires); the existing
+  per-site tests (`FilterBar`/`NewScanForm` coverage in `feed.test.tsx`/`NewScanForm.test.tsx`)
+  already assert the same buttons by accessible name and needed no changes, confirming the swap was
+  behavior-preserving. 141/141 frontend tests pass (140 + 1 new), tsc/lint/build clean — the shared
+  component lands in its own small chunk (used by both lazy routes), route chunk split intact. PR:
+  see git history.
+
+- [x] **Quick filter over loaded cards.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Once you've paged in a few hundred recs, there's no way to jump straight
+  to "that one album" — genre/contains filters narrow by tag, not by name, so finding a specific
+  title or artist means scrolling. Add a text input to `FilterBar` that narrows the already-fetched
+  `rows` client-side (title/`band_name` substring match, case-insensitive) — no API call, purely a
+  view filter — with `/` focusing it, matching the existing `l`/`b`/Ctrl+K shortcut pattern. Verify:
+  unit-test the pure `matchesQuery(rec, query)` helper (title match, band match, empty-query
+  passthrough, case-insensitivity); RTL test that typing reduces the rendered `.card` count and that
+  `/` moves `document.activeElement` to the input.
+  Done same run (Option C step 5, built immediately after proposing): new `lib/quickFilter.ts` —
+  pure `matchesQuery(rec, query)`, case-insensitive substring match against `title`/`band_name`, an
+  empty/whitespace query matching everything. `ScanFeedPage.tsx` derives `visibleRows =
+  useMemo(() => quickQuery.trim() ? rows.filter(...) : rows, [rows, quickQuery])` and renders that
+  instead of `rows` for the card list — the roving-tabindex handler (ArrowUp/Down/Home/End) and
+  `activeCardIndex` clamp now move over `visibleRows` too, since that's what's actually on screen;
+  `rows` itself (and `total`, pagination, "Load more") is untouched, so the quick filter never
+  touches the server-side result set. The input lives in `FilterBar.tsx` (`quickQuery`/
+  `onQuickQueryChange`/`quickFilterRef` props, same "controlled value + parent-owned state" shape as
+  `density`), with a new `.quickfilter` sizing rule in `feed.css` (the shared `.input` class is
+  `width:100%`, so a fixed width was needed inside the flex `.controls` row). A document-level `/`
+  listener in `ScanFeedPage` (mirroring `ShortcutsHelp`'s always-listening + `isTextEntryTarget`
+  guard, duplicated locally per the codebase's existing convention — `CommandPalette`/
+  `ShortcutsHelp` each already carry their own copy rather than a shared helper) focuses the input;
+  `ShortcutsHelp`'s own list gained a `/` row. Query resets to empty on every `scanId` change, same
+  as the `undo` banner, so it can't silently carry over to a different scan's feed. A distinct empty
+  message (`No loaded cards match "…"`) covers the filtered-to-zero case, kept separate from the
+  real "no recommendations"/"nothing matches these filters" states, which are about the server-side
+  result set. Covered by 5 new tests in `quickFilter.test.ts` (title match, band match, no match,
+  empty/whitespace query passthrough, null title/band tolerance) and 3 new integration tests in
+  `feed.test.tsx`'s roving-tabindex block (reusing its existing three-card fixture): typing narrows
+  the rendered `.card`/`article` count and shows the matching card; a query matching nothing shows
+  the distinct empty message, not the real one; `/` moves `document.activeElement` to the input.
+  149/149 frontend tests pass (141 + 8 new), tsc/lint/build clean, chunk split intact. PR: see git
+  history.
+
+- [x] **Bulk select + bulk block.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved)* Clearing a run of obviously-irrelevant recs (a whole genre you don't want)
+  means clicking "block" one card at a time, which feels tedious for something that's conceptually
+  one action. Add a per-card checkbox (shown once "select mode" is toggled from the filter bar) and
+  a floating bar — "N selected — Block / Cancel" — that calls the existing block handler once per
+  selected key, reusing current optimistic-update/undo plumbing. QA confirmed the real `block(rec)`
+  handler exists at `ScanFeedPage.tsx:710`. Verify: RTL test — check two cards, click "Block
+  selected", assert the block handler/mock API was called exactly twice with the right ids and
+  selection state clears after; a second test asserts the bulk bar renders nothing when the
+  selection set is empty.
+  Done: `FilterBar.tsx` gets a "☑ Select" / "✕ Cancel select" toggle (`selectMode`, same
+  `aria-pressed` shape as the density toggle) next to it. `ScanFeedPage.tsx` owns `selected: Set<
+  string>` (card keys, same namespace as `keyOf`) and `bulkBusy`; `FeedCard.tsx` renders a checkbox
+  (only for a row with a band — mirrors the existing per-card block button's own band-id gate)
+  when `selectMode` is on, controlled by a new `selected`/`onToggleSelect` prop pair. New
+  `components/BulkActionBar.tsx` — a pure `{count, busy, onBlock, onCancel}` presentational
+  component, renders nothing at `count === 0` — shows "N selected", "Cancel", "Block selected".
+  `bulkBlock()` calls the exact existing `block(rec)` handler once per selected row (`Promise.all`)
+  — same optimistic retire/undo/error handling as a single click — then clears the selection and
+  exits select mode once every call has settled, regardless of individual outcome (`block` itself
+  already reports a failure via `setError`). Selection resets on `scanId` change, same reasoning as
+  the quick-filter query and undo banner.
+  **Test-infra fix along the way:** `test/renderApp.tsx`'s `mockFetch` helper's inner `vi.fn` only
+  declared an `input` param, so TypeScript inferred `fetchMock.mock.calls` as 1-tuples — any test
+  needing to assert on a POST's method/body (this one needed to confirm exactly two distinct
+  `band_id`s were blocked) had to cast. Added an unused `_init?: RequestInit` second param so the
+  inferred call-tuple type is a real 2-tuple everywhere `mockFetch` is used, no cast needed.
+  **RTL gotcha hit and worked around:** `getByText` matches an element's own direct text-node
+  children only, not nested elements' text — so `<span><b>{count}</b> selected</span>` can't be
+  matched by the combined string `"N selected"` (the `<b>`'s text is invisible to the span's own
+  node-text). Assertions query the count and the literal word "selected" as two separate exact
+  matches instead.
+  Covered by 3 new tests in `BulkActionBar.test.tsx` (renders nothing at zero; shows the count and
+  wires `onBlock`/`onCancel` to their buttons; busy disables both buttons and relabels Block), 4 new
+  in `FeedCard.test.tsx`'s "bulk select" block (no checkbox outside select mode; an unchecked box in
+  select mode for a card with a band; no box for a card with no band; the `selected` prop and
+  `onToggleSelect` call), and 3 new integration tests in `feed.test.tsx` (no checkboxes/bar before
+  select mode is on; selecting two of three cards and clicking "Block selected" posts exactly two
+  `/api/blacklist` calls with the two selected `band_id`s and clears the selection/select mode after;
+  "Cancel" clears the selection and confirms no block request was ever sent). 159/159 frontend tests
+  pass (149 + 10 new), tsc/lint/build clean, chunk split intact. PR: see git history.
+
+- [x] **"Seen" marker for opened Bandcamp links.** *(proposed by the hourly routine, 2026-09-02,
+  Architect+QA-approved — same Product/Architect+QA round as the quick-filter and bulk-select
+  proposals above)* Scrolling back through a long feed, you can't tell which recs you already
+  clicked through to Bandcamp to check out, so you re-open ones you've already mentally dismissed.
+  Record the card's key in `localStorage` (capped set, same try/catch pattern as the existing token
+  storage in `api/client.ts`) when "Bandcamp ↗" is clicked; `FeedCard` reads that set and renders
+  `data-visited="true"` + a small "seen" label when present.
+  Done: new `lib/visited.ts` — `isVisited(key)`/`markVisited(key)` against a
+  `crate-digger.visited` JSON array, `try`-wrapped the same way `lib/density.ts` is (private mode /
+  storage-disabled browsers just see "nothing is seen" rather than throwing). Capped at a new
+  `VISITED_CAP` (500, in `config.ts`) — the oldest key is evicted first once exceeded, so a
+  long-lived account's entry can't grow without bound. `FeedCard.tsx` uses its existing `cardId`
+  prop (already a stable per-item key, see `ScanFeedPage`'s `cardIdOf`) as the storage key directly
+  — nothing extra to compute. A local `useState(() => isVisited(cardId))` (not a prop — only this
+  one card's own click changes what it knows) drives both `data-visited` on the `<article>` and a
+  new `.seen-tag` span next to the "Bandcamp ↗" link; the link's `onClick` calls `markVisited` and
+  flips the state in the same handler, so the marker appears immediately, no reload needed. Reuses
+  the already-AA-audited `--faint` token (see the earlier contrast-fix item) for the label's color
+  since it renders against the same `--surface` card background that token was measured against.
+  Covered by 4 new tests in `FeedCard.test.tsx`'s "seen marker" block (no marker for a
+  never-opened card; clicking the link marks it immediately; a card id already in storage starts
+  pre-marked; an unrelated stored id doesn't bleed onto a different card) and 7 in the new
+  `visited.test.ts` (mark then read back; unrelated keys unaffected; marking twice doesn't
+  duplicate; cap eviction drops the oldest; a corrupted stored value falls back to "not visited";
+  both functions degrade silently rather than throwing when `localStorage` itself throws — 2 tests).
+  Rebased onto main after the quick-filter/bulk-select/delete-scan items landed ahead of it; test
+  counts below are against that base, not the original 152/152 noted when this was first built.
+  Frontend suite passes in full post-rebase, tsc/lint/build clean, chunk split intact. PR: see git
+  history.
+
+- [x] **No way to delete a scan from the UI.** *(found by the hourly routine, 2026-09-02, via direct
+  code audit — `api.deleteScan`/`DELETE /api/scans/{id}` already existed and worked, but nothing in
+  the frontend ever called it: a mis-seeded or abandoned custom scan could only be removed by hand
+  against the database)* Added `DeleteScanButton` (`components/DeleteScanButton.tsx`), wired into the
+  feed page's nav bar next to the scan title. Renders nothing for the `collection` scan (the backend
+  itself refuses to delete that one — this mirrors the rule instead of duplicating it). Two clicks,
+  not a native `confirm()` (this app doesn't use those anywhere else): the first arms a "Confirm
+  delete?" state that auto-reverts after 4s if never followed up; the second calls the API, toasts
+  success, and navigates back to `/scans`; a failed delete toasts the server's error and leaves the
+  scan in place. Verify: 5 new RTL tests in `feed.test.tsx`'s new "delete scan" block — no button on
+  the collection scan; first click arms confirm and it reverts on its own after the window closes;
+  "Cancel" reverts immediately and never calls the API; confirming calls `DELETE` and lands on
+  `/scans`; a failed `DELETE` shows the error via `role="alert"` and leaves the scan/route in place.
+  164/164 frontend tests pass (159 + 5 new), tsc/lint/build clean (chunk split intact — the button
+  bundles into the existing `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **Route like/block/undo failures through a toast with Retry, not a sticky inline error.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved with one correction)* When
+  `like`/`block`/`undoRetire` fail, `ScanFeedPage.tsx` drops a permanent `<p class="err">` at the
+  top of the feed that only clears on a fresh fetch — inconsistent with copy-link/delete-scan,
+  which already use the transient toast primitive (`lib/toast.ts`/`ToastStack.tsx`).
+  Done, per QA's correction: `error`/`setError` is untouched everywhere else (`loadFirstPage`/
+  `loadMore`/`unlike`/`unblock` all still use it) — only the `like`/`block`/`undoRetire` call sites
+  moved to toasts. `Toast` gains an optional `action?: { label, onClick }`; `showToast` takes it as
+  a 4th positional param (after `durationMs`, so every existing call site is untouched);
+  `ToastStack` renders an inline button for it and dismisses the toast once `onClick` runs — CSS
+  moves `.toast-dismiss`'s `margin-left: auto` onto the new `.toast-action` when present (`.toast-
+  action + .toast-dismiss` zeroes it) so the pair sits flush right together instead of doubling the
+  push. `undoRetire` (a plain function, not a `useCallback`) took the one real design wrinkle: by
+  the time its catch block runs, `setUndo(null)` has already cleared `undo` state, so a naive
+  `() => void undoRetire()` retry would immediately no-op against a stale `undo` read. Fixed by
+  giving it an explicit `entry: typeof undo = undo` parameter — the normal call site still reads
+  current state, but the failure's Retry action closes over the *same* `{rec, kind, index}` it was
+  first called with and passes it straight back in, bypassing the state race entirely.
+  `like`/`block` retry more simply — `onClick: () => void like(rec)` / `() => void block(rec)` —
+  since both are stable `useCallback`s that already guard their own re-entry via `inFlight`.
+  **Cross-test leak found and fixed along the way:** the toast queue is module-scope by design (the
+  backlog's own toast-primitive entry above already documents this), and `feed.test.tsx` had never
+  needed a `resetToastsForTests()` reset before — no test in that file raised one until now. Added
+  a file-level `beforeEach(() => resetToastsForTests())`, the same fix `ToastStack.test.tsx`/
+  `CopyLinkButton.test.tsx` already apply per-file.
+  Covered by 2 new tests in `ToastStack.test.tsx` (an action button renders, runs its `onClick`,
+  and dismisses the toast on click; no button renders when no action is given) and 1 new
+  integration test in `feed.test.tsx`'s "optimistic like/block" block (a like that 500s once shows
+  a Retry button; clicking it re-sends the like, which this time succeeds, and the card completes
+  its optimistic retire) — the two pre-existing failure tests in that block needed no changes,
+  since `findByText`/`getByText` matching the error message don't care whether it renders in the
+  old inline paragraph or the new toast. 178/178 frontend tests pass (177 + 1 feed.test.tsx case +
+  2 ToastStack.test.tsx cases), tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Toast the user when a 401 mid-session logs them out.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved)* `AuthContext.tsx`'s `setUnauthorizedHandler` callback calls
+  `setMe(null)` on any 401 mid-session with no explanation — a user typing a filter can get bounced
+  to the login screen, indistinguishable from having chosen to log out themselves.
+  Done, one design gap found beyond QA's sanity check: `ToastStack` was only mounted in the
+  signed-in branch of `App.tsx`, but the 401 → `setMe(null)` transition unmounts that whole branch
+  in the same commit the toast needs to render in — the toast would have been queued but never
+  shown, since the signed-out branch (login screen) never mounted a `ToastStack` to pick it up.
+  Fixed by mounting a second `<ToastStack />` in the `!me` branch too, so whichever branch is live
+  at commit time still renders the queue (the module-scope queue itself survives the swap either
+  way — `useSyncExternalStore`'s `getSnapshot()` reads it fresh on mount).
+  `AuthContext.tsx` gets a `meRef` (synced via a `[me]`-effect) so the unauthorized handler — which
+  registers once (`[]` deps) — can read the *current* `me` without re-registering on every change,
+  same ref-for-imperative-reads shape as rule 3 in `frontend/CLAUDE.md`. The handler now does
+  `if (meRef.current !== null) showToast(SESSION_EXPIRED_MESSAGE, 'alert')` before `setMe(null)` —
+  the initial stale-token-on-load 401 (`meRef.current` still null there) and an explicit `logout()`
+  call (bypasses the handler entirely) both correctly stay silent.
+  Covered by two new tests in `auth.test.tsx`: a session that's genuinely live (signed in, `me` set)
+  hitting a 401 on `ScanFeedPage`'s poll shows a `role="alert"` toast reading "session expired" and
+  lands on the login screen (deliberately uses `ScanFeedPage`'s single-request poll rather than
+  `ScanListPage`'s, which also fires a parallel `refresh()` `/api/auth/me` call each tick — using
+  that one would race two concurrent responses over which `setMe` call lands last); a second test
+  signs in, clicks "Sign out", and asserts no alert appeared. 177/177 frontend tests pass, tsc/lint/
+  build clean (chunk split intact). PR: see git history.
+
+- [x] **"You're offline" banner.** *(proposed by the hourly routine, 2026-09-03, Architect+QA:
+  the `useOnlineStatus()` hook is sound and small, but the original toast-based design is not —
+  see correction)* If wifi drops, every subsequent like/block/scan-create just fails with a generic
+  error — nothing tells the user it's connectivity, not a bug.
+  **QA correction (do not build as originally proposed):** routing this through
+  `showToast(msg, variant, durationMs)` doesn't work — it always arms a real
+  `window.setTimeout(dismiss, durationMs)`, `Infinity` coerces to a ~0ms timeout (immediate
+  dismiss, not persistent), and `showToast` returns `void` so there's no id to hand `dismissToast`
+  on `online` anyway. Build a `useOnlineStatus()` hook (`navigator.onLine` +
+  `online`/`offline` listeners) mounted once in `App.tsx`, paired with a small standalone banner
+  component (own visibility state, not routed through the toast queue) — NOT toast plumbing.
+  Verify: a hook test dispatches `window` `offline`/`online` events and asserts the returned value
+  flips (jsdom lets `navigator.onLine` be stubbed directly, no judgment call); a component test
+  asserts the banner text appears/disappears with those same events.
+  Done, built exactly to the QA correction: new `lib/useOnlineStatus.ts` — `useState(() =>
+  navigator.onLine)` plus a mount-only effect (`[]` deps) registering `window` `online`/`offline`
+  listeners. New `components/OfflineBanner.tsx` — a standalone `.banner.error` (reuses the
+  existing error-banner tokens, no new color) rendered `role="status"`, returning `null` while
+  online; no toast/timer plumbing at all, avoiding the `Infinity`-duration bug QA flagged. New
+  `.offlinebanner` rule in `styles/base.css` makes it `position: sticky; top: 0` so it stays
+  visible while scrolled, reusing existing spacing/radius tokens rather than inventing new ones —
+  a layout/behavioral change, not a visual-taste one. Mounted in `App.tsx` in *both* branches
+  (signed-in shell and the `!me`/login-or-signup branch, next to each `<ToastStack />`) since a
+  dropped connection during sign-in is exactly as real as one mid-session, and the codebase
+  already duplicates `ToastStack` the same way for the same reason. Covered by 2 new tests in
+  `useOnlineStatus.test.ts` (initial value reads `navigator.onLine`; flips on `offline`/`online`
+  events) and 3 in `OfflineBanner.test.tsx` (nothing rendered while online; appears/disappears
+  with `offline`/`online` events; starts visible when the page mounts already offline — covering
+  the "wifi was already down on load" case, not just the transition). 185/185 frontend tests pass
+  (177 + 8 new), tsc/lint/build clean (chunk split intact — lands in the eagerly-loaded shared
+  chunk via `App.tsx`, same as `ToastStack`, not a lazy route chunk). PR: see git history.
+
+- [x] **Dropdown opens without moving focus, and closing loses it.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved)* A keyboard user who opens a filter dropdown
+  (Sort, Genre, …) via Enter/Space can't actually arrow-key through it — `Dropdown.tsx`'s
+  `onPanelKeyDown` only fires for events bubbling from an already-focused `.ddrow`, and nothing
+  puts focus there on open; closing via Escape doesn't return focus to the trigger either, so it
+  can get lost to `<body>`. Fix: focus the first `.ddrow` when `open` becomes true; store/restore
+  focus to the trigger `<button>` when the panel closes (Escape or outside-click). Verify: an RTL
+  test — press Enter on the trigger, assert `document.activeElement` is the first `.ddrow`; press
+  Escape, assert `document.activeElement` is the trigger button again.
+  Done, with one refinement beyond the original proposal: `Dropdown.tsx` gained `panelRef`/
+  `triggerRef`. An effect on `[open]` focuses the first `.ddrow` when the panel opens — but only
+  if nothing inside it already has focus, so the Genre/Contains panels' own `autoFocus` search
+  input (which React focuses during commit, before this passive effect runs) is left alone
+  rather than fought over. On close, Escape and selecting a row (the render prop's `close()`)
+  both restore focus to the trigger button; an **outside click does not** — a `restoreFocus` flag
+  set to `false` inside the outside-click handler skips it, since the click itself already moved
+  focus (or didn't) to whatever was clicked, and yanking it back to the trigger would fight that.
+  This split wasn't in the original one-line proposal but follows directly from *why* Escape
+  needed a fix in the first place (no natural focus target) versus an outside click (which
+  already has one). Covered by 4 new tests in `Dropdown.test.tsx`'s new "open/close focus
+  management" block: opening moves focus to the first row; Escape restores focus to the trigger;
+  selecting a row restores focus to the trigger; an outside click leaves focus on whatever was
+  clicked instead of stealing it back. A lint warning caught along the way
+  (`react-hooks/exhaustive-deps` on reading `triggerRef.current` inside the effect's cleanup) was
+  fixed by capturing it in a local `const trigger` at the top of the effect, same pattern
+  `ShortcutsHelp.tsx`'s `previouslyFocused` ref already avoids by being a plain ref rather than a
+  DOM-node capture. 184/184 frontend tests pass (180 + 4 new), tsc/lint/build clean (chunk split
+  intact — `Dropdown` lands in the shared chunk used by both lazy routes, unchanged by this).
+  PR: see git history.
+
+- [x] **Rapid likes/blocks can pile up an unbounded toast stack.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved)* `showToast` (`lib/toast.ts`) has no cap —
+  repeated clicks or a batch bulk-block finishing queues one toast per action with no upper
+  bound. Cap the queue (e.g. 4), evicting the oldest non-action toast first when a new one
+  arrives (never evict one with a pending `action`, since that'd silently drop an undo). Verify:
+  unit test — call `showToast` 6 times, assert the queue never exceeds the cap and the earliest
+  are gone; a second case pushes an action-toast then 4 plain ones and asserts the action-toast
+  survives.
+  Done exactly as proposed: new `TOAST_STACK_CAP` (4) in `config.ts`. `showToast` now runs every
+  new queue through `evictOverflow()` before storing it — a `while` loop that, as long as the
+  queue is over the cap, drops the oldest toast with no `action` (`findIndex((t) => !t.action)`);
+  if every current toast has a pending action, the loop breaks and the queue is left over cap
+  rather than silently dropping one of them (an edge case rare enough not to need its own
+  policy, per the proposal's own caveat). New `lib/toast.test.ts` — pure logic tests against the
+  module's exported `showToast`/`useToasts`/`resetToastsForTests` (via `renderHook`, no full
+  component render needed): pushing 6 plain toasts leaves exactly the 4 most recent; pushing one
+  action-toast followed by 4 plain ones keeps the action-toast and evicts only from the plain
+  ones. 182/182 frontend tests pass (180 + 2 new), tsc/lint/build clean (no bundle-size concern —
+  `lib/toast.ts` is already in the eagerly-loaded shared chunk via `ToastStack`). PR: see git
+  history.
+
+- [x] **Signup's Bandcamp URL field has no format feedback until the server rejects it.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)* `SignupPage`'s "Your
+  Bandcamp collection" input only checks non-empty — a malformed URL round-trips to the API and
+  comes back as a generic error, whereas `NewScanForm` already validates seed URLs inline
+  (`SEED_URL_RE` + `role="alert"`). Reuse that pattern here: extract a small `isValidFanUrl(url)`
+  check, wire `aria-invalid`/`aria-describedby` on the input, show the inline error and disable
+  submit before any network call. Verify: unit test for `isValidFanUrl` across valid/invalid
+  cases; an RTL test asserting `aria-invalid="true"` and the error's `id` matches
+  `aria-describedby` for an invalid value, and that submit stays disabled.
+  Done: new `isValidFanUrl(url)` in `lib/format.ts`, next to the existing URL helpers
+  (`bandcampHandle`/`seedKind`). Deliberately **stricter** than `NewScanForm`'s `SEED_URL_RE`:
+  a fan's collection page always lives at the literal `bandcamp.com` host (`FAN_URL_RE =
+  /^https?:\/\/bandcamp\.com\/[^/?#]+\/?(?:[?#].*)?$/i`), unlike an album/track URL which is
+  hosted per-artist on any subdomain — the backend itself still only checks non-empty
+  (`api/auth.py`), so this is UI-side early feedback, not a stricter gate than the API's. Rejects
+  a bare `bandcamp.com`/`bandcamp.com/` (no handle) and an artist/label subdomain (that's a
+  storefront, not a fan page); accepts a trailing slash, a tacked-on query string, surrounding
+  whitespace, and is host-case-insensitive. `SignupPage.tsx`'s `fanUrlError` is a derived
+  expression (frontend/CLAUDE.md rule 6 — no effect), shown only once the field is non-empty so a
+  fresh form doesn't open already invalid; folded into the existing `complete` gate so submit stays
+  disabled. The field's hint/error paragraphs now share one `aria-describedby` slot
+  (`su-fanurl-hint` normally, `su-fanurl-error` — `role="alert"` — when invalid), with
+  `aria-invalid="true"` added only in the error case. Covered by 9 new unit tests in
+  `lib/format.test.ts` (valid plain URL, http/trailing-slash/whitespace, query string, host
+  case-insensitivity, non-URL string, artist subdomain rejected, no-handle rejected, non-bandcamp
+  host rejected, empty string) and 2 new integration tests in `auth/auth.test.tsx`: typing a
+  malformed URL shows the alert with matching `aria-describedby`/`aria-invalid`, disables "Create
+  account", and confirms `fetch` is never called; a well-formed URL shows no alert and leaves
+  submit enabled. 202/202 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see
+  git history.
+
+- [x] **Confirm step for large bulk-block actions.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound, easily mockable in RTL, small; genuinely new since bulk-block
+  currently has no size guard or confirm step at all")* Bulk-select + bulk-block already exists
+  with no size guard — undo covers a single mis-click, but a stray "select a run of cards" + block
+  on a large filtered set has a bigger blast radius than the click that caused it, with no
+  confirmation in between. (Two sibling proposals from the same Product/Architect+QA round were
+  cut: a `?sort=` control turned out to already exist — `SortKey`/`useFeedFilters`/`FilterBar`
+  already sort by score/neighbours/affinity, just not by the newest/A-Z keys Product assumed; a
+  generic `EmptyState`-by-cause component turned out to mostly duplicate the already-shipped
+  "Clear filters" empty state and `ColdStartPanel`, and QA's one narrowed slice —
+  "filters-active-but-band-blocked" — wasn't concretely a distinct reachable state worth building
+  blind, so left unqueued rather than built on a guess.)
+  Done: new `BULK_CONFIRM_THRESHOLD` (5) and `BULK_CONFIRM_WINDOW_MS` (4000, same window as
+  `DeleteScanButton`'s) in `config.ts`. `components/BulkActionBar.tsx` gets the exact same
+  two-click, auto-reverting confirm shape `DeleteScanButton` already uses — no native `confirm()`,
+  this app doesn't use those anywhere. At or below the threshold, clicking "Block selected" still
+  fires `onBlock` immediately (today's behavior, unchanged — covered by the pre-existing test at
+  `count={3}`). Above it, the same click arms a `Block N bands?` / `Cancel` pair instead
+  (`.btn.ghost.danger`, reusing `DeleteScanButton`'s existing danger-button styling — no new CSS);
+  a second click on `Block N bands?` fires `onBlock`, `Cancel` reverts without calling it, and the
+  arm reverts on its own after `BULK_CONFIRM_WINDOW_MS` if neither is clicked. A `useEffect` on
+  `[count]` also clears any pending confirm/timer the moment the selection size changes — armed
+  against a stale N (e.g. a card deselected while the bar is up) would silently block the wrong
+  count. Covered by 4 new tests in `BulkActionBar.test.tsx`'s new "confirm step above the
+  threshold" block: a first click above the threshold doesn't call `onBlock` and shows the
+  `Block N bands?` prompt, a second click does; at/below the threshold there's no prompt at all
+  (pre-existing behavior, re-asserted at the threshold boundary itself); `Cancel` inside the
+  confirm step calls neither `onBlock` nor the outer `onCancel` and returns to the normal bar;
+  the armed prompt auto-reverts after `BULK_CONFIRM_WINDOW_MS` under fake timers. 206/206 frontend
+  tests pass (202 + 4 new), tsc/lint/build clean (chunk split intact — `BulkActionBar` lands inside
+  the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **Blocked panel never shows a temporary block's expiry.** *(found by the hourly routine,
+  2026-09-03, via direct code audit)* The backend's `Blacklist.expires_at` (added by the earlier
+  "Blacklist is all-or-nothing forever" item) is already returned end-to-end —
+  `BlacklistOut.expires_at` on `GET /api/blacklist` — but the frontend `Blocked` type never
+  declared the field and `BlockedPanel` (`SidePanels.tsx`) never rendered it: a temporarily-blocked
+  band showed identically to a permanently-blocked one, with no way to tell it'll come back.
+  (Adding UI to *set* an expiry from the block button is bigger scope — a duration picker on
+  `FeedCard`'s ⊘ button — and left for a separate item; this is the smaller, purely-display slice:
+  surface the expiry the API already sends.)
+  Done: `Blocked.expires_at: string | null` added to `api/types.ts`. New `expiresLabel(iso)` in
+  `lib/format.ts` — `''` for `null` (permanent) or an already-lapsed timestamp (the backend's own
+  `expires_at > now()` filter keeps a lapsed row out of the response in the first place, so this
+  is a display nicety, not the enforcement), else `"expires in Xm/Xh/Xd"` at the same granularity
+  `ago()` already uses for the past. `BlockedPanel` renders it as a third `· `-joined hint segment
+  next to `band_url`, only when non-empty. Covered by 5 new unit tests in `format.test.ts` under
+  fake system time (null → empty, lapsed → empty, same-day → hours, sub-hour rounds up to at least
+  1m, multi-day → days) and 1 new integration test in `feed.test.tsx`'s "unlike/unblock from the
+  side panels" block: opening the Blocked panel with one temporary and one permanent entry shows
+  `expires in Nh` on the temporary row's `<li>` and nothing matching `/expires in/` on the
+  permanent one's. 212/212 frontend tests pass (206 + 6 new), tsc/lint/build clean (chunk split
+  intact). PR: see git history.
+
+- [x] **Blocked panel shows a band's URL as inert text, not a link.** *(found by the hourly
+  routine, 2026-09-03, via direct code audit, same pass as the expiry item above)* `BlockedPanel`
+  rendered `band_url` as a plain `<span>` — no way to actually open the blocked artist's page —
+  while its sibling `LikedPanel`, right above it in the same file, already links its item's `url`
+  via an icon-only "↗" anchor with a proper `aria-label`. Same data shape, inconsistent treatment.
+  Done: `BlockedPanel` now renders `band_url` with the exact same icon-only-link pattern
+  `LikedPanel` already uses (`.listen.sm`, `target="_blank" rel="noopener noreferrer"`,
+  `aria-label="Open {band} on Bandcamp"`, decorative `↗` marked `aria-hidden`) instead of a text
+  span — no new CSS, reuses the class `LikedPanel` already relies on. Covered by 1 new test in
+  `feed.test.tsx`: a blocked band with a `band_url` gets a `role="link"` with the expected
+  accessible name and `href`; one with `band_url: null` has no link at all inside its row.
+  213/213 frontend tests pass (212 + 1 new), tsc/lint/build clean (chunk split intact). PR: see
+  git history.
+
+- [x] **Extract existing empty-state logic into a shared `EmptyState` component.**
+  *(proposed by the hourly routine, 2026-09-03)* Product pitched this as three new empty-state
+  variants (no scan yet / filtered-to-zero / genuinely empty); Architect+QA checked the actual
+  code first and found all three already exist (`ColdStartPanel` for the cold-start cases, the
+  "Clear filters" button for filtered-to-zero) — rescoped down to a consolidation: wrap the
+  existing branches in one component with a `data-testid` per variant, no new behavior. Small,
+  testable (RTL asserts the right testid for each mock combo), but lower value than net-new work
+  since nothing user-visible changes — left queued behind the item below.
+  **Scoped down further on build:** Product's three named variants (no-scan / filtered-to-zero /
+  genuinely-empty) don't cleanly exist as three *renderable* states in the actual code — a
+  "no scan yet" moment is just `ColdStartPanel` rendering `null` while `coldStart` hasn't loaded,
+  not a distinct branch with its own copy. Built the two real, distinguishable causes instead of
+  inventing a third to match the pitch: `filtered-empty` (an active filter narrowed the
+  server-side result set to nothing) and `cold-start` (no filter at all — `ColdStartPanel`'s own
+  existing internal branches, unchanged, explain the rest).
+  Done: new `features/feed/EmptyState.tsx` — `{anyActive, coldStart, onClearFilters}` in, the
+  exact same markup `ScanFeedPage.tsx`'s inline block already rendered, each variant now wrapped
+  in a `div` carrying `data-testid="empty-filtered"`/`"empty-cold-start"`. `ScanFeedPage.tsx`'s
+  `rows.length === 0 && !loading && !error` block is now one `<EmptyState ... />` call; no
+  wording, styling, or behavior changed, so the pre-existing text-based assertions in
+  `feed.test.tsx` (`findByText('Nothing matches these filters…')`,
+  `findByText('No recommendations in this scan yet.')`) needed no changes and still pass
+  unmodified — direct evidence the swap was behavior-preserving. Covered by 3 new tests in
+  `EmptyState.test.tsx` (a standalone RTL render, no router/api mocking needed): `anyActive`
+  renders `empty-filtered` with a working Clear-filters button and no cold-start testid; no active
+  filter with `coldStart: null` renders `empty-cold-start` with no button; a loaded `coldStart`
+  renders through to `ColdStartPanel`'s own diagnostics text. 221/221 frontend tests pass (218 +
+  3 new), tsc/lint/build clean (chunk split intact — the new file lands in the `ScanFeedPage`
+  chunk, its only importer). PR: see git history.
+
+- [x] **Auto-prune URL-persisted filters that no longer exist in facets.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved as genuinely new)* After a
+  recompute or crawl, a `tag`/`label_id` filter carried in the URL can point at a facet that no
+  longer exists, silently rendering an empty feed with no explanation why. When `GET /api/facets`
+  returns and a persisted filter value isn't in the list, drop it from the URL/state and toast
+  what was dropped (reusing the existing `lib/toast.ts`/`ToastStack` primitive). QA confirmed
+  `ScanFeedPage.tsx` already fetches facets but has no diff/prune logic against the persisted
+  filters today — genuinely net-new, not a duplicate of anything shipped. Verify: a unit test
+  feeding a mock facets response missing the current filter into `useFeedFilters` asserts the
+  param is removed and the toast fires with the dropped value's name — pure logic, no visual
+  check needed.
+  **Scoped down on build, beyond what Product/Architect+QA sanity-checked:** `label_id` is NOT
+  pruned. `GET /api/facets`'s `labels` rows are `.limit(200)` server-side (`app/api/feed.py`), so
+  a scan with more than 200 distinct bands in its recs (this app's own `CLAUDE.md` records a live
+  curate producing 1,600) would see a perfectly valid `label_id` filter fall outside that top-200
+  window and get wrongly "pruned" as stale — a false positive the original proposal didn't
+  account for. `tags` has no such limit, so only `tag=`/`exclude_tag=` were in scope for real.
+  Within that, only **include**-mode (`tag=`) entries are dropped: an `exclude_tag=` for a value
+  that's currently absent from every rec is a harmless no-op (excluding something that isn't
+  there changes nothing), not the "silently matches nothing" bug this item is actually about, so
+  leaving it alone avoids surprising a reader by clearing an exclusion they set on purpose.
+  Done: `useFeedFilters.ts` gains `pruneTags(stale: string[])` — removes one or more `by`-mode
+  `tag=` entries from the URL in a single `setSearchParams` update (reuses the same
+  `readModes`/`writeModes` helpers every other tag setter already goes through). `ScanFeedPage.
+  tsx`'s `loadFacets()` now diffs the freshly-fetched `tags` facet against the currently active
+  `by`-mode tags (read via a new `activeTagsRef`, kept in sync by a `[activeTags]` effect — an
+  imperative read inside `loadFacets`, the same `meRef`-style shape `AuthContext` already uses, so
+  toggling a tag filter doesn't itself re-create `loadFacets` and cause an extra facets refetch on
+  every click); any that are missing get `pruneTags`'d and a `showToast(..., 'status')` names what
+  was removed. `loadFacets` already re-runs on every `recCount` change (a recompute), which is
+  exactly the trigger that can make a tag disappear, so no new call site was needed. Covered by 3
+  new integration tests in `feed.test.tsx`'s new "auto-prune stale tag filters" block, driving a
+  scan poll like the existing "feed reflow notice" tests do: a `tag=psybient` filter is dropped
+  from the URL with a toast naming it once a simulated recompute's facets response stops
+  containing that tag; an `exclude_tag=psybient` filter is left untouched and no toast appears
+  under the identical facets change (proving the include/exclude asymmetry above); a still-valid
+  `tag=psybient` filter survives a recompute unchanged with no toast. 218/218 frontend tests pass
+  (215 + 3 new), tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Add an accessible ISO-time fallback to `RelativeTime`.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved with a correction)* Product pitched a new
+  `formatRelativeTime` util; QA checked the code first and found `RelativeTime.tsx`/`ago()`
+  already do self-refreshing relative text — the only real gap was accessibility: the component
+  rendered bare text with no exact-timestamp fallback for a screen reader or a sighted user who
+  wants precision, unlike `expiresLabel`/other timestamp displays in this codebase that already
+  favor plain text over any ARIA metadata. Rescoped to "add `title`/`aria-label` to the existing
+  component," not a parallel util (would have duplicated `ago()`).
+  Done: `RelativeTime.tsx` now renders `<time dateTime={iso} title={iso}>{ago(iso)}</time>`
+  instead of a bare `<span>` — semantic `<time>` element with the machine-readable `dateTime`
+  attribute plus a `title` carrying the same raw ISO string, so hovering (sighted mouse user) or
+  reading the element's title (assistive tech that surfaces it) gets the exact timestamp behind
+  the relative text. No change to the refresh interval/logic. Covered by 2 new tests in
+  `RelativeTime.test.tsx`: renders a `title` attribute equal to the raw ISO string alongside the
+  relative text; a `null` iso still renders nothing (title has nothing to attach to). PR: see git
+  history.
+
+- [x] **Warn before the session silently expires.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* A dropped session today just dies — the JWT lapses mid-task and the user
+  only finds out when their next click 401s and drops whatever they were doing (a filter, a bulk
+  selection). A sibling proposal from the same round, a `usePrefersReducedMotion()` hook, was cut
+  before reaching QA: `frontend/src/styles/base.css` already has a global
+  `@media (prefers-reduced-motion: reduce)` block zeroing `animation-duration`/`transition-duration`
+  app-wide, so the hook would have been a full duplicate — logged so a future round doesn't
+  re-propose it (see `tried-and-failed.md`, which already carries the same finding from an earlier
+  round; consolidating both notes there is left for a future pass, not urgent).
+  Done: new `lib/jwt.ts` — `decodeJwtExpMs(token)`, a ~10-line base64url decode of the JWT payload
+  (no library — `atob` plus swapping `-_`→`+/` and re-padding), returning the `exp` claim in ms or
+  `null` for anything that doesn't parse (malformed token, missing/non-numeric claim). This app
+  never verifies the token client-side, only reads expiry for the warning — the server stays the
+  real authority. New `lib/sessionExpiry.ts` — pure `msUntilWarning(token, nowMs)`: `null` for an
+  unreadable or already-expired token (the existing 401 handler covers real expiry), otherwise the
+  delay until `SESSION_EXPIRY_WARNING_MS` (5 minutes, new in `config.ts`) before `exp`, or `0`
+  (warn immediately) if less than that window is already left. New `lib/useSessionExpiryWarning.ts`
+  wraps it in a `useEffect` keyed on `token`: schedules one `setTimeout` calling the existing
+  `showToast(..., 'alert')`, cleared on unmount or token change so a stale timer from a previous
+  login never fires. Wired into `AuthContext.tsx` as `useSessionExpiryWarning(me !== null ?
+  getToken() : null)` — one line, no new state, reusing the token/`me` the provider already tracks.
+  Covered by 5 new tests in `jwt.test.ts` (valid claim, malformed token, bad base64/JSON, missing
+  claim, non-numeric claim), 5 in `sessionExpiry.test.ts` (plenty of time left, less than the
+  window left warns immediately, already-expired returns null, no claim, malformed token), and 5 in
+  `useSessionExpiryWarning.test.ts` under fake timers (fires exactly once at the right offset with
+  the right message/variant; null token schedules nothing; an unreadable token schedules nothing;
+  unmount clears the timer; changing the token cancels the old timer rather than letting it fire
+  late). 236/236 frontend tests pass (221 + 15 new), tsc/lint/build clean (chunk split intact —
+  lands in the shared chunk via `AuthContext`, not a lazy route, which is correct since auth
+  applies everywhere). PR: see git history.
+
+- [x] **Surface soon-to-expire blocks in the Blocked side panel, with a renew action.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved, then found blocked on
+  build)* A sibling proposal from the same Product/Architect+QA round as the session-expiry
+  warning above. Sort the Blocked panel by `expires_at` ascending (soonest-expiring first,
+  permanent last) and add a "renew" action on rows expiring within 24h that re-POSTs the same
+  `band_id` with a fresh `expires_at`. Architect+QA confirmed `POST /api/blacklist`
+  (`backend/app/api/blacklist.py`) already upserts by `user_id`+`band_id` — no backend change
+  needed, renew is mechanically just re-posting.
+  **Not built — a real gap the QA pass didn't check:** nothing in the frontend ever sends
+  `expires_at` when blocking. `api.block()` (`api/client.ts`) takes only a `bandId`, and its one
+  caller, `ScanFeedPage.tsx`'s `block()`, calls it with no expiry — same for `BulkActionBar`'s
+  path. So today a temporary block can only exist if someone posts to `/api/blacklist` directly;
+  through the app itself every block is permanent, and this "renew" feature would have no real
+  rows to act on. Worse, "renew for how long" has no established convention anywhere in the
+  codebase to reuse (no default-duration constant, no duration picker) — picking one here would
+  be inventing UI/UX unilaterally, not the "mechanical, no design call" change QA sanity-checked.
+  **Rescoped and the prerequisite is now built (2026-09-03):** the real gap was the missing
+  duration picker on the block action itself (also flagged separately by the "Blocked panel
+  never shows a temporary block's expiry" entry above). `FeedCard`'s `⊘ block` button is
+  untouched (still an immediate, permanent block — no test or keyboard-shortcut behavior
+  changed) and a new "block for… ▾" `Dropdown` sits next to it, offering `1 day` / `1 week` /
+  `1 month` (`BLOCK_DURATIONS` in `config.ts`); picking one computes `expires_at` as
+  `Date.now() + duration` and calls the same `onBlock(rec, expiresAt)` path, now threaded
+  through `ScanFeedPage.tsx`'s `block()` callback to `api.block(bandId, expiresAt)` (backend
+  unchanged, already accepted `expires_at`). The picker hides while either action on that card
+  is in flight, mirroring the existing busy-disables-both-buttons convention. "Renew" itself
+  (the originally-proposed side-panel action) is still not built — left for a follow-up now that
+  it has a real default duration to reuse, per the original rescoping note.
+  Covered by 5 new tests in `FeedCard.test.tsx` (picker present/absent by band/busy state,
+  computes the correct ISO expiry from a fixed system clock and closes the panel, the plain
+  block button is still an immediate untouched call) and one integration test in
+  `feed.test.tsx` ("blocking via the duration picker sends the computed expires_at and blocks
+  the card": drives the real dropdown + `POST /api/blacklist` body end to end under fake
+  timers). 242/242 frontend tests pass, tsc/lint/build clean (chunk split intact — the new
+  `Dropdown` import lands inside the existing `ScanFeedPage` chunk, which already imports
+  `Dropdown` via `FilterBar`). PR: see git history.
+  **Renew follow-up landed (2026-09-03):** `SidePanels.tsx`'s `BlockedPanel` now sorts rows by
+  `expires_at` ascending (soonest-expiring first, permanent last, via
+  `byExpirySoonestFirst`), and a row within `RENEW_WINDOW_MS` (24h, new in `config.ts`) of
+  lapsing gets a "renew ▾" `Dropdown` reusing the same `BLOCK_DURATIONS` options as the block
+  picker — picking one calls a new `ScanFeedPage.tsx` `renew(bandId, expiresAt)` (mirrors
+  `unblock`'s shape: same `blockedKeyOf`/`panelBusy`/`inFlight` guards) which re-POSTs
+  `/api/blacklist` with the same `band_id` and only reloads the Blocked list (the band is
+  already excluded from the feed, so no `loadFirstPage`/`loadFacets` round trip like a fresh
+  block needs). Covered by 3 new tests in `feed.test.tsx`: renew appears only on the
+  soon-to-expire row and the list sorts soonest-first; picking a renew duration posts the
+  correct `band_id` and a `expires_at` ~1 week out; a block expiring in several days or a
+  permanent one gets no renew action. 245/245 frontend tests pass, tsc/lint/build clean (chunk
+  split intact — `Dropdown`/`BLOCK_DURATIONS` were already imported into the `ScanFeedPage`
+  chunk). PR: see git history.
+
+- [x] **`frontend/CLAUDE.md`'s "Known conflicts and deferred items" section was stale.**
+  *(found by the hourly routine, 2026-09-03, via direct code audit)* Four of its five listed gaps
+  had already been fixed by earlier rounds — deep-linking, skeleton loading, skip-links/focus-on-
+  route-change, and the contrast measurement — but the doc still described them as open. Stale
+  status here risks the same waste `tried-and-failed.md` already flags for summary-only Product
+  rounds: a future proposal reading this section rather than the real code could re-propose (or
+  re-investigate) something already shipped.
+  Done: updated all four resolved bullets to say what actually landed and point at the file(s) that
+  did it (`useFeedFilters.ts`, `FeedCardSkeleton`/`ScanCardSkeleton`, `App.tsx`'s skip link, `lib/
+  contrast.ts`), verified against the actual source (not the backlog's prose) before writing each
+  one. The one deliberately-unresolved item — icon glyphs vs. SVG icons — is untouched, per the
+  standing instruction not to resolve that call unilaterally. Docs-only change; no tests apply, but
+  `npm test`/`tsc`/`lint`/`build` were re-run to confirm nothing else was touched. PR: see git
+  history.
+- [x] **The "Load more" button literally reads "Load mores".** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved, found via direct code audit rather than guessing)*
+  `ScanFeedPage.tsx` built the label as `` `Load ${plural(LIMIT, 'more')}` ``, and `plural(n, one,
+  many=one+'s')` only returns `one` when `n===1` — `LIMIT` is the fixed page size (50), never 1, so
+  the button has read "Load mores" unconditionally since it shipped. "more" here is a fixed adverb,
+  not a count being pluralized, so `plural()` was never the right tool for this call site (its other
+  callers — `ScanListPage.tsx`, `ColdStartPanel.tsx`, `FeedCard.tsx` — all pluralize genuinely
+  variable counts and are unaffected).
+  Done: replaced the `plural()` call with the fixed string `'Load more'`. Covered by a new test in
+  `feed.test.tsx` asserting the button's accessible name is exactly `'Load more'` when more pages
+  remain — fails against the old code, passes now.
+
+- [x] **A scan name can be created with baked-in leading/trailing whitespace.** *(proposed by the
+  hourly routine, 2026-09-03, Architect+QA-approved, found via direct code audit)* `NewScanForm.tsx`
+  gates the Create button on `!name.trim()` but `create()` posts `api.createScan({ name, seeds })`
+  with the raw, untrimmed state — a name typed as `"  My Scan  "` (or with a stray trailing space
+  from autocomplete/paste) passes the enabled check and is persisted with the whitespace intact
+  everywhere the scan's name is displayed.
+  Done: trim at the point of submission (`api.createScan({ name: name.trim(), seeds })`) — the
+  `disabled` check and the input's own `onChange` are untouched. Covered by a new test asserting
+  `api.createScan` is called with the trimmed name when the field holds leading/trailing whitespace.
+
+- [x] **`expiresLabel` rounds across its own bucket boundary.** *(proposed by the hourly routine,
+  2026-09-03, found via direct code audit — a repeat of the same "read the actual files, don't
+  brainstorm features" approach that found the two bugs above)* `lib/format.ts` chose the
+  minutes/hours/days bucket from the *raw* seconds (`s < 3600`) but rounded the *displayed* number
+  independently, so a value in the last ~30s before an hour (or ~30min before a day) rounded up
+  past its own bucket: 59m50s left rendered "expires in 60m", 23h45m left rendered "expires in
+  24h" — exactly the nonsensical labels the bucketing exists to avoid. Real-world trigger: a block
+  renewed for `1 day` (the "renew ▾"/"block for… ▾" pickers) shows "expires in 24h" for its last
+  half hour.
+  Done: bucket on the *rounded* value instead, falling through to the next unit when rounding
+  overflows the current one (`minutes = Math.round(s/60); if (minutes < 60) …`, then hours, then
+  days). Covered by a new `format.test.ts` case asserting both boundary inputs now render `1h`/`1d`
+  instead of `60m`/`24h`.
+
+- [x] **An empty `label_id` in a bookmarked feed URL silently filters to a nonexistent band.**
+  *(proposed by the hourly routine, 2026-09-03, same code-audit round as above)* `useFeedFilters.ts`
+  parsed the artist filter as `Number(searchParams.get('label_id'))`, and `Number('')` is `0` —
+  which `Number.isInteger` accepts — so `?label_id=` (present but empty: a hand-edited or
+  partially-stripped bookmarked/shared URL, the exact input this hook's own "shareable/bookmarkable"
+  docstring commits to tolerating) parsed as a real filter on band id 0 instead of "no filter",
+  silently zeroing the feed instead of showing it unfiltered. `itemType`/`sort` in the same file
+  already guard this shape correctly via an explicit allow-list (`isItemType`/`isSortKey`); the
+  label parse was the one path trusting a loose numeric coercion instead.
+  Done: treat `id === ''` the same as `id === null` (no filter), alongside the existing
+  non-numeric-string guard. Covered by a new `feed.test.tsx` case opening `/scans/1?label_id=` and
+  asserting no artist-filter pill renders and the (unfiltered) feed still shows its row.
+  249/249 frontend tests pass, tsc/lint/build clean, both bugs from this round.
+
+- [x] **`GET /api/facets` tag facets drop every genre that only tracks carry.** *(proposed by the
+  hourly routine, 2026-09-03, found via the same "read the actual files" code-audit method, this
+  round pointed at the backend)* `api/feed.py`'s tag-facets query inner-joined `AlbumTag` only, so
+  any recommendation with `item_type == "track"` (`album_id` is `NULL`) could never match — a genre
+  that only tracks carried via `TrackTag` silently never appeared in the facet list, even though
+  `GET /api/recommendations?tag=<that genre>` (via `_has_tag`, which correctly ORs `AlbumTag`/
+  `TrackTag`) would filter on it correctly. The `labels` facet three lines below already handles
+  album/track symmetrically (`outerjoin` + `coalesce`); the tag-facets query was the one place in
+  this file still treating them asymmetrically — the exact class of bug CLAUDE.md's M4 notes already
+  flagged once for curation scoring itself.
+  Done: union the `AlbumTag` and `TrackTag` matches (mirroring `_has_tag`'s OR shape) before
+  aggregating, instead of inner-joining `AlbumTag` alone. Covered by a new
+  `test_facets_include_track_only_tags`, confirmed to fail against the old query (empty tag set)
+  before the fix and pass after.
+
+- [x] **A failed recompute call still consumes the rate-limit cooldown.** *(proposed by the hourly
+  routine, 2026-09-03, same backend code-audit round as above)* `POST /api/recommendations/recompute`
+  wrote `_last_recompute_at[user.id]` before checking the `scan_id` belonged to the caller and
+  before `curate()` could raise — so a legitimate 404 (bad `scan_id`, or a collection not yet
+  crawled) still started the cooldown window, locking an immediately-following *correct* call
+  behind a 429 it didn't deserve.
+  Done: moved the `scan_id` ownership check (a fast, deterministic 404) above the cooldown block
+  entirely, and wrapped the `curate()` call so a `ValueError` restores the previous cooldown
+  timestamp (or clears it if there wasn't one) instead of leaving the just-written one in place.
+  Covered by a new `test_recompute_failure_does_not_consume_the_cooldown` (bad `scan_id` under an
+  enabled cooldown, then an immediate valid call still gets `200`), confirmed to fail against the
+  old ordering (`429`) before the fix. 249/249 backend tests pass, ruff clean, both bugs from this
+  round.
+
+- [x] **Announce the updated match count after "Load more."** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved: "sound, testable, small. Ship it.")* `ScanFeedPage.tsx`'s
+  `.countline` paragraph ("N recs match your filters") updates visibly when "Load more" resolves,
+  but it's a plain `<p>` with no `aria-live`, so a screen-reader user gets no confirmation that
+  more rows actually loaded. Add `role="status" aria-live="polite"` to it. Verify: RTL test
+  asserting the countline has `role="status"` and its text reflects the new count after
+  `loadMore` resolves — no visual check needed.
+  Done: added `role="status" aria-live="polite"` to the countline. In practice `total` (what the
+  countline shows) doesn't change on "Load more" itself — it's the server-side match count, not a
+  loaded-so-far tally — so the announceable case is really any `total` change (a like/block
+  decrementing it, a filter narrowing it, etc.), which this covers identically. Also fixed three
+  existing "auto-prune stale tag filters" tests that used a bare `*ByRole('status')` to detect a
+  toast — now ambiguous since the countline shares that role — by scoping to the toast's own
+  `.toast` class instead. Covered by a new test in `feed.test.tsx`: the countline has
+  `role="status"` and its text updates from "1 results" to "0 results" after a like resolves.
+  250/250 frontend tests pass, tsc/lint/build clean. PR: see git history.
+
+- [x] **"Select all loaded" for bulk-select.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "testable if confined to a pure state-derivation function; must read
+  from the already-filtered `visibleRows`, not raw data")* Bulk-select only toggles one card at a
+  time, so clearing a genre's worth of recs from a large scan still means clicking every checkbox.
+  Add a "Select all loaded" control (select mode only) that sets the selection to every currently
+  *visible* row's key (respecting the active quick-filter/genre filters, not the full server-side
+  result set), toggling back to none on a second click. Verify: unit test — with N visible rows
+  and select mode on, one click makes the selection size equal `visibleRows.length` and every
+  card show `selected=true`; a second click clears it back to zero.
+  Done: `ScanFeedPage.tsx` derives `selectableKeys` from `visibleRows` filtered to `band_id !==
+  null` (mirrors `FeedCard`'s own checkbox gate — nothing is offered for selection that never had
+  a checkbox), and a new `selectAllLoaded()` toggles the selection between "every selectable key"
+  and empty, based on whether every one is already selected (not a plain boolean flip — clicking
+  it after individually checking some, but not all, rows completes the selection rather than
+  clearing it). `FilterBar.tsx` renders a "☑ Select all loaded" / "✕ Deselect all" button next to
+  the select-mode toggle, shown only in select mode and only when there's at least one selectable
+  row. Covered by 2 new tests in `feed.test.tsx`'s "bulk select" block: clicking it checks every
+  card and a second click clears them all (scoped against the bulk bar's own count via `within`,
+  not a bare `findByText`, since the feed's countline can coincidentally show the same digit as
+  the unfiltered total); a quick-filtered view offers only the narrowed set. 252/252 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Tab-title status marker for a finished scan.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with a caveat: "sound in isolation but riskiest of the three —
+  keep the effect isolated to one small hook so the test doesn't need the whole ScanFeedPage tree,
+  and watch for `document.title`/`document.hidden` mock cleanup polluting other test suites")* A
+  scan can run for a while (crawl on the operator's Mac); tabbing away gives no signal it finished
+  — `useDocumentTitle` only ever shows the scan's name, never its status. Prefix the title (e.g.
+  `"✓ "`) when a poll observes a `running`→`done` transition while the tab is hidden/unfocused,
+  clearing the prefix on refocus. Verify: a hook-level unit test (not a full-page render) driving
+  a mocked status transition plus `document.hidden`, asserting the title gains the prefix on the
+  transition and loses it on simulated refocus.
+  Done, per QA's caveat: new standalone `lib/useScanFinishedMarker.ts` — a pure `boolean` hook,
+  no `document.title` formatting inside it (that's still `useDocumentTitle`'s job; the two compose
+  in `ScanFeedPage.tsx` rather than merging). `marked` only flips true on an observed `running`→
+  `done` transition (a `useRef` holds the previous status) while `document.hidden` at the moment
+  of that transition — a scan already `done` on mount, or one that finishes while the tab is
+  visible, is correctly left unmarked (nothing "just finished" from the reader's perspective in
+  either case). A second effect, alive only while `marked`, clears it on the next
+  `visibilitychange` where `document.hidden` is false. `ScanFeedPage.tsx` calls
+  `useDocumentTitle(scan?.name ? (justFinished ? \`✓ ${scan.name}\` : scan.name) : scan?.name)`.
+  Covered by 5 new tests in `useScanFinishedMarker.test.ts` (`renderHook`, no page mount needed):
+  marks true on the transition while hidden; clears on a simulated `visibilitychange` to visible;
+  a scan already `done` on mount is never marked; a transition while the tab is visible is never
+  marked; a `visibilitychange` event with nothing marked is a no-op — each test resets
+  `document.hidden` in `afterEach` per QA's cleanup caveat. One new integration test in
+  `feed.test.tsx`'s "document title" block drives a real scan-status poll (`SCAN_POLL_MS`) under
+  fake timers with `document.hidden` stubbed true throughout, confirming the full path end to end:
+  `document.title` gains the `"✓ "` prefix once the poll observes `done`, and loses it once a
+  `visibilitychange` event fires with `document.hidden` false. 258/258 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Password show/hide toggle.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound, RTL-testable, small — ship it")* `LoginPage.tsx`/
+  `SignupPage.tsx` both render a raw `<input type="password">` with no way to verify what was
+  typed — a typo surfaces only as a failed sign-in/sign-up. Verified via grep before proposing:
+  no existing `PasswordInput`/toggle component anywhere in `frontend/src`.
+  Done: new `components/PasswordInput.tsx` wraps the existing `<input>` (same `id`/
+  `autoComplete`/`value`/`onChange` the two pages already passed) with a `.pwtoggle` button that
+  flips the input's `type` between `password`/`text` and its own text between "Show"/"Hide",
+  carrying `aria-pressed` — a visible-text button, so no separate `aria-label` is needed (same
+  rule `frontend/CLAUDE.md`'s icon-button guidance already applies to `♥ like`/`⊘ block`). Kept
+  as a plain text toggle rather than picking a new icon glyph, deliberately staying out of the
+  unresolved icon-glyphs-vs-SVG question flagged in `frontend/CLAUDE.md`. `PasswordInput.css`
+  positions it absolutely inside the field (existing `.input` gets extra `padding-right`) using
+  existing tokens only, no new colors. Both pages now use `<PasswordInput id="password"
+  autoComplete="current-password" .../>` in place of the raw input; the `id`/`<label htmlFor>`
+  wiring is unchanged, so every existing `getByLabelText('Password')` test kept working with no
+  edits. Covered by 4 new tests in `PasswordInput.test.tsx` (standalone RTL render, no
+  router/api mocking needed): starts masked with a "Show" toggle at `aria-pressed="false"`;
+  clicking it reveals the value, flips to "Hide"/`aria-pressed="true"`, and a second click
+  reverts both; the `onChange` wiring still fires; `autoComplete` passes through. 257/257
+  frontend tests pass, tsc/lint/build clean (chunk split intact — `LoginPage`/`SignupPage`
+  chunks pick up the shared component without collapsing into the eager bundle). PR: see git
+  history.
+
+- [x] **Caps Lock warning on password fields.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound and testable, small — ship it, with a caveat: `getModifierState`
+  can't detect Caps Lock already on before the field is focused/typed in — a known non-blocking
+  API limitation, not a defect to fix")* A sign-in failing because Caps Lock silently mangled the
+  password gives no signal today.
+  Done: added directly to `components/PasswordInput.tsx` (built for the show/hide-toggle item
+  just above) rather than duplicating an `onKeyUp` handler in both `LoginPage.tsx` and
+  `SignupPage.tsx` — both already route their password field through it. `onKeyDown`/`onKeyUp`
+  both call `event.getModifierState('CapsLock')` (`onKeyDown` too, so the warning appears on the
+  very keystroke that turns it on, not one keystroke later); a `role="status"` `<p className=
+  "pwcaps">` renders next to the field while it's true, wired via `aria-describedby` on the input
+  — the same hint/error pattern `SignupPage.tsx`'s `fanUrlError` already uses. New `--warn` token
+  color (already used elsewhere for expiry/budget warnings), no new colors. The known
+  `getModifierState` limitation (can't see Caps Lock already on before the field is touched) is
+  left as-is per QA's caveat, not treated as a defect. Covered by 2 new tests in
+  `PasswordInput.test.tsx`: no warning by default; a `keydown` with `getModifierState` stubbed
+  `true` on the dispatched event (jsdom's `KeyboardEvent` constructor drops non-standard init
+  fields, so the stub has to be set on the event instance directly, not passed through
+  `fireEvent`'s init dict) shows the warning wired via `aria-describedby`, and a `keyup` with it
+  stubbed `false` hides it again. 259/259 frontend tests pass, tsc/lint/build clean (chunk split
+  intact). PR: see git history.
+
+- [x] **Persist `art_id` onto `albums`/`tracks`.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound and testable ... genuinely just wiring existing parsed data
+  through the mapper/column/API rather than new parsing logic ... small enough for one sitting")*
+  Found via direct code audit, prompted by an earlier round's rejected "album art placeholder"
+  proposal (see `tried-and-failed.md`): `app/bandcamp/parse.py` already extracts Bandcamp's art
+  asset id for albums (`ParsedAlbum.art_id`, from `tralbum.art_id`) and fan-collection items
+  (`ParsedItem.art_id`, from `item_art_id`), but nothing downstream stored it — `Album`/`Track`
+  had no art column and `mapper.py` never read `art_id` at all. Deliberately backend-only: no
+  `<img>`, no `art_url` construction, no frontend change — a bounded slice for a future
+  frontend-facing follow-up.
+  Done: `art_id: int | None` (BigInteger) added to `Album` and `Track` in `app/db/models.py`;
+  migration `0014_art_id.py` (guarded like 0002-0013 — no-ops on a fresh DB built from ORM
+  metadata). `get_or_create_album`/`get_or_create_track` (`mapper.py`) take an optional `art_id`
+  kwarg, set on create and set-if-null on the existing-row branch, same pattern as `url`/`title`.
+  Threaded from all three real sources: `ingest_item` (fan-collection ingestion, both the album
+  and track branches — `item.art_id` is the item's own art, not a parent album's), `ingest_album`
+  (`pa.art_id`), and `ingest_track_page` (added `art_id` to `ParsedTrackPage` itself, populated
+  from the same `tralbum.get("art_id")` `parse_album_page` already reads, since a standalone
+  track/single page embeds the identical tralbum shape). `ParsedTrack` (an entry inside an
+  album's own `trackinfo[]`) carries no `art_id` in Bandcamp's JSON at that level, so a track
+  ingested via `ingest_album` only gets its art from a later fan-collection or track-page visit —
+  not a gap this task invented, just the real shape of the source data.
+  `GET /api/recommendations`'s `RecommendationOut` gained `art_id: int | None`, selected via
+  `func.coalesce(Album.art_id, Track.art_id)` alongside the existing `url`/`title` coalesce.
+  Verified against the real fixtures, not invented values: `tests/fixtures/album_page.html`'s
+  `art_id` is `435129856` (also reachable via `fan_page.html`'s `item_art_id` for the same
+  "Panchito" item), `track_page.html`'s is `3864705594`. Extended
+  `test_ingest_album_populates_graph`, `test_ingest_track_page_populates_graph`, and
+  `test_ingest_populates_graph` (fan collection — asserts the item's own art_id lands on its row,
+  not a parent's) with `art_id` assertions against those real values; added
+  `top["art_id"] == 99` to `test_recommendations_feed` (API-level, `test_api.py`'s existing `_seed`
+  fixture, one Album given `art_id=99`). 248/248 backend tests pass, ruff clean; `alembic upgrade
+  head` / `downgrade -1` / `upgrade head` round-trips clean against a fresh sqlite DB. PR: see git
+  history.
+
+- [x] **Cross-tenant guard test for `follows` scoping.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved — "pure pytest over shared Band/Album rows plus two
+  Users/Fans, no live crawl/Docker/browser required ... small — one new test file, a handful of
+  assertions")* CLAUDE.md notes `follows` used to leak across tenants until it got per-fan scoping
+  (composite unique on `fan_id`+`band_id`), and `build_exclusions` was fixed to query
+  `blacklist`/`likes` per-user — but there was no regression test pinning that two users'
+  `follows`/`blacklist` rows stay isolated in curation, so a future edit could silently
+  reintroduce the leak with no red test to catch it.
+  Done: new `backend/tests/test_curation_tenant_isolation.py`. Two `User`+`Fan` pairs share the
+  same global `Band` catalog rows (per the "graph stays global" model, the real shape two tenants
+  see in practice) — user A gets a `Follow` row on Band X (fan-scoped) and a `Blacklist` row on
+  Band Y (user-scoped), user B gets neither. Calls `curation.engine.build_exclusions` directly for
+  each and asserts both bands land in A's own `exclusions.band_ids` (the inverse case — A's own
+  exclusions do apply to A) while neither leaks into B's, despite both sharing the same `Band` rows.
+  Confirmed the test actually catches the regression it's meant to, not just a happy-path
+  assertion: temporarily stripped the `Follow.fan_id == me.id` filter from `build_exclusions` and
+  reran — the test went red (`assert 1 not in {1}`) exactly as expected, then reverted. 249/249
+  backend tests pass, ruff clean. PR: see git history.
+
+- [x] **Construct `art_url` and expose it on `GET /api/recommendations`.** *(proposed by the
+  hourly routine, 2026-09-03, Architect+QA-approved — "sound, pure function, one field wired
+  through an existing query that already selects the underlying column, small"; a paired
+  frontend-rendering proposal from the same round was explicitly CUT by QA — see below)* Direct
+  follow-up to the `art_id` persistence item above, which deliberately stopped short of building a
+  usable URL. `Album.art_id`'s own docstring in `app/db/models.py` already spelled out the
+  formula (`f"https://f4.bcbits.com/img/a{art_id}_10.jpg"`) as the next step.
+  Done: new `app/bandcamp/art.py::art_url(art_id: int | None) -> str | None`, an `art_id is None`
+  check (not falsy — QA flagged that a hypothetical `art_id=0` must still build a URL, not be
+  silently dropped like `None`). `RecommendationOut` gained `art_url: str | None`
+  (`app/api/feed.py`), computed from the row's already-selected `art_id` at response-construction
+  time — no new query/column, `art_id` was already coalesced from `Album`/`Track` by the prior
+  item. Covered by 3 new tests in `test_bandcamp_art.py` (`None`→`None`, a real id→the expected
+  URL, `0`→a URL, not `None`) and one assertion added to `test_api.py`'s existing
+  `test_recommendations_feed` (already seeds `art_id=99`) confirming `art_url` on the response
+  row. 252/252 backend tests pass, ruff clean.
+  **Deliberately NOT done this run — frontend rendering, cut by QA**: a paired proposal to add
+  `art_url` to `frontend/src/api/types.ts` and render an `<img>` in `FeedCard.tsx` was rejected —
+  not because the conditional-render logic itself is untestable (RTL can confirm an `img` with the
+  right `src` is present or absent), but because Bandcamp's `_10` art size is a large square with
+  no existing sizing/`object-fit`/layout rule anywhere in the frontend to constrain it, so an
+  unstyled `<img>` risks visibly breaking `FeedCard`'s existing flex layout — a real CSS/design
+  decision with no objective pass/fail this browser-less sandbox can check. Left for a session
+  with actual visual verification (a `run`/screenshot pass or Roy watching), per this routine's
+  own "never pick a change whose only 'done' signal is visual taste" constraint. PR: see git
+  history.
+
+- [x] **Persist `Track.track_num` / `Track.duration`.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved — "sound, well-scoped, one-sitting change ... every claim in
+  the brief checks out against the code")* Same shape as the `art_id` gap fixed earlier this run:
+  `ParsedTrack` (an entry in an album page's `trackinfo[]`) has always parsed `track_num` and
+  `duration`, but `Track` had no matching columns and `mapper.py` never read either field.
+  Done: `track_num: int | None` and `duration: float | None` (Float) added to `Track`
+  (`app/db/models.py`); migration `0015_track_num_duration.py` (guarded like 0002-0014, `tracks`
+  table only — these are per-track, an album has no single duration). `get_or_create_track`
+  gained `track_num`/`duration` kwargs (same set-if-null backfill idiom as `art_id`); threaded
+  from `ingest_album`'s track loop only (`pt.track_num`, `pt.duration`) — deliberately **not**
+  `ingest_track_page`, since `ParsedTrackPage` (the standalone `/track/<slug>` parse) carries
+  neither field at all; Bandcamp doesn't expose a tracklist position/duration off-album, so
+  there's nothing to thread there.
+  **Deliberately schema-only this sitting, per Product's own scoping call (QA agreed)**: NOT added
+  to `RecommendationOut`/`GET /api/recommendations`, unlike `art_id`→`art_url` earlier this run —
+  the recs feed lists individual ranked items, not a rendered tracklist-with-position context, and
+  no frontend surface currently reads either field. `art_id` got its API field alongside a real
+  consumer (`art_url`) in the same sitting; these should wait for theirs (e.g. a track detail
+  view, or duration-based curation weighting) rather than growing the API speculatively.
+  Verified against the real fixture, not invented values: `tests/fixtures/album_page.html`'s one
+  track is `track_num=1`, `duration=486.761`. Extended `test_ingest_album_populates_graph` with
+  both assertions. 252/252 backend tests pass, ruff clean; `alembic upgrade head` / `downgrade -1`
+  / `upgrade head` round-trips clean. PR: see git history.
+
+- [x] **Export the current feed to CSV.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "pure function, no external deps or fixtures needed, tested entirely
+  with unit tests via round-trip through a CSV parser")* A companion "sort order" proposal from
+  the same round was rejected before reaching QA: `useFeedFilters`/`FilterBar` already have a Sort
+  dropdown (`score` / `neighbours` / `affinity`, `SortKey` in `api/types.ts`) — re-checked against
+  the actual source, not a summary, precisely to avoid the duplicate-proposal failure mode logged
+  twice already today in `tried-and-failed.md`. CSV export had no existing equivalent (checked via
+  `grep -i 'csv|createObjectURL|download='`, zero hits) and was the one proposal that survived.
+  Done: `lib/export.ts` — `formatRecommendationsAsCsv(recs): string`, a pure RFC-4180 formatter
+  (rank/type/title/artist/score/co-owners/genre-match/url columns, CRLF rows, quote+comma+newline
+  escaping) with no DOM or fetch dependency, plus a thin `downloadCsv(filename, csv)` DOM wrapper
+  (Blob → object URL → temporary anchor click → revoke). Wired into `FilterBar.tsx` as an "⇩ Export
+  CSV" button next to Liked/Blocked, disabled when there's nothing loaded. Exports `exportRows`
+  (`ScanFeedPage`'s `visibleRows`) — deliberately the currently-loaded, currently-filtered page(s)
+  already on screen, not a fresh full-result-set fetch, so it needed no new API surface. Covered by
+  6 new tests in `export.test.ts` (a test-only RFC-4180 parser round-trips a comma, a quote, and an
+  embedded newline back to the original string; header row; column count; null-field fallback;
+  empty-list header-only output) and 2 new integration tests in `feed.test.tsx` (disabled with zero
+  rows loaded; a click with one row calls `URL.createObjectURL` once with a `text/csv` Blob whose
+  text contains the row, clicks the anchor, and revokes the URL). 255/255 frontend tests pass,
+  tsc/lint/build clean (route chunk split intact). PR: see git history.
+
+- [x] **Cover art on feed cards.** *(found by the hourly routine, 2026-09-03, via direct code
+  audit — the migration `0014` docstring for `art_id`/`art_url` explicitly names this as its own
+  intended next step: "Building an actual image URL from the id is a one-line format string for a
+  future frontend-facing follow-up")* `GET /api/recommendations` has returned `art_url` per row
+  since `art_id` landed (#111/#109), but nothing in the frontend read it — `Recommendation` had no
+  `art_url` field and `FeedCard` rendered no `<img>` anywhere. A feed of bare score/title/band rows
+  reads as unfinished next to any card-based app with real cover thumbnails.
+  Done: `art_url: string | null` added to `Recommendation` (`api/types.ts`). `FeedCard.tsx` renders
+  a 60×60 (44×44 on mobile, matching `.score`'s existing responsive breakpoint) `.card-art`
+  thumbnail next to the score box when `rec.art_url` is present — same border/radius tokens as the
+  score box, no new visual direction. `alt=""` (decorative — the adjacent title/artist text already
+  identifies the item, so a real alt would be a redundant per-card screen-reader announcement); a
+  failed load (missing `art_id`, a stale/404ing CDN URL) falls back to no image via `onError`,
+  never a broken-image icon. Covered by 3 new tests in `FeedCard.test.tsx`: no image without
+  `art_url`; an image with the right `src`/empty `alt` when present; `onError` removes it. 258/258
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Notice when a scan's feed changed since your last visit.** *(proposed by the hourly
+  routine, 2026-09-03, Architect+QA-approved with a correction)* Product's original pitch was
+  per-item "new since last visit" badges off `recommendations.computed_at` — QA killed that:
+  `store_recommendations` clear+inserts every recompute, so `computed_at` is stamped fresh on
+  every surviving row on every recompute (a like, a block, an unrelated filter recompute), not
+  just genuinely new items; badging on it would be a false-positive machine.
+  Done (corrected version): keys off `recompute_generation` instead, the same per-scan "did the
+  feed change" counter the existing in-session reflow banner already uses — but this is a
+  different signal: the reflow banner only fires for a bump observed while the page is already
+  open (a `useRef`, gone once the tab closes), while this persists a per-scan "last seen
+  generation" to `localStorage` (`lib/lastSeenGeneration.ts`, same try/catch pattern as
+  `visited.ts`), so it can say the feed moved on since your *previous* visit, not just this
+  session. `features/feed/useUpdatedSinceLastVisit.ts` runs the check once per `scanId` (a
+  `checkedFor` ref, same shape as `useResumeScroll`'s `restoredFor`), showing a dismissible
+  banner (reuses the existing `.banner.reflow` styling) the first time a real prior visit's
+  generation is behind the current one. Can only say "the feed changed", not which items —
+  per-item novelty would need a `first_seen_at` set once via upsert-preserve rather than reset on
+  every clear+insert, flagged as a separate, larger follow-up if wanted. Covered by 8 new unit
+  tests in `lastSeenGeneration.test.ts` and 4 new integration tests in `feed.test.tsx`'s
+  "updated-since-last-visit notice" block: silent on a scan's first-ever visit; shows and is
+  dismissible when the generation moved on since the recorded visit; silent when it matches;
+  persists the current generation so a same-session reload doesn't repeat it. 272/272 frontend
+  tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Retry button on initial page-load failures.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with a scope correction)* If the first fetch on
+  `ScanListPage` or `ScanFeedPage` fails (network blip, transient 500), the page showed static
+  red error text with no way to recover except a full browser reload — worse than the
+  like/block/undo mutations, which already have a toast "Retry" action.
+  Done, both pages per QA's scope correction: `ScanListPage.tsx`'s existing `<p className="err"
+  role="alert">` got a `Retry` button re-calling the existing `load()` `useCallback` — the
+  straightforward case, matching the ticket as first written. `ScanFeedPage.tsx` needed the
+  separate fix QA flagged: its in-feed `error` state (and paragraph) only renders inside
+  `{showFeed && (...)}`, which requires `scan !== null` — a failed *initial* `loadScan()` left
+  `scan` permanently `null`, so that paragraph never rendered at all and the page sat silently
+  on "Loading…" forever, with the retry-poll effect also bailing early on `!scan`. Added a new,
+  separate `scanError` state (distinct from the existing `error`, which stays scoped to
+  in-feed mutation failures — undo/renew/load-more) set only by `loadScan`'s own catch block,
+  rendered as its own top-level `<p role="alert">…<button>Retry</button></p>` right under the
+  page's nav, unconditional on `scan`'s value so a later poll failure surfaces too, not only
+  the very first one.
+  Covered by two new tests in `feed.test.tsx`'s "initial page-load failure" block: a failed
+  `/api/scans` list load shows the alert + Retry button, and clicking it re-fetches and renders
+  the real list once the mock is swapped to succeed; a failed `/api/scans/1` load on the feed
+  page shows the same affordance while the heading is still stuck on "Loading…", and clicking
+  Retry clears the alert and renders the scan once it succeeds. 275/275 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Warn before losing an in-progress scan draft.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with two corrections)* A user can paste several seed URLs
+  into `NewScanForm`, then accidentally reload or close the tab, losing the whole unsaved list
+  with no warning — unlike almost every other data-entry flow in the app.
+  Done, both QA corrections applied: a single `useEffect` in `NewScanForm.tsx` keyed on the
+  derived boolean `hasDraft = seeds.length > 0` (not the `seeds` array reference, so
+  adding/removing seeds doesn't tear the listener down and back up) adds a `beforeunload`
+  listener that calls both `event.preventDefault()` and sets `event.returnValue = ''` — pairing
+  both since some engines key off `returnValue` alone. No separate "just submitted" flag: a
+  successful `create()` calls `onCreated()`, which unmounts this component synchronously
+  (`ScanListPage`'s `setCreating(false)`), so the effect's own cleanup (`removeEventListener`)
+  already covers that case for free.
+  Covered by three new tests in `NewScanForm.test.tsx`'s "draft-loss warning" block, each
+  dispatching a synthetic `beforeunload` `Event` on `window` with a `preventDefault` spy (jsdom
+  doesn't fire the event natively, but a manually-dispatched event is the standard way to test
+  this, matching how this codebase already tests other window-level listeners): warns once a
+  seed has been added (`preventDefault` called, `returnValue` falsy — asserted as falsy rather
+  than the exact empty string, since jsdom's `Event.returnValue` coerces any assigned value to a
+  boolean where real browsers keep the assigned string); does not warn with an empty seed list;
+  stops warning once the last seed is removed. 276/276 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). PR: see git history.
+
+- [x] **Add a request timeout to `api/client.ts`.** *(proposed by the hourly routine,
+  2026-09-03, Architect+QA-approved with a value correction)* `request()` — the single
+  chokepoint every API call goes through — called `fetch()` with no `AbortController`/timeout at
+  all. The existing `catch` block only fires on outright fetch rejection (DNS/connection
+  failure); a hung-but-accepted connection (a dead proxy, a backend that accepts the TCP
+  connection but never responds) never rejects on its own, so it left the caller's loading state
+  stuck forever with zero feedback — not even helped by this run's own Retry button, since
+  nothing ever reaches its catch block to show it.
+  **QA correction, applied:** QA's own suggested 30-45s timeout would still have been too short —
+  `AuthContext.tsx`'s existing comment documents the Render free tier's cold-start window as
+  "~30-60s," so a 45s timeout could still misfire as a false "request timed out" during an
+  ordinary cold start, the exact case the pre-existing network-failure message already explains
+  correctly. Used `REQUEST_TIMEOUT_MS = 90000` (new in `config.ts`) instead, comfortably above the
+  documented window.
+  Done: `request()` creates an `AbortController` per call, passes `signal` to `fetch()`, and
+  `window.setTimeout`s an abort at `REQUEST_TIMEOUT_MS` — cleared in a `finally` block on every
+  path (QA's other correction: an uncleared timer leaks on every successful/normal-error request,
+  not just a timed-out one). The `catch` block now checks for `DOMException`/`AbortError`
+  specifically and throws a distinct `ApiError(0, 'The request timed out. Please try again.')`
+  before falling through to the existing generic "can't reach the server" message. No caller
+  runs deliberately long over this chokepoint to worry about: confirmed `POST
+  /api/scans/{id}/run` just flips status and returns immediately (the crawl itself runs
+  out-of-band via the ARQ poller), and recompute is a DB-bound scoring pass, not a scrape.
+  Covered by two new tests in `client.test.ts`'s "request timeout" block: a `fetch` mock that
+  only rejects once it observes the passed `signal`'s `abort` event (a bare never-resolving mock
+  would just hang forever under fake timers, per QA's note — this one actually exercises the
+  abort wiring) confirms the call rejects with the timeout message only after `vi.
+  advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS)`; a second test confirms a normally-resolving
+  call is unaffected. 269/269 frontend tests pass (stable across repeated runs — one transient,
+  unrelated command-palette flake in a single mixed run did not reproduce on rerun or in
+  isolation), tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Cap the Liked/Blocked side-panel lists.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* `LikedPanel`/`BlockedPanel` (`SidePanels.tsx`) render every liked/
+  blocked item with no cap — likes/blocks are per-user and accumulate forever (blocks even
+  longer since most have no expiry), so the panel just keeps growing.
+  A first proposal from the same round — a dedicated "not found" page for a bad/deleted scan
+  link — was self-caught as already covered before spending an Architect+QA call:
+  `ScanFeedPage.tsx`'s `scanError` state already renders a `role="alert"` message with a Retry
+  button whenever `api.getScan` fails, alongside the existing "← Scans" link back.
+  Done: new `SIDEPANEL_PAGE_SIZE` (20) in `config.ts`. Both panels keep a local `visibleCount`
+  `useState`, slice their (for `BlockedPanel`, already-sorted) items array to it, and show a
+  "Show more" `btn ghost` button that grows the count by another page — plain client-side
+  slicing, no new API call, no change to either panel's existing props. Covered by five new
+  tests in the new `SidePanels.test.tsx` (standalone RTL render, no router/api mocking needed —
+  neither panel has any dependency of its own): each panel with 30 fake items renders exactly
+  20 rows plus a "Show more" button; clicking it reveals all 30 and removes the button; a list
+  of 5 items (under one page) never shows the button at all. 274/274 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). Merged same run (PR #127). PR: see git history.
+
+- [x] **Add a React error boundary.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* Self-found via `grep -rn 'ErrorBoundary|componentDidCatch'` across
+  `frontend/src` — zero hits. The app had no error boundary anywhere: an uncaught render-time
+  exception in any component (a malformed API response causing a null-access, or any other
+  render bug) white-screened the entire app with no fallback, taking down even the
+  `ToastStack`/`OfflineBanner` layer that could otherwise have explained it.
+  Done: new `components/ErrorBoundary.tsx` — a small class component (`getDerivedStateFromError`/
+  `componentDidCatch` have no hook equivalent) rendering a "Something went wrong." message with a
+  `btn` "Reload" button (`window.location.reload()`) on catch; the caught error/info is logged to
+  `console.error` since there's no error-reporting service to send it to. Wraps the signed-in
+  shell's routed `<main>` in `App.tsx`, inside the existing `<Suspense>` boundary — a render error
+  in a lazy-loaded route page is caught the same as one in an already-loaded component. The
+  signed-out shell (login/signup) is left unwrapped: its two pages are simple and already
+  `Suspense`-guarded, and wrapping it would mean a second boundary with no shared benefit.
+  Covered by two new tests in `ErrorBoundary.test.tsx` (standalone RTL render, no router/api
+  mocking needed): a throwing child renders the fallback text and Reload button instead of
+  crashing the test (console.error mocked for these two, since React logs the caught error in
+  addition to calling `componentDidCatch` — jsdom has no dev-server error overlay to swallow it);
+  a non-throwing child renders normally with no fallback shown. 271/271 frontend tests pass
+  (one transient, unrelated command-palette-adjacent flake did not reproduce on rerun, matching
+  the flake already logged against the previous item), tsc/lint/build clean (lands in the
+  eagerly-loaded shared chunk via `App.tsx`, not a lazy route chunk, as expected for a boundary
+  that must exist before either route renders). Merged same run (PR #128, after a merge conflict
+  with #127 in this same file — resolved by keeping both entries). PR: see git history.
+
+- [x] **Duplicate seed URL gives no feedback.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved)* `features/scans/NewScanForm.tsx`'s `addSeed()` (line 44-54) called
+  `setError('')` and `setSeedUrl('')` unconditionally even when `seeds.includes(u)` was already
+  true — re-adding a URL already in the list silently no-opped, so it looked like the Add click
+  didn't register.
+  Done: `addSeed()` now checks `seeds.includes(u)` before the dedupe-and-add, and on a hit calls
+  `setError('Already in your seed list.')` and returns without touching `seedUrl` — the
+  offending text stays in the input instead of being silently cleared. The multi-line paste path
+  (`onSeedPaste`) is untouched; it already dedupes silently by design with its own test coverage,
+  and this fix only changes the single-URL Add/Enter path.
+  Covered by a new test in `NewScanForm.test.tsx`'s "seed URL validation" block: add a seed via
+  the Add button, add the identical URL again, assert `role="alert"` shows "Already in your seed
+  list." and the seed list is still exactly one `listitem`. 277/277 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). Merged PR #129.
+
+- [x] **Command palette arrow-key nav doesn't scroll the active row into view.**
+  *(proposed by the hourly routine, 2026-09-03, Architect+QA-approved)*
+  `components/CommandPalette.tsx`'s `onInputKeyDown` (line 117-128) moved `activeIndex` but
+  nothing called `scrollIntoView` on the newly active row — on a longer filtered list, arrowing
+  down past the visible rows highlighted an option the user couldn't see.
+  Done: a new effect right after `activeRow`'s definition, keyed on `[open, activeRow]`, looks
+  up the active row by `cmdk-opt-${activeRow.id}` (the id every row already carries for
+  `aria-activedescendant`) and calls `.scrollIntoView({ block: 'nearest' })`. Both the element
+  lookup and the method call use optional chaining (`?.scrollIntoView?.(...)`) since jsdom
+  doesn't implement `scrollIntoView` at all — a real DOM element always has the method, so this
+  is a no-op difference outside tests, not a defensive hedge against real browsers lacking it.
+  Covered by a new test in `CommandPalette.test.tsx`: stubs `Element.prototype.scrollIntoView`
+  with `vi.fn()`, opens the palette (clearing the initial mount call for row 0), presses
+  ArrowDown, and asserts the mock was called with `{ block: 'nearest' }`. 277/277 frontend tests
+  pass, tsc/lint/build clean (chunk split intact). PR #130 (this change).
+
+- [x] **Block reason has no UI.** *(proposed by the hourly routine, 2026-09-03,
+  Architect+QA-approved — "sound and small; the backend contract (`Blacklist.reason` /
+  `POST /api/blacklist` / `Blocked.reason`) already exists end-to-end and is tested, this is
+  purely additive frontend wiring")* Found via direct code audit after two prior Product
+  proposals this run turned out to be duplicates on inspection (free-text search — already
+  `lib/quickFilter.ts`'s `matchesQuery`; "snooze a rec" — already the `blacklist.expires_at`
+  auto-expiry mechanism; both logged in `tried-and-failed.md`). `Blacklist.reason` was wired
+  through the backend and typed on the frontend (`Blocked.reason: string | null`) but nothing
+  ever set or displayed it — dead plumbing. A companion "pre-block confirm on a single card"
+  proposal from the same round was cut by Architect+QA: the existing 6s Undo banner already
+  covers the same mis-click failure mode for a single card with less friction than a confirm
+  dialog would add to every correct block.
+  Done, entirely frontend (no backend/migration needed — the API already accepts and returns
+  `reason`): `client.ts`'s `block()` gained an optional third `reason` param, folded into the
+  existing POST body. `SidePanels.tsx`'s `BlockedPanel` gained a new `onSetReason` prop and,
+  per row, a compact `input.reason` (`feed.css`, fixed 140px width — a dense row already packs
+  band name/expiry/renew/unblock, so the full-width `.input` base wouldn't fit) prefilled with
+  any existing reason, saved on Enter (mirroring the seed-URL/genre-add Enter-to-submit
+  convention elsewhere in the app); an existing reason also renders inline next to the expiry
+  text. `ScanFeedPage.tsx`'s new `setBlockReason(bandId, reason)` mirrors the existing `renew()`
+  shape exactly, including its one necessary wrinkle: `POST /api/blacklist` overwrites
+  `expires_at` unconditionally on every call, so setting a reason on an already-temporarily-
+  blocked band reads its current `expires_at` back out of `blocked` state and passes it straight
+  through — otherwise attaching a reason would silently convert a temporary block into a
+  permanent one. Backend only overwrites an existing row's `reason` when the new value is
+  non-empty (`blacklist.py`'s `if payload.reason:`), so a blank/unchanged Enter is a no-op on
+  the frontend side too rather than firing a wasted request. Covered by four new tests in
+  `SidePanels.test.tsx`'s "BlockedPanel reason" block: an existing reason renders next to the
+  band; an empty reason shows an empty, correctly-labeled input; typing a new reason and
+  pressing Enter calls `onSetReason` with the trimmed text; Enter with unchanged or
+  whitespace-only text does not call it. 282/282 frontend tests pass, tsc/lint/build clean
+  (chunk split intact — lands in the existing `ScanFeedPage` chunk). PR: see git history.
+
+- [x] **Login has no lockout/rate-limit.** *(proposed by the hourly routine, 2026-09-03, via the
+  same Explore-backed Product round that found the block-reason gap above — Architect+QA-approved
+  with one correction)* `app/api/auth.py`'s `login()` did a bare password check with zero attempt
+  tracking — the only rate limiter in the codebase (`app/scraping/ratelimit.py`) is for the
+  unrelated Bandcamp-scraping token bucket, not auth — and this app is publicly reachable
+  (Render), so it was an unbounded online password-guessing exposure. QA's one correction: use a
+  `locked_until: datetime | None` column (mirroring `Blacklist.expires_at`'s shape — expiry is a
+  plain timestamp comparison at read time) rather than a boolean, since a boolean can't expire on
+  its own without a third column.
+  Done: `User` gained `failed_login_attempts: int` (default 0) and `locked_until: datetime | None`
+  (migration `0016_login_lockout`, guarded like 0002-0015). New `Settings.auth_login_max_attempts`
+  (default 5) / `auth_login_lockout_minutes` (default 15) — tunable without a redeploy-and-migrate
+  cycle, per QA. `login()`: a locked account gets 429 with `verify_password` skipped entirely
+  (both to avoid wasted bcrypt work under a guessing attempt and, more importantly, so a locked
+  account never leaks whether the password would otherwise have been right); a failed verify
+  increments the counter and sets `locked_until` once the threshold is hit; a successful login
+  resets both to 0/`None`. Concurrent-request races on the counter (a lost update letting one or
+  two extra attempts slip through) were flagged by QA and accepted as-is — not worth
+  `SELECT ... FOR UPDATE` for a 5-attempt threshold on a small invite-only app. Covered by 4 new
+  tests in `test_auth.py`: locks out after the 5th failed attempt (429 even with the *correct*
+  password on the 6th try, so a 401-vs-429 split can't be used to fish for validity); a successful
+  login below the threshold resets the counter (verified both via a direct DB read and by
+  confirming 3 more failures, not 2, are needed to re-trigger); a lockout clears once its window
+  has passed (same "write a past timestamp directly" convention as
+  `test_expired_blacklist_stops_excluding` — no clock mocking); the threshold is actually driven
+  by `Settings`, not hardcoded (a custom `auth_login_max_attempts=2` locks after 2). 258/258
+  backend tests pass, ruff clean; `alembic upgrade head` / `downgrade -1` / `upgrade head`
+  round-trips clean against a fresh sqlite DB. PR: see git history.
+
+- [x] **Cold-start panel doesn't show the crawl budget.** *(found by the hourly routine,
+  2026-09-03, via direct code audit — same "wired backend field, no frontend consumer" pattern
+  that turned up "Block reason has no UI" this run, see PR #131)* `GET /api/stats`'s
+  `requests_used`/`request_budget` were typed on the frontend (`Stats.requests_used`/
+  `.request_budget`) and already fetched — but only in the one case where `ScanFeedPage` calls
+  `loadStats()` at all: `total === 0` (the cold-start/empty-feed case, see "Cold-start feeds give
+  no reason, just emptiness" above) — and never rendered. That's exactly the situation where
+  knowing "the crawl has used 743 of 1,000 requests this scan" is most useful: it tells a reader
+  looking at an empty feed whether the crawl is still running (budget has room) or has already
+  used up what it's allowed to spend (budget exhausted), instead of just looking sparse with no
+  explanation.
+  Done: `ColdStartPanel` gained two optional props, `requestsUsed`/`requestBudget`, rendering a
+  "N of M crawl requests used this scan." line (reusing the same `count()`/`.num` formatting as
+  its existing counts) on both branches (no-neighbours-yet and the exclusion-breakdown case) when
+  both are present and the budget is nonzero; absent/zero renders nothing extra, so an unrelated
+  caller (or a test) that doesn't pass them is unaffected. Threaded straight through
+  `EmptyState`'s existing `coldStart` pass-through prop, from `ScanFeedPage`'s already-fetched
+  `stats.requests_used`/`stats.request_budget` — no new fetch, no new API surface. Covered by 4
+  new tests in `ColdStartPanel.test.tsx`'s "crawl-budget line" block (renders on both branches
+  when provided; absent when the values are missing or the budget is zero), 1 new test in
+  `EmptyState.test.tsx` (pass-through), and an extension of the existing cold-start integration
+  test in `feed.test.tsx` (asserts the full rendered budget line's text, not a bare number — the
+  mock's `requests_used: 40` collides with its own `cold_start.excluded_wishlisted: 40` as an
+  exact-text match, so the assertion checks the whole sentence instead of a standalone `'40'`).
+  283/283 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Stale comments claimed `FeedCard` has a block-duration picker.** *(found by the hourly
+  routine, 2026-09-03, via direct code audit)* `FeedCard.tsx`'s `onBlock` prop doc and `config.ts`'s
+  `BLOCK_DURATIONS` doc both described a "block for… ▾" picker on the feed card itself — but that
+  picker was deliberately removed from `FeedCard` in #103 (a real product decision, not a
+  regression; only `SidePanels`' "renew ▾" action on an already-temporary block still uses
+  `BLOCK_DURATIONS`/`expiresAt`). Already flagged as a stale-doc risk in
+  `team/memory/tried-and-failed.md` — left uncorrected, a future round could mistakenly re-propose
+  "resurrecting" a feature Roy explicitly rejected.
+  Done: reworded both comments to describe the current, real wiring. Comment-only change; 287/287
+  frontend tests pass, tsc/lint/build clean. Merged (#134).
+
+- [x] **Dead `COPY_LINK_FEEDBACK_MS` constant + `ShortcutsHelp` missing the Ctrl/Cmd+K row.**
+  *(found by the hourly routine, 2026-09-03, via direct code audit)* `config.ts`'s
+  `COPY_LINK_FEEDBACK_MS` was orphaned when `CopyLinkButton`/`CopyMarkdownButton` were removed in
+  #107 — confirmed via a repo-wide grep, its only remaining reference was its own declaration.
+  Separately, `ShortcutsHelp`'s panel lists `l`/`b`/arrows/Home/End/`/`/`?` but never mentioned
+  `Ctrl`/`Cmd`+`K`, even though `CommandPalette` is mounted globally and live on the same page.
+  Done: deleted the dead constant; added the missing shortcuts row plus a test assertion. 287/287
+  frontend tests pass, tsc/lint/build clean (chunk split intact). Merged (#135).
+
+- [x] **Collection-scan neighbour seeding ignores owned standalone tracks.** *(found by the hourly
+  routine, 2026-09-04, via direct code audit)* `_seed_ids()` (`app/curation/engine.py`) only pulled
+  seed ids from owned albums for the `COLLECTION` scan kind (your primary "My collection" feed) —
+  an owned standalone track never contributed to `seed_track_ids`, even though downstream
+  (`_scan_neighbours`, the `CUSTOM` scan branch) was already fully track-aware. Net effect: if you
+  own a standalone track, that track's supporters silently never became your taste-neighbours in
+  your primary feed — a real loss of co-ownership signal, no error.
+  Done: mirrored the existing `album_ids` query with an identical `track_ids` one.
+  `neighbour_size_report`/`cold_start_diagnostics` also benefit, since they share `_seed_ids`. New
+  `test_collection_scan_owned_track_finds_neighbours` confirmed red before the fix, green after.
+  259/259 backend tests pass, ruff clean. Merged (#136).
+
+- [x] **`DELETE /api/scans/{id}` orphans `crawl_frontier`/`provider_usage` rows.** *(found by the
+  hourly routine, 2026-09-04, via direct code audit)* Neither `CrawlFrontier.scan_id` nor
+  `ProviderUsage.scan_id` declares `ondelete="CASCADE"` (unlike `ScanSeed`/`Recommendation`, which
+  do), and `delete_scan` never cleaned them up itself — any scan that has actually run at least
+  once has rows in both tables, so deleting it on Postgres (the real deployment target) raises an
+  unhandled `IntegrityError` (500) instead of succeeding. On SQLite (tests, no FK pragma) the
+  delete instead silently orphans the rows. The only existing delete test deleted a scan
+  immediately after creation, before either table had rows, so this was untested.
+  Done: mirrored the existing explicit `Recommendation` delete with two more explicit deletes
+  (`CrawlFrontier`, `ProviderUsage`) before `session.delete(scan)`. New
+  `test_delete_scan_drops_frontier_and_usage_rows` confirmed red before the fix, green after.
+  260/260 backend tests pass, ruff clean. Merged (#137).
+
+- [x] **A typed block reason is silently discarded unless you press Enter.** *(proposed by the
+  hourly routine, 2026-09-04, Architect+QA-approved with a caveat)* `SidePanels.tsx`'s
+  `BlockedPanel` reason input only committed on `Enter` (`onKeyDown`) — clicking away, tabbing to
+  the next control, or closing the panel dropped whatever was typed with no save and no warning.
+  A second Product proposal from the same round ("wire up the already-dead `recsToMarkdown` into a
+  Copy-as-Markdown button") was caught and dropped before building — see
+  `team/memory/tried-and-failed.md`, it would have reintroduced a feature Roy explicitly asked
+  removed in #107.
+  Done: extracted the existing Enter-commit logic into a shared `commitReason()` and wired it to a
+  new `onBlur` handler too. QA flagged a real race first: disabling the input mid-save (the
+  existing `disabled={rowBusy}`) itself fires a browser blur event, which would otherwise
+  re-submit the same value a second time while the Enter-triggered save is still in flight — guarded
+  by skipping the blur commit whenever `rowBusy` is true. No success toast added (scope check found
+  the row's own `· "reason"` text already updates once the save lands, via the same `loadBlocked()`
+  every sibling action — `renew`/`unblock` — already uses without a toast either, so adding one here
+  would have been an inconsistency, not a fix). Covered by three new tests in `SidePanels.test.tsx`:
+  blur commits a changed, non-blank reason; blur with unchanged/blank text does not; blur while the
+  row's own save is already in flight does not double-submit. 290/290 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR: see git history.
+
+- [x] **Seed resolution status has no UI.** *(proposed by the hourly routine, 2026-09-04,
+  Architect+QA-approved with corrections)* `GET /api/scans/{id}` (`ScanDetailOut.seeds`) has always
+  returned each seed's `url`/`seed_type`/`resolved_album_id`/`resolved_track_id`, fully typed on the
+  frontend (`ScanSeed`) and fetched on every scan-detail load — but grep confirmed zero UI component
+  ever rendered it, so a user who seeded a scan with several Bandcamp URLs had no way to see which
+  ones actually resolved to a real album/track vs which were a typo or a removed release, especially
+  while the scan was still `queued`/`running` (when it matters most). A companion Product proposal
+  from the same round — a co-owner count badge on `FeedCard` — was rejected before reaching QA: `git
+  log -S'"score"'` showed the score/co-owner badge was deliberately hidden the day before (#122,
+  Roy co-authored, browser-verified) with the score kept only for sorting/CSV; see
+  `tried-and-failed.md`.
+  Done: new pure helper `lib/seedStatus.ts` (`seedStatus(seed, scanStatus)` → `'resolved' |
+  'pending' | 'unresolved'` — resolved once either id is set regardless of scan status; otherwise
+  `pending` while the scan is `draft`/`queued`/`running`, `unresolved` once it's `done`/`error`,
+  since `ScanSeed` has no separate failure signal so a still-null seed after crawling is a normal
+  outcome, not an error). New `SeedsPanel` in `SidePanels.tsx`, following the exact `LikedPanel`/
+  `BlockedPanel` shape (`.panel.sidepanel` > `.rows`/`.row`, no new CSS) — no pagination, since a
+  scan's seed list is bounded by one form submission, not a growing per-user total. Toggled by a new
+  "Seeds (N)" button in `ScanFeedPage.tsx`'s `feednav` (next to "← Scans"/the scan title), not
+  inside `FilterBar` — `FilterBar`/the Liked/Blocked toggles only render once `showFeed` is true
+  (`status !== 'queued' && status !== 'draft'`), exactly the states where seed status is most
+  useful to check. `panel` state (previously `'liked' | 'blocked' | null`) widened to include
+  `'seeds'`, reusing the same single-open-panel state as the other two. Covered by table-driven
+  tests in `seedStatus.test.ts` (all 5 `ScanStatus` values × resolved/unresolved), two new tests in
+  `SidePanels.test.tsx` (`SeedsPanel` renders every url + status; a still-unresolved seed reads
+  "Not found" once `scanStatus` is `'done'`), and two integration tests in `feed.test.tsx`'s new
+  "seed resolution panel" block (no Seeds toggle at all when `scan.seeds` is empty; the toggle
+  appears and the panel opens/closes with correct per-seed statuses on a `queued` scan, where the
+  Liked/Blocked toggles are confirmed absent). PR: see git history.
+
+- [x] **Cold-start diagnostics never accounted for liked items.** *(found by the hourly routine,
+  2026-09-04, via a targeted backend correctness audit — this run's second task)* `build_exclusions()`
+  treats a liked item (and its whole band) as a full exclusion category alongside owned/wishlisted/
+  followed/blacklisted, but `cold_start_diagnostics()` — the separate query `GET /api/stats` uses to
+  explain why a scan's feed came back thin or empty — only ever checked the first four. A candidate
+  excluded solely because the user liked it (or liked another release by the same band) showed up in
+  `candidates` with none of the `excluded_*` counters accounting for it, actively misleading the
+  "why is my feed empty" diagnostic this feature exists for. Confirmed via the original "Cold-start
+  feeds give no reason" design note above (only four reasons were ever implemented/tested) that this
+  was a genuine oversight, not a documented decision to leave likes out.
+  Done: added the missing `"liked"` bucket end-to-end — `engine.py`'s `reasons` dict and per-candidate
+  loop (reusing the same `Like`-table queries `build_exclusions` already does), `ColdStartOut.
+  excluded_liked` (`app/api/feed.py`), the frontend `ColdStart` type, and a new "· N liked" segment
+  in `ColdStartPanel`'s exclusion line. New `test_cold_start_diagnostics_counts_liked_items` (mirrors
+  the existing `..._everything_excluded_by_follows` fixture shape) confirms a liked candidate is now
+  counted; three existing tests asserting exact `excluded_by_reason` dicts updated for the new key.
+  261/261 backend tests pass, ruff clean; 301/301 frontend tests pass, tsc/lint/build clean. PR: see
+  git history.
+
+- [x] **A crawl entry could be permanently failed by its first real timeout.** *(found by the
+  hourly routine, 2026-09-04, via a second targeted backend correctness audit — this run's third
+  task)* `runner.process_one`'s `TimeoutError` handler capped retries by checking `entry.attempts >=
+  MAX_ENTRY_TIMEOUTS`, but `attempts` is the fairness-pass counter bumped on every `claim_next` —
+  including the ordinary, non-failure `mark_partial` re-page a large collection needs several visits
+  to fully page through (p90 ~1,700 items, `PAGES_PER_VISIT=10` → ~5 claims with zero timeouts). Once
+  such a collection's `attempts` passed `MAX_ENTRY_TIMEOUTS` purely from normal pagination, its very
+  next genuine timeout — even a single one — permanently failed the entry instead of allowing the
+  intended number of retries, silently truncating an otherwise-healthy collection's crawl. Worse for
+  the owner's own collection scan specifically: `finalize_scan` refuses to curate until that self-crawl
+  entry reaches `DONE`, so this could permanently block a user's own feed from ever curating.
+  Done: added `crawl_frontier.timeout_count` (migration `0017`), incremented only in the `TimeoutError`
+  path and reset to 0 by `mark_done`/`mark_partial` (real progress) — fully decoupled from `attempts`.
+  New `test_ordinary_reclaims_do_not_count_toward_the_timeout_cap` simulates several ordinary re-claims
+  (pushing `attempts` past the old threshold with zero timeouts) followed by one real timeout, and
+  confirms the entry is re-queued (`PENDING`) rather than failed (`ERROR`). 262/262 backend tests pass,
+  ruff clean; `alembic upgrade head` / `downgrade -1` / `upgrade head` round-trips clean against a
+  fresh sqlite DB. PR: see git history.
+
+- [x] **Escape doesn't clear the quick filter.** *(proposed by the hourly routine, 2026-09-04 — this
+  run's fourth task)* Every other transient input/overlay in this app (`Dropdown`, `CommandPalette`,
+  `ShortcutsHelp`) closes/resets on Escape; the feed's quick-filter search box (`Search (/)`,
+  `FilterBar.tsx`) was the one text input that didn't follow that convention — clearing a typed query
+  meant select-all-and-delete or repeated backspace. Verified as a genuine, previously-unproposed gap
+  (not a resurfacing of either of this run's two deliberate-removal traps — this is a text-input
+  interaction, not a card/feed display element): grepped `FilterBar.tsx`/`ScanFeedPage.tsx` for
+  existing Escape handling (none on the quick-filter input) and both memory files for any prior
+  Escape-related entry (all were about `Dropdown`/`CommandPalette`/`ShortcutsHelp`, none about this).
+  Done: the quick-filter `<input>` gained an `onKeyDown` — Escape clears the query if non-empty;
+  Escape on an already-empty query blurs the input instead, so the card-list keyboard shortcuts
+  (`l`/`b`, arrow-key nav) work again without an extra Tab or click. Covered by two new tests in
+  `feed.test.tsx`: typing a query that narrows the list, then Escape, restores every card and empties
+  the input; Escape on an empty, focused input blurs it. 303/303 frontend tests pass, tsc/lint/build
+  clean (chunk split intact). PR: see git history.
+
+- [x] **Delete two pieces of orphaned dead code.** *(hourly routine, 2026-09-04 — this run's first
+  task, Option C)* Product's round this task proposed three ideas, all cut before an Architect+QA
+  call: a light/dark theme toggle (`frontend/CLAUDE.md`'s "Already satisfied" section states plainly
+  "Single-theme dark is a stated choice, not a missing light mode" — this would have reversed a
+  documented deliberate decision, same trap as the score-badge/via-tags catches logged above); a feed
+  sort control (`FilterBar.tsx` already has one — `Dropdown label={\`Sort · ...\`}` backed by
+  `SortKey`/`SORTS` — confirmed by grep, a straight duplicate); and debouncing the quick-filter search
+  box (`ScanFeedPage.tsx`'s `visibleRows` is a plain `useMemo` filter over the *currently loaded page*
+  of rows, not the thousands-of-tags case `frontend/CLAUDE.md` rule 8 is about — no measured problem,
+  premature optimization).
+  Picked up instead: two genuinely dead pieces of code already flagged as "fair game for a future
+  cleanup" in `team/memory/tried-and-failed.md`'s 2026-09-04 entries — `lib/markdown.ts`'s
+  `recsToMarkdown` (zero callers outside its own test; the button that used it was deliberately
+  removed per Roy's request) and the orphaned `.via` CSS rule in `feed.css` (left behind by the same
+  day's removal of the "via <tags>" reasons line, #103). Confirmed both had no other references via
+  grep before deleting. No functional change. 297/297 frontend tests pass (303 minus
+  `markdown.test.ts`'s 6), tsc/lint/build clean (chunk sizes unchanged). PR #143, merged.
+
+- [x] **The "?" shortcuts panel is invisible outside a scan's feed page.** *(proposed by the hourly
+  routine, 2026-09-04, Architect+QA-approved — this run's second task, Option C)* Product's round was
+  told to actually grep/read `SidePanels.tsx`/`NewScanForm.tsx`/`CommandPalette.tsx`/`AppHeader.tsx`/
+  the auth pages before proposing, to avoid another duplicate. Found: `App.tsx` mounts
+  `<CommandPalette>` globally (Ctrl/Cmd+K already works on the plain `/scans` list page), but
+  `<ShortcutsHelp>` — the only UI documenting the palette's existence — was mounted exclusively
+  inside `ScanFeedPage.tsx`. So a user who signs up and lands on `/scans` without opening a scan has
+  no way to discover Ctrl/Cmd+K exists, and "?" does nothing there.
+  Done, with one refinement over the raw proposal (its shortcut list mixes global rows — the palette,
+  the panel's own toggle — with feed-only rows — l/b, arrow-key card nav, quick filter — and a bare
+  move would have shown the feed-only rows on pages with no cards for them to act on): `SHORTCUTS` in
+  `ShortcutsHelp.tsx` now carries a `feed: boolean` flag per row; a new `feedShortcuts` prop (default
+  `true`, so the pre-existing standalone tests were unaffected) filters them out when false. Moved the
+  component's mount from `ScanFeedPage.tsx` into `App.tsx` next to `CommandPalette`, deriving
+  `feedShortcuts` from `useMatch('/scans/:scanId') !== null`. Trade-off, disclosed in the PR: its
+  small JS/CSS moves from the lazy `ScanFeedPage` chunk into the eager main chunk (~2.7KB gzipped) —
+  unavoidable, since it now has to work outside that route. Covered by a new `ShortcutsHelp.test.tsx`
+  case (`feedShortcuts={false}` keeps the global rows, drops the feed-only ones) and a new
+  `feed.test.tsx` integration test navigating `/scans` → `/scans/1` and asserting the panel's content
+  differs correctly on each. 299/299 frontend tests pass, tsc/lint/build clean (chunk split intact
+  apart from the disclosed trade-off). PR #144, merged.
+
+- [x] **`SeedsPanel` updates silently as a scan resolves seeds.** *(proposed by the hourly routine,
+  2026-09-04, Architect+QA-approved — this run's third task, Option C, found in the same round as the
+  global shortcuts-panel item above)* `SeedsPanel`'s `<ul>` of seed rows (`SidePanels.tsx`) updates as
+  `ScanFeedPage` polls a running scan — a seed flips from "Pending" to "Resolved"/"Not found" — with
+  no announcement, unlike other async-updating regions already in this app (`ScanListPage`'s skeleton
+  wrapper, `BulkActionBar`, `OfflineBanner`, all `role="status"`).
+  Done: wrapped the `<ul>` in a `role="status" aria-live="polite"` `div` — deliberately not on the
+  `<ul>` itself, which would have stripped its implicit list/listitem semantics. Covered by a new test
+  in `SidePanels.test.tsx`: render with one pending seed, assert `getByRole('status')` shows "Pending",
+  rerender with it resolved, assert the same live region now shows "Resolved". 298/298 frontend tests
+  pass, tsc/lint/build clean (chunk sizes unchanged). PR: see git history.
+
+- [x] **`seed_tags()` ignores genres carried only by owned tracks.** *(found by an Explore-agent
+  backend audit, 2026-09-04 — this run's fourth task, Option C)* Prompted to look for one genuine,
+  previously-unfixed correctness bug (not needing a live crawl), grounded in actual source, distinct
+  from a list of already-fixed examples. Found and self-verified against source before building:
+  `curation.engine.seed_tags()` (the values `GET /api/facets` offers for "exclude by seed genre")
+  joined `FanItem` to `AlbumTag` only — a genre carried exclusively by an owned standalone track (no
+  album with that tag) silently never appeared, even though `_effective_track_tags`/
+  `_seed_tag_provenance` in the same file already treat track genres as legitimate seed tags. Exact
+  same bug class already fixed once in the sibling endpoint, `GET /api/facets`'s own `tags` list in
+  `app/api/feed.py` (comment there: "an inner join on AlbumTag alone... never matches a track
+  recommendation... a genre that only tracks carry silently never showed up as a facet") — that fix
+  was never applied to `seed_tags()`. Not caught by the existing
+  `test_seed_tags_lists_my_album_genres`, which only exercises album-sourced genres.
+  Done: `seed_tags()` now also queries `TrackTag`-joined counts and merges them with the album counts
+  in Python — kept as two separate grouped queries rather than a SQL `UNION`, to avoid the
+  id-namespace collision a bare `album_id`/`track_id` union would risk (album id 5 and track id 5 are
+  different items but the same integer). Covered by a new
+  `test_seed_tags_lists_my_track_genres_too`. 263/263 backend tests pass, ruff clean. PR: see git
+  history.
+
+- [x] **Failed scans have no way to retry.** *(proposed by the hourly routine, 2026-09-04, Option C —
+  Architect+QA-approved)* Product's round was fed the real frontend file inventory plus the list of
+  deliberate removals not to resurrect (score badge, "via tags" line, copy buttons, theme toggle) and
+  told to ground any idea in a specific file. Most candidates it checked (delete confirmation,
+  bulk-block confirmation, session-expiry warning, roving tabindex, undo/retry patterns, error
+  boundary, offline handling, CSV export, filter-state persistence, shortcuts-help accuracy) were
+  already built. Grepping for API-client methods with zero call sites turned up two real gaps — this
+  entry and the next.
+  `api/client.ts` already defines `runScan: (id) => POST /api/scans/{id}/run` and the backend already
+  supports re-queuing an errored/draft scan — but `grep -rn "runScan"` found only the definition, no
+  caller. A scan that ends in `status === 'error'` (e.g. the crawl budget ran out mid-collection, per
+  `CLAUDE.md`) showed an error banner with no action; for a `kind === 'collection'` scan it was worse,
+  since `DeleteScanButton` refuses to render for that kind at all — zero recovery path in the UI.
+  Done: new `components/RetryScanButton.tsx` (busy state, calls `api.runScan(scanId)`, hands the fresh
+  `ScanDetail` back via an `onRetried` callback rather than re-fetching, toasts on failure). Wired into
+  `ScanFeedPage.tsx`'s existing error banner via `onRetried={setScan}`, so the banner flips straight to
+  "Queued — waiting for the crawl worker…" without waiting on the next poll. Covered by a new test in
+  `feed.test.tsx`. 301/301 frontend tests pass, tsc/lint/build clean. Merged (#147).
+
+- [x] **"My genres" exclude-seed-tag dropdown.** *(proposed by the hourly routine, 2026-09-04,
+  Architect+QA-approved, found in the same round as the item above)* `facets.seed_tags`
+  (`GET /api/facets`) was typed on the frontend and already fetched by `ScanFeedPage.tsx`'s
+  `loadFacets`, but discarded — nothing called `api.recompute(scanId, excludeSeedTags)`
+  (`api/client.ts`), so the backend's "exclude recommendations that came from your own collection's
+  genres" feature (`POST /api/recommendations/recompute?exclude_seed_tag=...`) had no UI. Architect+QA
+  called it sound but the bigger of the two gaps this round found, queued for its own full sitting
+  rather than bundled with the smaller retry-scan fix above.
+  Done: new `MyGenresDropdown` in `FilterBar.tsx`, mirroring the existing `GenreDropdown`'s
+  searchable-checkbox-list shape but against `facets.seed_tags` instead of `facets.tags`, and against
+  local pending/applied state instead of the URL-persisted `useFeedFilters` (this is a one-shot
+  curation-time recompute, not a client-side filter — the backend doesn't persist `exclude_seed_tag`
+  across other recomputes, e.g. a crawl slice). `ScanFeedPage.tsx` threads `seedTagFacets`
+  (from `loadFacets`'s previously-discarded `data.seed_tags`) and a new `applySeedTagExclusion`
+  handler down to it: calls `api.recompute(scanId, tags)`, then directly reloads via
+  `Promise.all([loadFirstPage(), loadFacets()])` rather than waiting on the poll-driven
+  `recompute_generation` effect, since that effect only re-arms on a fresh `loadScan()` and polling
+  itself stops once a scan is `done` — the common case for browsing an already-finished feed. Guarded
+  by the existing shared `inFlight` ref (keyed `'seedtags'`) against a double-submit; a failure (e.g.
+  the backend's recompute cooldown) shows an alert toast rather than silently no-opping. The applied
+  set is tracked client-side (`excludedSeedTags`) purely to drive the dropdown's trigger label/count
+  and its pre-filled selection on reopen — there's nothing server-side to read it back from. Covered
+  by a new test in `feed.test.tsx`: opens the dropdown, selects a genre, clicks Apply, asserts
+  `POST /api/recommendations/recompute?...exclude_seed_tag=ambient...` was called and the trigger
+  label updates to "My genres (1) ▾". 301/301 frontend tests pass, tsc/lint/build clean (chunk split
+  intact — lands in the `ScanFeedPage` chunk, its only importer). PR: see git history.
+
+- [x] **A purchased item stays permanently wishlisted.** *(found by an Explore-agent backend audit,
+  2026-09-04 — this run's third task, Option C)* Prompted to find one genuine, previously-unfixed
+  correctness bug grounded in actual source, not requiring a live crawl, distinct from ~10 already-
+  fixed examples supplied for context (seed_tags/TrackTag, cold-start liked bucket, timeout_count vs
+  attempts, delete_scan orphaned rows, owned-track neighbour seeding, follows cross-tenant scoping,
+  seed-tag provenance bypass, track tag-affinity, deterministic tie-break, login lockout). Found and
+  self-verified against source before building: `app/bandcamp/mapper.py`'s `_add_fan_item` matches an
+  existing `FanItem` row on `(fan_id, item_type, album_id, track_id)` only — the same columns as the
+  `uq_fan_item` unique constraint, which also excludes `is_wishlist` — so at most one row can ever
+  exist per item. When a match is found the function just returns `False` (no new row needed) without
+  ever touching `is_wishlist` on the existing row. A fan who wishlists an album and later actually buys
+  it gets re-ingested with `is_wishlist=False` against that same row on the next collection crawl — but
+  the row silently stays wishlisted forever. Downstream, `curation/engine.py` filters "owned" via
+  `FanItem.is_wishlist.is_(False)` in `_seed_ids` (collection-scan neighbour seeding), the owner's own
+  tag profile, and co-owner overlap weighting (ADR-0003) — so a purchased-but-formerly-wishlisted item
+  permanently never seeds the crawl, never contributes to taste/tag affinity, and never counts toward
+  neighbour overlap. `/api/stats`'s owned/wishlist counts are wrong for it too. Not caught by the
+  existing `test_wishlist_ingested_as_flagged_fan_items`, which only exercises a single ingest pass.
+  Done: `_add_fan_item` now flips `existing.is_wishlist = False` when a currently-wishlisted row is
+  re-observed as owned (ownership wins over a stale wishlist flag; the reverse — an owned item later
+  merely wishlisted, which shouldn't happen in practice — is left alone). New
+  `test_purchasing_a_wishlisted_item_flips_it_to_owned` builds two `FanCollection`s directly (no HTML
+  round-trip needed, `ingest_fan_collection` takes the dataclass) — first with the item on the
+  wishlist, then the same item as owned — and asserts exactly one `FanItem` row exists throughout and
+  ends with `is_wishlist is False`. 264/264 backend tests pass, ruff clean. PR: see git history.
+
+- [x] **"Back to top" ignores the reduced-motion preference.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `ScanFeedPage.tsx`'s `scrollToTop` calls `window.scrollTo({top:
+  0, behavior: 'smooth'})` unconditionally. `base.css`'s `prefers-reduced-motion` block only zeroes
+  CSS transition/animation durations — it can't reach a native imperative smooth-scroll — so this was
+  the one motion effect in the app that preference didn't actually cover.
+  Done: new `lib/motion.ts`'s `prefersReducedMotion()` (checks
+  `matchMedia('(prefers-reduced-motion: reduce)').matches`), used in `scrollToTop` to pick `'auto'`
+  instead of `'smooth'` when set. Also added a `window.matchMedia` shim to `test/setup.ts` (jsdom
+  doesn't implement it), matching the existing `localStorage`/`IntersectionObserver` shim pattern —
+  defaults to `matches: false` so no existing test's behavior changed. Covered by a new
+  `motion.test.ts` (false/true/queries-the-right-media-feature) and a new integration test in
+  `feed.test.tsx`'s "scroll-to-top button" block asserting `scrollTo` is called with
+  `{top: 0, behavior: 'auto'}` when `matchMedia` reports the preference. 306/306 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). Merged (#150).
+
+- [x] **Session-expiry warning toast has no way to act on it.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `lib/useSessionExpiryWarning.ts` calls
+  `showToast(SESSION_EXPIRING_MESSAGE, 'alert')` with no `action`, even though `Toast.action`/
+  `ToastStack` already render a one-click action button (used today for like/block retries) and
+  `AuthContext.tsx` already has `logout` in scope right where the hook is called.
+  Done: `useSessionExpiryWarning(token, logout)` takes `logout` as a second, required param and
+  attaches `{label: 'Log out now', onClick: logout}` to the warning toast. `AuthContext.tsx`'s one
+  call site passes its own (already `useCallback`-stable) `logout`. Per the QA watch-out, `logout` is
+  listed as a real effect dependency rather than only read imperatively — since `AuthContext`'s
+  `logout` identity is stable across renders, this doesn't reschedule the timer any more than `token`
+  alone already did, so it doesn't reopen the StrictMode double-timer risk the note flagged. Covered
+  by a new test in `useSessionExpiryWarning.test.ts` asserting the fired toast's `action.label` is
+  "Log out now" and that clicking it calls the passed-in `logout` mock exactly once; the four
+  pre-existing tests in that file were updated to pass a `vi.fn()` for the new required param, no
+  behavior change. `ToastStack`'s own generic "renders an action button and runs it" coverage
+  (already shipped for the like/block-retry actions) exercises the same rendering mechanism, so no
+  duplicate `ToastStack`-level test was added. 304/304 frontend tests pass, tsc/lint/build clean
+  (chunk split intact). Merged (#151).
+
+- [x] **Cosmetically-different duplicate seed URLs aren't caught.** *(proposed by the hourly routine,
+  2026-09-07, Architect+QA-approved)* `NewScanForm.tsx`'s `addSeed` and `onSeedPaste` both dedupe by
+  exact trimmed-string equality, so `https://x.bandcamp.com/album/y` and
+  `https://X.BANDCAMP.com/album/y/` (differing only by host case or a trailing slash) are treated as
+  two distinct seeds, silently burning a slot on a scan with a small, budget-limited seed list.
+  Done: new `normalizeSeedUrl(url)` in `lib/format.ts` — lowercases the host only (not the whole URL,
+  since Bandcamp slug case could matter server-side even if it usually doesn't) and strips a trailing
+  slash from the path, falling back to the trimmed raw string if it doesn't parse as a URL at all
+  (mirrors `bandcampHandle`'s try/catch). `addSeed` compares against normalized values instead of raw
+  equality; `onSeedPaste` builds its `seen` set from normalized keys, seeded from the existing list
+  and grown as each pasted line is accepted, so it catches a duplicate against what's already there
+  **and** a duplicate repeated within the same paste. Per the QA watch-out, both call sites keep
+  pushing/storing the user's original raw URL — normalization is for the comparison only, nothing
+  typed or pasted is silently rewritten. Covered by 4 new tests in `format.test.ts`
+  (trailing-slash equivalence, host-case-insensitive but path-case-preserving, two genuinely
+  different URLs stay distinct, a non-URL string falls back to itself) and 2 new integration tests in
+  `NewScanForm.test.tsx`: a host-case + trailing-slash variant of an already-added seed is rejected
+  via the single-add path and the original (unrewritten) URL is what's kept; a paste with a cosmetic
+  duplicate of an existing seed and another repeated within the paste itself lands exactly 2 distinct
+  entries. 312/312 frontend tests pass, tsc/lint/build clean (chunk split intact). Merged (#152).
+
+- [x] **CSV export filename collides across scans on the same day.** *(proposed by the hourly
+  routine, 2026-09-07, via a targeted Product read-the-actual-files round, Architect+QA-approved)*
+  `FilterBar.tsx`'s "Export CSV" button built the filename as `bandcamp-feed-${date}.csv` — date
+  only, no scan identity — even though `ScanListPage.tsx` clearly supports multiple named scans and
+  `ScanFeedPage.tsx` already has `scan.name` in scope right where `FilterBar` is rendered. Exporting
+  two different scans on the same day produced two files with the identical name, silently
+  overwriting one in the browser's Downloads folder.
+  Done: new `exportFilename(scanName: string | null, date: Date): string` in `lib/export.ts` —
+  slugifies the name (lowercase, non-alphanumeric runs collapsed to `-`, leading/trailing `-`
+  trimmed, capped at 50 characters so an unusually long scan name can't produce an unwieldy
+  filename) and appends it between the existing `bandcamp-feed-` prefix and the date; falls back to
+  the original date-only form for a `null` name or one that's empty/all-punctuation after slugifying
+  (an empty segment in the filename otherwise). `FilterBar` takes a new required `scanName` prop,
+  threaded from `ScanFeedPage.tsx`'s `scan?.name ?? null` at its one call site; the export button's
+  `onClick` now calls `exportFilename(scanName, new Date())` instead of building the string inline.
+  Per the QA watch-out, both call sites keep storing/submitting nothing new here — this only affects
+  the downloaded filename, not what's in the CSV. Two differently-named scans exported the same day
+  now get distinct files instead of overwriting each other; two scans that happen to share the exact
+  same name are a separate, pre-existing, much narrower edge case not addressed here (nothing in the
+  schema enforces scan-name uniqueness). Covered by 7 new tests in `export.test.ts` (null-name
+  fallback, slugified name, punctuation/whitespace collapsing, empty/all-punctuation fallback, the
+  50-character cap, two distinct names produce distinct filenames) and one extended integration test
+  in `feed.test.tsx`'s "export feed as CSV" block, capturing the anchor's `download` attribute and
+  asserting it matches `bandcamp-feed-my-collection-YYYY-MM-DD.csv` for the fixture scan named "My
+  collection". 318/318 frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git
+  history.
+
+- [x] **Saved filter views.** *(proposed by the hourly routine, 2026-09-08, Architect+QA-approved)*
+  Product's round proposed three ideas; two were cut before building. A "copy link for the current
+  filtered view" idea was rejected by the routine itself, not QA — grepping the current tree found no
+  `CopyLinkButton` anywhere and `COPY_LINK_FEEDBACK_MS` was explicitly deleted as dead code in a past
+  PR (#135), so this would have resurrected functionality Roy removed on purpose (same trap as the
+  score-badge/"via tags" catches in `tried-and-failed.md`). A "recently added" sort was cut by
+  Architect+QA on a real technical ground, not scope: `Recommendation` has no `created_at` (only
+  `computed_at`), and recommendations are wholesale cleared and reinserted on every recompute inside
+  one transaction — so every row from a given recompute gets essentially the same timestamp, making
+  "recent" degenerate into "last recompute's insert order," not a real recency signal. Doing this
+  properly needs a `first_seen_at` that survives clear+insert, which is a schema + curation-logic
+  change, not a one-hour add-a-sort-key task — left unqueued rather than built half-right.
+  The surviving idea: someone checking the same filter combination repeatedly (e.g. "house, excluding
+  my genres") had to rebuild it by hand every visit even though `useFeedFilters` already expresses
+  every view as a URL.
+  Done: new `lib/savedViews.ts` — pure `listViews`/`saveView`/`deleteView` against a
+  `crate-digger.savedViews:<scanId>` `localStorage` key (`try`-wrapped the same way `api/client.ts`'s
+  token storage is), capped at `SAVED_VIEWS_CAP` (8, new in `config.ts`) with the oldest evicted first.
+  New `components/SavedViewsDropdown.tsx` — a `Dropdown` (reusing the shared component, no new
+  popover mechanics) with a name input ("press Enter to save", matching `ContainsDropdown`'s existing
+  Enter-to-add convention) that saves `location.search` under the typed name, plus a list of saved
+  views below it: each row is a `.ddrow` "apply" button (navigates to `${location.pathname}${v.
+  search}`) paired with a `RemoveButton` for delete — two independent actions, so unlike every other
+  `.ddlist` row this can't be one `<button className="ddrow">` (nested buttons are invalid HTML), a
+  new `.ddviewrow` wrapper in `Dropdown.css` handles the pairing. `RemoveButton`'s `.rm` styling is
+  ancestor-scoped (`.fpill .rm`, `.seed .rm` — no bare `.rm{}` rule), so `.ddviewrow .rm` needed its
+  own small rule mirroring `.fpill .rm`'s, also added to the coarse-pointer touch-target block in
+  `base.css` alongside the other two. Wired into `FilterBar.tsx` next to `MyGenresDropdown`, which
+  needed a new required `scanId: number` prop threaded from `ScanFeedPage.tsx`'s already-narrowed
+  (non-null past its own early return) `scanId`. Storage is per-scan and purely local — nothing
+  server-side to sync, so switching scans naturally shows a different list with no extra state to
+  clear. Covered by 10 new tests in `savedViews.test.ts` (round-trip, per-scan isolation, delete by id
+  and delete-of-missing-id as a no-op, cap eviction keeps the most recent oldest-first, corrupted/
+  non-array-of-views stored values fall back to empty, both functions degrade silently rather than
+  throwing when `localStorage` itself throws) and 5 new integration tests in `feed.test.tsx`'s new
+  "saved filter views" block: saving lists it in the dropdown and updates the trigger's own count
+  label; a saved view survives closing and reopening the dropdown (real persistence, not just local
+  component state); clicking a saved view navigates back to its stored filter query after the live
+  filter was cleared; deleting a view removes it without navigating anywhere; two different scan ids
+  keep entirely separate `localStorage` keys. 334/334 frontend tests pass (319 + 15), tsc/lint/build
+  clean (chunk split intact — the new component lands inside the `ScanFeedPage` chunk, its only
+  importer, confirmed by the chunk's gzip size moving from 11.21 kB to 11.73 kB while the eager
+  `index-*.js` chunk was untouched). PR: see git history.
+
+- [x] **Sort control on the scans list.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `ScanListPage` rendered `GET /api/scans` in whatever order the API
+  returned with zero way to reorder — once someone has more than a handful of scans, finding the one
+  they want meant scanning the whole list top to bottom. A sibling proposal from the same round (a
+  filter box in the Liked/Blocked side panels, `SidePanels.tsx`) was left unqueued: QA called it
+  sound and testable but realistically 70-90 minutes rather than one sitting once you account for the
+  two panels needing near-identical filter logic and each needing a *third* empty-state branch ("no
+  items at all" vs. "items exist but none match the filter") beyond their current single
+  `items.length === 0` check — flagged for whoever picks it up next to extract a small shared
+  hook/component first rather than copy-pasting the filter logic into both panels inline.
+  Done: `ScanListPage.tsx` gets `ScanSortKey = 'recent' | 'name' | 'recs'` and a pure
+  `compareScans(a, b, key)` — `'recent'` puts a never-run scan (`last_run_at === null`) last, same
+  null-handling convention `SidePanels.tsx`'s `byExpirySoonestFirst` already uses for a not-quite
+  parallel case (there it's ascending-soonest for an expiry; here it's descending-latest for a run
+  time, but a null sorts last in both). `sortedScans = useMemo(() => scans ? [...scans].sort(...) :
+  null, [scans, sortKey])` is a plain derived value, not an effect — `scans` is replaced wholesale on
+  every poll tick, so this just re-sorts on the next array identity with no ticket/race concern (this
+  isn't a filtered fetch like `ScanFeedPage`'s `feedSeq` guards against). A `Dropdown` (the shared
+  component, not a copy of `FilterBar`'s server-side Sort control — QA's one correction to the
+  original pitch: that one drives an API query param via `useFeedFilters`/`useSearchParams`, this one
+  is a new, purely client-side array sort, only the `Dropdown` shell and `ddrow`/`sel` visual
+  convention are actually reused) renders next to "+ New scan" inside a new `.scanhead-actions` flex
+  wrapper, shown only once there's more than one scan to reorder. Defaults to `'recent'`. Covered by
+  4 new tests in `feed.test.tsx`'s `scan list > sort control` block: no sort control at all for a
+  single scan; the default order is most-recent-first with a never-run scan last; selecting "Name
+  (A-Z)" or "Most recs" re-orders the rendered `.scan-nm` text nodes accordingly (all three scans
+  given `status: 'done'` so the polling effect's `setTimeout` never arms during the assertions).
+  338/338 frontend tests pass (334 + 4), tsc/lint/build clean (chunk split intact — lands inside the
+  `ScanListPage` chunk, its only importer). PR: see git history.
+
+- [x] **Filter box in the Liked/Blocked side panels.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved earlier this run, queued with a scoping note in the "Sort control on the
+  scans list" entry above — picked up as this run's next task rather than left for later)*
+  `LikedPanel`/`BlockedPanel` (`SidePanels.tsx`) already hold their full item list in memory (used
+  for the existing "Show more"/`SIDEPANEL_PAGE_SIZE` slicing), with no way to search it — finding one
+  entry among many meant clicking "Show more" repeatedly and scanning by eye.
+  Done, following QA's own scoping note (extract the shared logic first, then wire both panels, to
+  keep it inside one sitting instead of copy-pasting near-identical filter code twice): new
+  `lib/panelFilter.ts` — pure `matchesPanelQuery(fields, query)`, a case-insensitive substring match
+  against any of the given fields, same "empty query matches everything" convention as
+  `lib/quickFilter.ts`'s `matchesQuery`. Both panels get a `query` state and a search `<input>`
+  (`aria-label="Search liked items"` / `"Search blocked artists"`), filtering **before** the existing
+  slice — QA's flagged gotcha: filtering `visible` after the slice would have silently shown fewer
+  real matches than `SIDEPANEL_PAGE_SIZE` implies. `BlockedPanel` filters before its existing
+  `byExpirySoonestFirst` sort, not after (order doesn't matter for correctness there, but matches the
+  existing code's "filter, then sort" shape). Each panel also gained the QA-flagged **third**
+  empty-state branch: "nothing at all" (existing copy, search box hidden — no point searching an
+  empty list) vs. "items exist but none match" (new "No matches for &ldquo;query&rdquo;." message,
+  search box still shown so it can be cleared) vs. the normal list. `Show more`'s visibility check
+  now compares against the filtered count, not the raw item count. Covered by `lib/
+  panelFilter.test.ts` (4 unit tests: cross-field match, no-match, empty/whitespace query passthrough,
+  null/undefined field tolerance) and 6 new integration tests in `SidePanels.test.tsx` (3 per panel):
+  narrows to matching rows by the right fields (title/band name for Liked; band name/reason for
+  Blocked); shows the distinct no-match message instead of the "nothing yet" one, with zero action
+  buttons rendered; no search box at all when the list itself is empty. 348/348 frontend tests pass
+  (338 + 10), tsc/lint/build clean (chunk split intact — the new `lib/panelFilter.ts` lands inside the
+  `ScanFeedPage` chunk, `SidePanels.tsx`'s only importer). PR: see git history.
+
+- [x] **`uq_fan_item` never actually rejected a duplicate.** *(found by an Explore-agent backend
+  audit, 2026-09-08 — this run's fourth task)* Prompted to find one genuine, previously-unfixed
+  correctness bug grounded in actual source, not requiring a live crawl, distinct from a long list of
+  already-fixed examples supplied for context. Found and self-verified against source before
+  building: `FanItem.uq_fan_item` was a single `UniqueConstraint` on `(fan_id, item_type, album_id,
+  track_id)` — but an album row always has `track_id` NULL and a track row always has `album_id`
+  NULL, and standard SQL treats NULL as distinct from NULL even inside a unique constraint. So this
+  constraint never rejected anything for album or track rows (confirmed empirically: two identical
+  album `FanItem` rows both inserted without error, both before and independently of this fix).
+  `_add_fan_item`/`_add_edge_or_false` (`app/bandcamp/mapper.py`) explicitly rely on this constraint
+  as their concurrent-worker race backstop — two crawl workers ingesting overlapping collection pages
+  for the same fan is documented in the mapper's own comments as "the common case, not the exotic
+  one" — so the race silently produced duplicate ownership rows, inflating the owned/wishlist counts
+  `GET /api/stats` and `neighbour_size_report` (`curation/engine.py`'s `_collection_sizes`) compute.
+  Not caught by the existing `test_purchasing_a_wishlisted_item_flips_it_to_owned`, which only
+  exercises the *application-level* select-then-update path sequentially — it never bypasses the
+  SELECT to hit the DB constraint directly, so it couldn't observe that the constraint itself doesn't
+  fire. The same NULL-pattern shape also exists on `Like.uq_like_item` and
+  `Recommendation.uq_recommendation_item` (both key on `(id, item_type, album_id, track_id)`) — left
+  unfixed this round: `Recommendation` rows are wholesale cleared and reinserted by a single-writer
+  `curate()` transaction (not concurrent crawl workers), and `Like` rows come from single user clicks,
+  not a fan-out crawl, so both have much lower real-world exposure to the same race than `FanItem`
+  does. Flagged in `tried-and-failed.md` as a known latent gap for a future, narrower fix rather than
+  bundled in here.
+  Done: replaced the single constraint with two partial unique indexes —
+  `uq_fan_item_album` on `(fan_id, album_id) WHERE track_id IS NULL` and `uq_fan_item_track` on
+  `(fan_id, track_id) WHERE album_id IS NULL` (`Index(..., sqlite_where=..., postgresql_where=...)`,
+  both dialects support partial indexes with this syntax). `item_type` itself is redundant once split
+  this way — `album_id` is only ever set on an album row and `track_id` only ever on a track row.
+  Migration `0018_fan_item_partial_unique` patches an existing DB (guarded like 0002-0017 — a fresh
+  DB already builds the new schema from current ORM metadata), following the `_find_unique`/
+  `_drop_unique` pattern `0010_frontier_per_scan` established for a constraint that can materialize
+  as either a named constraint or a plain unique index depending on dialect/history. No data cleanup
+  needed — any duplicates that already slipped through simply stay as separate rows; this only stops
+  new ones. Covered by two new tests in `test_bandcamp_mapper.py`:
+  `test_duplicate_fan_item_rejected_at_the_db_level` (bypasses `_add_fan_item` entirely, inserting two
+  identical album `FanItem` rows directly and asserting the second raises `IntegrityError` — this
+  exercises the DB constraint itself, not the application-level guard around it) and
+  `test_fan_item_album_and_track_indexes_dont_collide_on_a_shared_id` (a fan owning both an album and
+  a track whose primary-key values happen to coincide inserts cleanly — proving the two partial
+  indexes are genuinely independent, not one shared index that would false-positive on that
+  coincidence). 266/266 backend tests pass (264 + 2 new), ruff clean; `alembic upgrade head /
+  downgrade -1 / upgrade head` round-trips clean against a fresh sqlite DB, with the downgrade step
+  verified to actually exercise the real old-constraint-recreation path (not just a guard no-op) since
+  a fresh DB already carries the new indexes from `0001_baseline`'s `Base.metadata.create_all` — and
+  the resulting SQLite schema was inspected directly to confirm both partial `WHERE` clauses landed
+  exactly as intended. PR: see git history.
+
+- [x] **`Like.uq_like_item`/`Recommendation.uq_recommendation_item` share `uq_fan_item`'s NULL-pattern
+  bug.** *(picked up from `team/memory/tried-and-failed.md`'s 2026-09-08 "fair game for a future
+  task" note, flagged when `uq_fan_item` was fixed in #157)* Same shape as that fix: each constraint
+  was a single `UniqueConstraint` on `(<owner>, item_type, album_id, track_id)`, but one of
+  `album_id`/`track_id` is always NULL depending on `item_type`, and standard SQL treats NULL as
+  distinct from NULL even inside a unique constraint — so neither ever actually rejected a duplicate
+  row.
+  Done, following the exact pattern `0018_fan_item_partial_unique` established: replaced both flat
+  constraints with two partial unique indexes each — `uq_like_item_album`/`uq_like_item_track` on
+  `(user_id, album_id)`/`(user_id, track_id)`, `uq_recommendation_item_album`/
+  `uq_recommendation_item_track` on `(scan_id, album_id)`/`(scan_id, track_id)`, each `WHERE` the
+  other id column IS NULL. `item_type` is redundant once split this way. New guarded migration
+  `0019_like_recommendation_partial_unique`, same `_find_unique`/`_drop_unique`-style structure as
+  `0018` (no-ops on a fresh DB already built from current ORM metadata; patches an existing DB by
+  dropping whichever old unique — constraint or index — matches the old column set, then creating
+  the two partial indexes). Covered by two new tests in `test_curation.py`
+  (`test_duplicate_like_rejected_at_the_db_level`, `test_duplicate_recommendation_rejected_at_the_db_level`),
+  mirroring `test_bandcamp_mapper.py`'s existing `FanItem` version: each bypasses the
+  application-level get-or-create path and inserts two identical rows directly, asserting the
+  second raises `IntegrityError`. 268/268 backend tests pass (266 + 2 new), ruff clean. Verified the
+  migration round-trip against an ORM-built ("fresh") SQLite DB stamped at head — `downgrade -1`
+  actually drops both new partial indexes and recreates the old flat `UNIQUE` constraint (inspected
+  directly: `CONSTRAINT uq_like_item UNIQUE (user_id, item_type, album_id, track_id)` came back
+  verbatim), then `upgrade head` recreates the four partial indexes with their `WHERE` clauses
+  intact — the same style of check #157 used, since a literal from-empty `alembic upgrade head` hits
+  a pre-existing, unrelated SQLite limitation at `0008_users_and_ownership` (`op.create_unique_
+  constraint` outside batch mode) that has nothing to do with this change. PR: see git history.
+
+- [x] **A running scan's crawl-budget readout disappears the moment results start landing.**
+  *(proposed by the hourly routine, 2026-09-08, self-verified against source before building)*
+  `stats.requests_used`/`stats.request_budget` only ever rendered inside `ColdStartPanel`, which
+  `ScanFeedPage` fetches and shows **only** while `total === 0` — so a `running` scan burning
+  through its fixed per-scan `crawl_max_requests_per_scan` budget had no visible readout at all
+  once recommendations started accruing (the common case: the feed fills in during the crawl, per
+  `CLAUDE.md`).
+  Done: the `total === 0` `loadStats` effect now also fires while `scan?.status === 'running'`,
+  re-armed on `recCount` (the count of curated recs) rather than the 4s scan-poll tick — same
+  "only re-fetch when something a slice curates actually changed" convention `recCount`/
+  `generation` already use elsewhere in this file. The running-status banner's text (`"Running — N
+  found so far…"` / `"Running — crawling seeds now…"`) gets a new `budgetSuffix` appended — e.g.
+  `" (742 of 1,000 crawl requests used)"` — using the exact same null-safe guard as
+  `ColdStartPanel`'s own `budgetLine` (`requests_used`/`request_budget` both non-null and budget >
+  0; otherwise nothing extra renders, so a scan with no cap or without `stats` loaded yet shows the
+  plain message unchanged). Covered by a new test in `feed.test.tsx`: a running scan with 1 rec
+  already showing and a mocked `/api/stats` response asserts the budget text renders inline in the
+  banner. 352/352 frontend tests pass (348 + 4, see the "Back online" toast below), tsc/lint/build
+  clean (chunk split intact).
+
+- [x] **Reconnecting after an offline period is silent.** *(proposed by the hourly routine,
+  2026-09-08, self-verified against source before building)* `OfflineBanner` correctly stays up for
+  the whole outage (deliberately not routed through the toast queue, since a toast's auto-dismiss
+  timer can't express "stay up until connectivity actually returns" — see its own comment), but
+  reconnecting just makes the banner vanish with no acknowledgment that it's now safe to retry
+  whatever like/block/scan action failed mid-outage.
+  Done: `OfflineBanner` (the one existing consumer of `useOnlineStatus`) now also tracks a
+  `wasOffline` ref and fires a one-shot `showToast('Back online.', 'status')` on a real
+  false→true transition — **not** on initial mount, whether the page happens to load already
+  online (the common case) or already offline. A one-shot toast is the right fit here, unlike the
+  persistent banner: it's inherently transient. Covered by three new tests in
+  `OfflineBanner.test.tsx`: an `offline` event followed by an `online` event shows the toast; no
+  toast fires on initial mount when starting online; no toast fires on initial mount when starting
+  offline (only an actual transition counts). 352/352 frontend tests pass (348 + 1 from the budget
+  item above + 3 here), tsc/lint/build clean (chunk split intact — both changes land in the eagerly
+  loaded shell/`ScanFeedPage` chunks, not a lazy route).
+
+- [x] **Command palette has no Home/End keyboard nav.** *(self-verified against source, 2026-09-08)*
+  `Dropdown.tsx`'s menu panels and `ScanFeedPage`'s roving-tabindex card list both support Home/End
+  to jump to the first/last row, and `ShortcutsHelp` documents this as a standing convention ("Home
+  / End: Jump to the first / last card, or menu row") — but `CommandPalette.tsx`'s own
+  `onInputKeyDown` only handled ArrowUp/ArrowDown, missing the same convention on its own filtered
+  action list.
+  Done: added `Home`/`End` cases to `onInputKeyDown`, clamping to `0`/`filtered.length - 1` — the
+  same clamp-not-wrap bound `ArrowUp`/`ArrowDown` already use here (a filtered result list has a
+  definite start/end, not `Dropdown`'s cycling-menu wrap-around). Covered by a new test in
+  `CommandPalette.test.tsx`: `End` jumps straight to the last action, and a subsequent `Home` jumps
+  back to the first, each verified by which action `Enter` actually runs. 353/353 frontend tests
+  pass (352 + 1), tsc/lint/build clean (chunk split intact — `CommandPalette` is part of the eagerly
+  loaded app shell, mounted once in `App.tsx`).
+
+- [x] **Rank command-palette results instead of leaving them in list order.** *(proposed by the
+  hourly routine, 2026-09-08, Architect+QA-approved)* `CommandPalette.tsx` filters actions with a
+  plain `.label.toLowerCase().includes(q)` and renders them in whatever order `api.listScans()`
+  returned, so on an account with a dozen+ scans a good partial match doesn't float to the top.
+  Done: new `rankCommands(items, query)` in `lib/commandRank.ts` — prefix match > word-boundary
+  match (after a space) > plain substring, ties within a tier keep original relative order —
+  swapped in for `CommandPalette`'s existing `useMemo` filter, no caller changes needed. 5 new
+  unit tests in `commandRank.test.ts`, 1 new integration test in `CommandPalette.test.tsx`
+  asserting rendered `option` order for a mixed-tier query. 362/362 frontend tests pass, tsc/lint/
+  build clean. CI flaked twice on this PR (two different, unrelated pre-existing tests —
+  `command palette > filters by typed text…` then `resume scroll position > restores…` — neither
+  touched by this diff), confirmed by a re-run each time; the branch also fell behind main twice
+  as sibling PRs merged, needing `update_pull_request_branch` each time. Merged (#163).
+
+- [x] **Warn on a duplicate scan name.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved — no backend change needed, `ScanListPage` already fetches all scan names
+  up front via `listScans()`)* Nothing stops two scans getting the same name, so a user who forgets
+  they already made a "Deep house" scan ends up with two indistinguishable rows.
+  Done: `isDuplicateScanName(name, existingNames)` in `lib/format.ts` (case/whitespace-
+  insensitive); `ScanListPage` threads its already-fetched scan names into `NewScanForm`, which
+  shows a non-blocking `.hint` under the name field on a match — warns, never blocks submission. 5
+  new unit tests in `format.test.ts`, 4 new integration tests in `NewScanForm.test.tsx`. 362/362
+  frontend tests pass, tsc/lint/build clean. Merged (#162).
+
+- [x] **Quick-filter search box on the scan list.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved — "trivially derivative of the existing feed quick-filter pattern")*
+  `ScanListPage` only offers sort, not filtering — once someone has many custom scans, finding one
+  by name means scrolling and reading, even though the same substring-match pattern already exists
+  for the feed (`lib/quickFilter.ts`) and the liked/blocked side panels.
+  Done: a search input on `ScanListPage` (shown once there's more than one scan, mirroring the sort
+  dropdown's own gate) filters `sortedScans` by case-insensitive substring match on `scan.name`,
+  reusing the existing `matchesPanelQuery` helper the Liked/Blocked side panels already use for the
+  identical pattern rather than inventing a new matcher — no new pure matcher needed after all. A
+  distinct "No scans match …" message shows when the query filters everything out, separate from
+  the existing "No scans yet" empty state. 3 new tests in `feed.test.tsx`'s `scan list > search`
+  block (no box for a single scan; typing narrows the list; no-matches message shows and clears).
+  356/356 frontend tests pass, tsc/lint/build clean (chunk split intact — `panelFilter` now lands in
+  a small chunk shared between `ScanListPage` and `ScanFeedPage`, its two importers). Merged (#161).
+
+- [x] **Keyboard focus vanishes after a like/block removes the focused card.** *(proposed by the
+  hourly routine, 2026-09-08, self-verified against source before building — the `l`/`b` shortcuts
+  and roving-tabindex system are both already shipped, this closes a gap in their interaction)*
+  `activeCardIndex`'s clamp (`Math.min(activeIndex, visibleRows.length - 1)`) already picks the
+  right *logical* next card once a row is removed, but nothing ever called `.focus()` on it —
+  confirmed by reading `retire()`/`armUndo()` directly: React unmounts the old DOM node without
+  moving focus, so the browser drops focus to `document.body` and arrow keys stop responding until
+  the reader clicks or tabs back in. No existing test covered this (only arrow-key-nav focus tests
+  existed).
+  Done: `retire()` now flags (in a ref) when the card it's about to remove currently holds focus; a
+  new effect, run once `visibleRows`/`activeCardIndex` settle post-removal, focuses the card now
+  sitting at that index. Two new tests in `feed.test.tsx`: liking a focused non-last card moves
+  focus to its replacement; blocking a focused *last* card moves focus to the new last card (the
+  boundary case), neither ever landing on `document.body`. 380/380 frontend tests pass, tsc/lint/
+  build clean (chunk split intact). Merged (#169).
+  Two sibling proposals from the same Product round were disqualified before reaching Architect+QA:
+  debouncing the scan-list/Liked/Blocked quick-filter search boxes (same "premature optimization on
+  an already-cheap small-list filter" reason a near-identical feed quick-filter debounce proposal
+  was rejected for in an earlier round), and adding `aspect-ratio`/`loading="lazy"` to feed-card
+  album art to prevent layout shift — genuinely already built (`FeedCard.tsx`'s `showArt`/`<img
+  loading="lazy">`, with an `onError` fallback to the plain score box), caught only on a second,
+  more careful grep after an initial `files_with_matches`-only check wrongly suggested no `<img>`
+  existed at all — worth remembering for future rounds: a `Grep` call needs `output_mode: "content"`
+  to actually see whether a match is real, not just that a file matched.
+
+- [x] **Escape doesn't cancel an in-progress block-reason edit.** *(proposed by the hourly routine,
+  2026-09-08, self-verified against source, Architect+QA-approved — the smaller/better-scoped of two
+  proposals from the same Product round; the other, confirm-before-delete on a saved view, is queued
+  below since it needs new per-row confirm state, not a drop-in reuse)* `SidePanels.tsx`'s reason
+  input only handled Enter (commit) and blur (commit, unconditionally — a deliberate earlier fix so
+  clicking away doesn't silently discard a typed reason). There was no way to actually back out of
+  an edit: pressing Escape did nothing, so a stray or changed-your-mind edit still got saved on the
+  next blur.
+  Done: Escape now resets the input to the row's last-saved reason and blurs, without calling
+  `commitReason` itself — its existing `trimmed !== b.reason` check then naturally no-ops the save
+  once `blurReason` runs against the just-reverted value, so no separate "was this an abort" flag was
+  needed. Two new tests in `SidePanels.test.tsx`: Escape reverts a changed reason to its prior saved
+  value and never calls `onSetReason`; Escape on a band with no reason yet reverts to blank the same
+  way. 380/380 frontend tests pass, tsc/lint/build clean (chunk split intact). Merged (#170).
+
+- [x] **Confirm before deleting a saved view.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `SavedViewsDropdown.tsx`'s remove button deleted a saved filter view on a
+  single click, immediately, with no confirmation and no undo — a stray click permanently destroyed
+  a filter combination the user may have spent real time assembling. `DeleteScanButton.tsx`/
+  `BulkActionBar.tsx` already implement a proven two-click arm/confirm pattern for the same class of
+  destructive action elsewhere in this exact codebase.
+  Done: applied the same shape, keyed per-row (`confirmingId: string | null` — `SavedView.id` is a
+  string, not `DeleteScanButton`'s single boolean) since this component renders a *list* of views,
+  not one button. First click arms a row's remove control into a "Confirm?" danger-colored button
+  (new `.rm.confirm` style in `Dropdown.css`, reusing `--danger` the same way `.btn.ghost.danger`
+  does); a second click deletes; the armed state auto-reverts after `CONFIRM_WINDOW_MS` (4000ms, same
+  window as the two existing precedents) if untouched, and also clears on dropdown close/reopen.
+  Updated the existing "deletes a saved view" test to the new two-click behavior and added a new one
+  mirroring `DeleteScanButton`'s own revert-on-timeout test. 381/381 frontend tests pass, tsc/lint/
+  build clean (chunk split intact). Merged (#171).
+
+- [x] **Type-ahead letter jump in `Dropdown` menus.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `Dropdown.tsx`'s arrow-key nav (Up/Down/Home/End) had no jump-to-letter — a
+  keyboard user opening a dropdown with many rows (e.g. `SavedViewsDropdown` once you have several
+  saved views) could only reach an option by stepping through every row. A sibling proposal from the
+  same Product round, pausing a toast's auto-dismiss while hovered/focused, is the next item below.
+  Done: pressing a single printable letter (no modifier held) in the panel now jumps focus to the
+  next `.ddrow` whose visible text starts with it, wrapping around; pressing the same letter again
+  advances to the *next* match rather than always returning to the first — the standard native
+  `<select>` behavior. Modifier-held presses and the existing Arrow/Home/End handling are untouched.
+  Covered by 2 new tests in `Dropdown.test.tsx`: repeated `a` presses cycle `Apple → Avocado → Apple`;
+  a held `Ctrl+A` is ignored. 385/385 frontend tests pass, tsc/lint/build clean (chunk split intact).
+  PR #172.
+
+- [x] **Pause a toast's auto-dismiss while hovered or focused.** *(proposed by the hourly routine,
+  2026-09-08, Architect+QA-approved with a scope caveat — keep the timer-ownership move contained to
+  `lib/toast.ts` + `ToastStack.tsx`, no caller changes — honored below)* A toast with an action button
+  (Undo after like/block, Retry on a failed mutation) still auto-dismissed on its fixed
+  `TOAST_DURATION_MS` timer even while the pointer or keyboard focus was on it, so a slow reader could
+  lose the action mid-reach.
+  Done: `lib/toast.ts`'s dismiss-timer ownership moved from a bare fire-and-forget `setTimeout` into a
+  per-toast entry (`timerId`/`remaining`/`startedAt`/`pauseCount`) tracked in a module-scope `Map`.
+  `pauseToast(id)`/`resumeToast(id)` freeze and restart the countdown for the time actually left;
+  `pauseCount` is a reference count, not a boolean, since a toast can be both hovered and keyboard-
+  focused at once and the timer should only really resume once every pause has a matching resume.
+  `ToastStack.tsx` wires this to each toast's `onMouseEnter`/`Leave` and `onFocus`/`Blur`, with a
+  containment check (`!e.currentTarget.contains(e.relatedTarget)`) on both focus and blur — mirrored,
+  not just on blur — so moving focus between two buttons inside the same toast (Retry → dismiss ×)
+  neither re-pauses nor resumes mid-transition. No `showToast` call site needed to change. Covered by
+  3 new tests in `toast.test.ts` (freezes then resumes for exactly the time left, using fake timers;
+  overlapping hover+focus only resumes once both actually clear; pause/resume on an already-gone id is
+  a no-op) and 2 new integration tests in `ToastStack.test.tsx` (hovering keeps a toast alive past its
+  duration and it dismisses once the pointer leaves; focus moving between a toast's own buttons keeps
+  it paused, only resuming once focus leaves the toast entirely). 388/388 frontend tests pass,
+  tsc/lint/build clean (chunk split intact). PR #173.
+
+- [x] **"Like selected" action in bulk-select mode.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved — confirmed a near-exact mirror of the existing `bulkBlock`, `api.like`
+  already exists with no new endpoint needed)* Bulk-select mode (`BulkActionBar`) only ever offered
+  "Block selected" — liking several good recommendations at once still meant clicking each card's own
+  ♥ individually.
+  Done: `BulkActionBar.tsx` gained a "Like selected" button with no confirm-threshold step at any
+  count (unlike block) since liking isn't destructive; its boolean `busy` prop became
+  `busyAction: 'like' | 'block' | null` so each action's own button independently shows
+  "Liking…"/"Blocking…" while both stay disabled during either. `ScanFeedPage.tsx`'s new `bulkLike` is
+  an exact mirror of `bulkBlock` — calls the existing per-card `like` handler once per selected row
+  (same optimistic retire/undo/error handling as a single click), clearing the selection and exiting
+  select mode once the batch settles. Covered by extended `BulkActionBar.test.tsx` cases (no-confirm-
+  at-any-count, per-action busy labels) and a new integration test in `feed.test.tsx`: selecting two
+  cards and clicking "Like selected" posts exactly those two album ids to `/api/likes`, then clears
+  the selection. 393/393 frontend tests pass, tsc/lint/build clean (chunk split intact). PR #174.
+
+- [x] **Human-readable exact timestamp in `RelativeTime`'s tooltip.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved)* `RelativeTime.tsx` set `title={iso}`, so hovering "3h
+  ago" showed a raw ISO string like `2026-09-08T14:23:00Z` — every other piece of text in the app is
+  human-formatted, but this tooltip wasn't.
+  Done: new `exactTimestamp(iso)` in `lib/format.ts`, backed by a module-scope-hoisted
+  `Intl.DateTimeFormat` (not constructed per call, since `RelativeTime` calls it on every render) with
+  a pinned locale and explicit `UTC` `timeZone` so the formatted string is deterministic in tests and
+  across viewers — unlike `ago()`'s deliberately clock-relative output. `RelativeTime.tsx` now sets
+  `title={exactTimestamp(iso)}`; `dateTime` stays the raw ISO. Covered by 3 new unit tests in
+  `format.test.ts` (a fixed ISO instant formats to an exact expected string; repeated calls with the
+  same input are stable; null returns `''`); rewrote `RelativeTime.test.tsx`'s existing title
+  assertion (which had asserted the raw ISO) to assert `exactTimestamp(iso)` and explicitly check the
+  raw ISO is no longer shown. 396/396 frontend tests pass, tsc/lint/build clean (chunk split intact).
+  PR #175.
+
+- [x] **Bulk-block/like's Undo only covers one of the N items, silently.** *(proposed by the hourly
+  routine, 2026-09-08, Product-round proposal, self-verified against source before building — the
+  backlog is heavily mined enough now that most fresh Product proposals turn out to be duplicates or
+  resurrection traps per `tried-and-failed.md`, but this one checked out as a genuine, previously
+  unflagged bug)* Selecting several cards and clicking "Block selected"/"Like selected"
+  (`BulkActionBar`) fires the existing per-card `like()`/`block()` handlers concurrently via
+  `Promise.all`. Each independently calls `retire()` → `armUndo()`, which unconditionally overwrites
+  the single `undo` banner state — so after a bulk action, only whichever item's exit animation
+  settled last stayed undoable. The other N-1 were gone with no recoverable affordance, and the
+  banner named just one artist as if that were the whole action.
+  Done: `retire()` gained a `silent` flag (threaded through `like`/`block`) that `bulkBlock`/
+  `bulkLike` pass so their individual retires don't arm the misleading single-item banner. `like()`/
+  `block()` now return whether they actually succeeded (existing single-click callers already
+  discard the result via `void`), so the bulk actions know which of the batch to offer as one
+  combined "Undo all" via a new `armBulkUndo`/`bulkUndo` state, reusing each row's already-recorded
+  `retiredIndex` entry for the restore — same mechanism the single-item undo already uses.
+  A timing-based gate (checking `bulkBusyAction`) was tried first and rejected on inspection: it
+  clears as soon as the network calls resolve, which routinely happens *before* each `retire()`'s
+  fixed `CARD_EXIT_MS` exit-animation timer — where the per-item `armUndo` actually fires — has
+  elapsed, so a state-based gate wouldn't reliably suppress it. `bulkBlock`/`bulkLike` instead wait
+  out `CARD_EXIT_MS` alongside the API calls (`Promise.all` against both) before arming the bulk
+  banner, guaranteeing `retiredIndex` is populated for every successful row by the time it's read.
+  Covered by two new tests in `feed.test.tsx`: a bulk block shows one "Undo all" naming the count,
+  not the old single "Undo"; clicking it restores every card and calls `unblock` for each. 398/398
+  frontend tests pass, tsc/lint/build clean (chunk split intact).
+  **Merged.** PR #176's first CI run hit an unrelated pre-existing flake (`ScanListPage`'s
+  mount-focus test, same class as PR #163's documented flakes — confirmed by two clean local full-
+  suite runs and a from-scratch diff review before standing down in a PR comment); a re-run of that
+  job came back green. The PR was then briefly `mergeable_state: behind` (this run's own docs-only
+  bookkeeping commit had landed on `main` after the branch was cut) — merged `main` back into the
+  branch, re-ran the full local suite (398/398 clean) before pushing, CI went green on the merge
+  commit, and auto-merge (squash) landed it.

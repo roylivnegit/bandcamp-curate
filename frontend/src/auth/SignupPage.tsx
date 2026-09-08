@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
+import { PasswordInput } from '../components/PasswordInput'
+import { isValidFanUrl } from '../lib/format'
 import { AuthLayout } from './AuthLayout'
 import { useAuth } from './context'
 
@@ -14,7 +16,15 @@ export function SignupPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const complete = username && password && fanUrl && invite
+  // Derived, not mirrored into state+effect (frontend/CLAUDE.md rule 6) — and only
+  // shown once the field is non-empty, so a fresh/untouched form doesn't open on an error.
+  const fanUrlTrimmed = fanUrl.trim()
+  const fanUrlError =
+    fanUrlTrimmed && !isValidFanUrl(fanUrlTrimmed)
+      ? 'That doesn’t look like a Bandcamp collection URL (e.g. https://bandcamp.com/yourusername).'
+      : ''
+
+  const complete = username && password && fanUrl && invite && !fanUrlError
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -82,10 +92,8 @@ export function SignupPage() {
           <label className="label" htmlFor="su-password">
             Password
           </label>
-          <input
+          <PasswordInput
             id="su-password"
-            className="input"
-            type="password"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -102,10 +110,18 @@ export function SignupPage() {
             placeholder="https://bandcamp.com/yourusername"
             value={fanUrl}
             onChange={(e) => setFanUrl(e.target.value)}
+            aria-invalid={fanUrlError ? 'true' : undefined}
+            aria-describedby={fanUrlError ? 'su-fanurl-error' : 'su-fanurl-hint'}
           />
-          <p className="field-hint">
-            We crawl this to learn your taste. Nothing is posted to your account.
-          </p>
+          {fanUrlError ? (
+            <p className="err" role="alert" id="su-fanurl-error">
+              {fanUrlError}
+            </p>
+          ) : (
+            <p className="field-hint" id="su-fanurl-hint">
+              We crawl this to learn your taste. Nothing is posted to your account.
+            </p>
+          )}
         </div>
         {error && (
         <p className="err" role="alert">

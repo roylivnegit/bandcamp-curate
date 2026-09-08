@@ -1,8 +1,8 @@
-import { memo } from 'react'
-import type { KeyboardEvent } from 'react'
+import { memo, useState } from 'react'
+import type { KeyboardEvent, MouseEvent } from 'react'
 
 import type { Recommendation } from '../../api/types'
-import { bandcampHandle, plural } from '../../lib/format'
+import { bandcampHandle } from '../../lib/format'
 
 /** `exiting` drives the evaporate animation the old UI had: a liked/blocked card
  *  dissolves upward instead of vanishing, so you can see what you just acted on.
@@ -14,25 +14,55 @@ import { bandcampHandle, plural } from '../../lib/format'
  *  each render, so `memo` alone would never hit. */
 export const FeedCard = memo(function FeedCard({
   rec,
+  cardId,
+  active,
   exiting,
-  busy,
+  busyAction,
+  selectMode,
+  selected,
   onLike,
   onBlock,
   onTagClick,
   onBandClick,
+  onToggleSelect,
 }: {
   rec: Recommendation
+  /** DOM id, so the roving-tabindex handler in `ScanFeedPage` can focus this
+   *  exact card by id after an Arrow/Home/End key, without holding a ref per
+   *  row. */
+  cardId: string
+  /** Roving tabindex: only the active card is reachable by Tab (`tabIndex=0`);
+   *  the rest are `-1` but stay focusable by script for arrow-key navigation. */
+  active: boolean
   exiting: 'like' | 'block' | null
-  busy: boolean
+  /** Which in-flight action, if any, disables both buttons and swaps the
+   *  acting one's label to "Liking…"/"Blocking…" — not just a bare disabled,
+   *  which read as unresponsive for the gap before the card animates out. */
+  busyAction: 'like' | 'block' | null
+  /** Bulk-select mode, toggled from the filter bar. Only cards with a band
+   *  can be selected — bulk-block, the only bulk action today, needs one. */
+  selectMode: boolean
+  selected: boolean
   onLike: (rec: Recommendation) => void
-  onBlock: (rec: Recommendation) => void
+  /** `expiresAt` (an ISO string), when passed, makes this a temporary block.
+   *  This card's own "⊘ block" button always omits it (a deliberate product
+   *  call, #103 — permanent block only, no picker here); the parameter exists
+   *  because `ScanFeedPage` wires the same handler to `SidePanels`' "renew ▾"
+   *  action on an already-temporary block. */
+  onBlock: (rec: Recommendation, expiresAt?: string | null) => void
   onTagClick: (tag: string) => void
   onBandClick: (rec: Recommendation) => void
+  onToggleSelect: (rec: Recommendation) => void
 }) {
-  const co = rec.reasons.co_owners ?? 0
+  const busy = busyAction !== null
   const handle = bandcampHandle(rec.url)
   const tags = rec.reasons.matched_tags ?? []
-  const seedTags = rec.reasons.seed_tags ?? []
+  // Some crawled items have no stored art_id yet (see api/types.ts), and a
+  // URL that resolves fine at crawl time can still 404 later (Bandcamp CDN
+  // churn) — either way, fall back to the plain score box rather than a
+  // broken-image icon.
+  const [artFailed, setArtFailed] = useState(false)
+  const showArt = Boolean(rec.art_url) && !artFailed
 
   /** Triaging a long feed is mouse-only otherwise. Scoped to the card via a
    *  single listener on the article — any focused element inside it (a chip,
@@ -52,12 +82,49 @@ export const FeedCard = memo(function FeedCard({
     }
   }
 
+  const selectable = selectMode && rec.band_id !== null
+
+  /** In select mode, a click anywhere on the card toggles it — except on
+   *  something that already does its own thing when clicked (a button, a
+   *  link, the checkbox itself). `closest` catches those regardless of which
+   *  inner element the click actually landed on. */
+  const onCardClick = (e: MouseEvent<HTMLElement>) => {
+    if (!selectable) return
+    if ((e.target as HTMLElement).closest('button, a, input')) return
+    onToggleSelect(rec)
+  }
+
   return (
-    <article className={`card${exiting ? ` ${exiting}ing` : ''}`} onKeyDown={onCardKeyDown}>
-      <div className="score" title="Recommendation score">
-        <b className="num">{rec.score.toFixed(1)}</b>
-        <span>score</span>
-      </div>
+    <article
+      id={cardId}
+      className={`card${exiting ? ` ${exiting}ing` : ''}${selectable ? ' selectable' : ''}${selected ? ' selected' : ''}`}
+      tabIndex={active ? 0 : -1}
+      onKeyDown={onCardKeyDown}
+      onClick={onCardClick}
+    >
+      {selectMode && rec.band_id !== null && (
+        <input
+          type="checkbox"
+          className="card-select"
+          aria-label={`Select ${rec.title || 'this recommendation'}`}
+          checked={selected}
+          onChange={() => onToggleSelect(rec)}
+        />
+      )}
+
+      {showArt && (
+        // Decorative: the title/artist text right next to it already carries
+        // the identifying information, so an empty alt avoids a screen
+        // reader announcing a redundant "cover art for <title>" on every
+        // single card in a feed of hundreds.
+        <img
+          className="card-art"
+          src={rec.art_url ?? undefined}
+          alt=""
+          loading="lazy"
+          onError={() => setArtFailed(true)}
+        />
+      )}
 
       <div className="card-body">
         {/* h2: the page's h1 is the scan title, so h3 skipped a level. Styling
@@ -77,22 +144,12 @@ export const FeedCard = memo(function FeedCard({
         )}
 
         <div className="card-meta">
-          <span className="chip signal" title="Taste-neighbours who own this">
-            ◈ {co} {plural(co, 'neighbour')} {co === 1 ? 'owns' : 'own'} this
-          </span>
           {tags.map((t) => (
             <button key={t} type="button" className="chip tag" onClick={() => onTagClick(t)}>
               {t}
             </button>
           ))}
         </div>
-
-        {seedTags.length > 0 && (
-          <p className="via" title="Genres of your own releases that surfaced this">
-            via {seedTags.slice(0, 5).join(', ')}
-            {seedTags.length > 5 ? ` +${seedTags.length - 5}` : ''}
-          </p>
-        )}
 
         <div className="card-actions">
           <button
@@ -102,7 +159,7 @@ export const FeedCard = memo(function FeedCard({
             aria-keyshortcuts="l"
             onClick={() => onLike(rec)}
           >
-            ♥ like
+            {busyAction === 'like' ? 'Liking…' : '♥ like'}
           </button>
           {rec.band_id !== null && (
             <button
@@ -112,7 +169,7 @@ export const FeedCard = memo(function FeedCard({
               aria-keyshortcuts="b"
               onClick={() => onBlock(rec)}
             >
-              ⊘ block
+              {busyAction === 'block' ? 'Blocking…' : '⊘ block'}
             </button>
           )}
           {rec.url && (

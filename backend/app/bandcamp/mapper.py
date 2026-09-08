@@ -131,6 +131,7 @@ async def get_or_create_album(
     url: str | None = None,
     title: str | None = None,
     band: Band | None = None,
+    art_id: int | None = None,
 ) -> Album:
     stmt = select(Album).where(Album.bandcamp_id == bandcamp_id)
     album = (await session.execute(stmt)).scalar_one_or_none()
@@ -139,7 +140,7 @@ async def get_or_create_album(
             session, stmt,
             lambda: Album(
                 bandcamp_id=bandcamp_id, url=url, title=title,
-                band_id=band.id if band else None,
+                band_id=band.id if band else None, art_id=art_id,
             ),
         )
     if url and not album.url:
@@ -148,6 +149,8 @@ async def get_or_create_album(
         album.title = title
     if band and not album.band_id:
         album.band_id = band.id
+    if art_id and not album.art_id:
+        album.art_id = art_id
     return album
 
 
@@ -159,6 +162,9 @@ async def get_or_create_track(
     title: str | None = None,
     band: Band | None = None,
     album: Album | None = None,
+    art_id: int | None = None,
+    track_num: int | None = None,
+    duration: float | None = None,
 ) -> Track:
     stmt = select(Track).where(Track.bandcamp_id == bandcamp_id)
     track = (await session.execute(stmt)).scalar_one_or_none()
@@ -169,16 +175,23 @@ async def get_or_create_track(
                 bandcamp_id=bandcamp_id, url=url, title=title,
                 band_id=band.id if band else None,
                 album_id=album.id if album else None,
+                art_id=art_id, track_num=track_num, duration=duration,
             ),
         )
     if url and not track.url:
         track.url = url
     if title and not track.title:
         track.title = title
+    if track_num and not track.track_num:
+        track.track_num = track_num
+    if duration and not track.duration:
+        track.duration = duration
     if band and not track.band_id:
         track.band_id = band.id
     if album and not track.album_id:
         track.album_id = album.id
+    if art_id and not track.art_id:
+        track.art_id = art_id
     return track
 
 
@@ -205,14 +218,26 @@ async def get_or_create_fan(session: AsyncSession, fan_id: int, username: str, *
 async def _add_fan_item(session: AsyncSession, fan: Fan, item_type: ItemType,
                         album: Album | None = None, track: Track | None = None,
                         is_wishlist: bool = False) -> bool:
-    """Insert a fan↔item edge if absent. Returns True if a new row was created."""
+    """Insert a fan↔item edge if absent. Returns True if a new row was created.
+
+    The unique constraint (`uq_fan_item`) is on `(fan_id, item_type, album_id,
+    track_id)` only — it does not include `is_wishlist` — so at most one row
+    can ever exist per item. If a wishlisted item is later actually bought, a
+    re-crawl observes it with `is_wishlist=False` against this same existing
+    row; ownership must win over a stale wishlist flag rather than leaving it
+    permanently wishlisted (which would wrongly keep excluding it from the
+    owner's own taste/tag profile forever).
+    """
     stmt = select(FanItem).where(
         FanItem.fan_id == fan.id,
         FanItem.item_type == item_type,
         FanItem.album_id == (album.id if album else None),
         FanItem.track_id == (track.id if track else None),
     )
-    if (await session.execute(stmt)).scalar_one_or_none() is not None:
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        if existing.is_wishlist and not is_wishlist:
+            existing.is_wishlist = False
         return False
     return await _add_edge_or_false(
         session,
@@ -231,7 +256,8 @@ async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
     band = await get_or_create_band(session, item.band)
     if item.item_type == "album":
         album = await get_or_create_album(
-            session, bandcamp_id=item.item_id, url=item.url, title=item.title, band=band
+            session, bandcamp_id=item.item_id, url=item.url, title=item.title, band=band,
+            art_id=item.art_id,
         )
         if await _add_fan_item(session, fan, ItemType.ALBUM, album=album,
                                is_wishlist=is_wishlist):
@@ -244,7 +270,7 @@ async def ingest_item(session: AsyncSession, fan: Fan, item: ParsedItem,
             )
         track = await get_or_create_track(
             session, bandcamp_id=item.item_id, url=item.url, title=item.title,
-            band=band, album=album,
+            band=band, album=album, art_id=item.art_id,
         )
         if await _add_fan_item(session, fan, ItemType.TRACK, track=track,
                                is_wishlist=is_wishlist):
@@ -378,7 +404,8 @@ async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCou
     counts = AlbumIngestCounts()
     band = await get_or_create_band(session, pa.band)
     album = await get_or_create_album(
-        session, bandcamp_id=pa.album_id, url=pa.url, title=pa.title, band=band
+        session, bandcamp_id=pa.album_id, url=pa.url, title=pa.title, band=band,
+        art_id=pa.art_id,
     )
 
     tracks: list[Track] = []
@@ -391,7 +418,7 @@ async def ingest_album(session: AsyncSession, pa: ParsedAlbum) -> AlbumIngestCou
         tracks.append(
             await get_or_create_track(
                 session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title,
-                band=band, album=album,
+                band=band, album=album, track_num=pt.track_num, duration=pt.duration,
             )
         )
 
@@ -425,7 +452,8 @@ async def ingest_track_page(session: AsyncSession, pt: ParsedTrackPage) -> Track
             session, bandcamp_id=pt.album_id, url=pt.album_url, band=band
         )
     track = await get_or_create_track(
-        session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title, band=band, album=album
+        session, bandcamp_id=pt.track_id, url=pt.url, title=pt.title, band=band, album=album,
+        art_id=pt.art_id,
     )
 
     for name in pt.tags:

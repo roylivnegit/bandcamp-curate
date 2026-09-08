@@ -101,6 +101,7 @@ class CrawlOutcome:
     supporters: int = 0  # supporter edges ingested (album)
     enqueued: int = 0  # new frontier rows added
     skipped_followed: int = 0  # owned items not enqueued — band already followed
+    skipped_self: int = 0  # supporter not enqueued — it's the seed fan themself
     reused: bool = False  # completed from another scan's crawl, no fetch spent
     fan_id: int | None = None  # the ingested Fan's id (fan collection only)
     # Left-over pagination tokens when a fan collection outran its page budget.
@@ -435,6 +436,8 @@ async def crawl_album(
     depth: int = 0,
     max_depth: int | None = None,
     supporters_client: SupportersApiClient | None = None,
+    seed_fan_id: int | None = None,
+    seed_url: str | None = None,
     scan_id: int,
 ) -> CrawlOutcome:
     """Fetch an album page, ingest album/tracks/tags/supporters, enqueue supporters.
@@ -442,6 +445,12 @@ async def crawl_album(
     The page embeds the first page of supporters; the rest are pulled by mimicking
     the collectors `thumbs` XHR. Supporter collections are enqueued at `depth + 1`,
     capped by `max_depth`.
+
+    The seed fan (the scan owner) is themself a supporter of every album they own,
+    so they show up in this list — enqueuing their own collection as if it were a
+    taste-neighbour's would waste a visit re-reading data the depth-0 crawl already
+    has. `seed_fan_id` (from the structured supporters blob) and `seed_url` (from
+    the DOM-anchor fallback, which has no fan_id) both skip it; pass either.
     """
     await release_db(session)
     result = await fetcher.fetch(album_request(url, scan_id=scan_id))
@@ -472,10 +481,17 @@ async def crawl_album(
 
     scounts = await ingest_album_supporters(session, album, sup)
 
-    enqueued = 0
+    enqueued = skipped_self = 0
     if _within_depth(depth, max_depth):
         for s in sup.supporters:
-            if s.url and await enqueue(
+            if not s.url:
+                continue
+            if (seed_fan_id is not None and s.fan_id == seed_fan_id) or (
+                seed_url is not None and s.url == seed_url
+            ):
+                skipped_self += 1
+                continue
+            if await enqueue(
                 session, s.url, CrawlKind.FAN_COLLECTION, scan_id=scan_id, depth=depth + 1
             ):
                 enqueued += 1
@@ -487,6 +503,7 @@ async def crawl_album(
         tracks=acounts.tracks,
         supporters=scounts.supporters,
         enqueued=enqueued,
+        skipped_self=skipped_self,
     )
 
 
@@ -498,12 +515,17 @@ async def crawl_track(
     depth: int = 0,
     max_depth: int | None = None,
     supporters_client: SupportersApiClient | None = None,
+    seed_fan_id: int | None = None,
+    seed_url: str | None = None,
     scan_id: int,
 ) -> CrawlOutcome:
     """Fetch a standalone track page, ingest track/band/tags/supporters, enqueue
     supporters. Mirrors `crawl_album` but scoped to one track — its own supporters
     (people who bought/wishlisted that specific track), not the parent album's; the
     parent album (if any) is only stubbed, not itself crawled.
+
+    As in `crawl_album`, skips enqueuing the seed fan themself — see that
+    docstring for why.
     """
     await release_db(session)
     result = await fetcher.fetch(track_request(url, scan_id=scan_id))
@@ -533,10 +555,17 @@ async def crawl_track(
 
     scounts = await ingest_track_supporters(session, track, sup)
 
-    enqueued = 0
+    enqueued = skipped_self = 0
     if _within_depth(depth, max_depth):
         for s in sup.supporters:
-            if s.url and await enqueue(
+            if not s.url:
+                continue
+            if (seed_fan_id is not None and s.fan_id == seed_fan_id) or (
+                seed_url is not None and s.url == seed_url
+            ):
+                skipped_self += 1
+                continue
+            if await enqueue(
                 session, s.url, CrawlKind.FAN_COLLECTION, scan_id=scan_id, depth=depth + 1
             ):
                 enqueued += 1
@@ -546,5 +575,6 @@ async def crawl_track(
         url=url,
         kind=str(CrawlKind.TRACK),
         supporters=scounts.supporters,
+        skipped_self=skipped_self,
         enqueued=enqueued,
     )

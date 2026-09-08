@@ -2,6 +2,15 @@
   padding-bottom: var(--s-12);
 }
 
+/* `.wrap.feedpage` (not `.feedpage` alone) to out-specificity `.wrap`'s own
+   max-width: var(--measure) regardless of source order. Wider than the
+   shared measure on purpose — this page's cardlist is a grid that can use a
+   second (or, on a very large monitor, third) column of real cards, unlike
+   the scans list, which only ever holds a handful of rows. */
+.wrap.feedpage {
+  max-width: 1800px;
+}
+
 /* ── nav + title ─────────────────────────────────────────────────────────── */
 
 .feednav {
@@ -38,30 +47,27 @@
   white-space: nowrap;
 }
 
-.scantitle .ktag {
-  font-family: var(--mono);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--accent);
-  border: 1px solid var(--accent-dim);
-  border-radius: var(--r-pill);
-  padding: 2px 9px;
-  margin-left: var(--s-2);
-  vertical-align: middle;
+.feednav .delscan {
+  display: flex;
+  gap: var(--s-2);
+  margin-left: auto;
 }
 
 /* ── filter bar: sticky, because the feed is thousands of rows long ─────── */
 
+/* Full-bleed (see ScanFeedPage: this renders outside `.wrap.feedpage` now),
+   same as `.apphead` — the two form one persistent toolbar system, so they
+   share its exact background treatment rather than a lighter card-like tint.
+   That's also a much bigger jump from `.card`'s --surface-2 than a lighter
+   surface tier would be, which is the actual point: distinguishable from
+   the cards scrolling underneath it, not just "a bit different". */
 .filterbar {
   position: sticky;
   top: 58px; /* below the app header */
   z-index: 20;
-  padding: var(--s-3) 0;
-  margin-top: var(--s-3);
-  background: linear-gradient(var(--bg) 60%, rgba(10, 12, 17, 0.85));
-  backdrop-filter: blur(8px);
+  padding: var(--s-3) var(--s-4);
+  background: rgba(10, 12, 17, 0.86);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
 
@@ -70,6 +76,19 @@
   gap: var(--s-2);
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* `.more-toggle`/`.controls-more` exist for the mobile collapse below —
+   at this (desktop) width the toggle stays hidden and the wrapper is
+   `display: contents`, so its children (sort, genre, tag-contains, select,
+   export, liked, blocked) lay out exactly as if they were direct children
+   of `.controls`, same as before this existed. */
+.more-toggle {
+  display: none;
+}
+
+.controls-more {
+  display: contents;
 }
 
 .seg {
@@ -100,6 +119,14 @@
 }
 
 .ddsearch {
+  font-size: var(--fs-sm);
+  padding: var(--s-2) 10px;
+}
+
+.quickfilter {
+  flex: 1 1 190px;
+  min-width: 0;
+  max-width: 260px;
   font-size: var(--fs-sm);
   padding: var(--s-2) 10px;
 }
@@ -226,7 +253,52 @@
   padding: 6px 14px;
 }
 
+/* ── bulk-select action bar ──────────────────────────────────────────────── */
+
+.bulkbar {
+  position: sticky;
+  top: 106px; /* below the filter bar */
+  z-index: 19;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-3);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.bulkbar .num {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.bulkbar .btn {
+  margin-left: auto;
+}
+
+.bulkbar .btn + .btn {
+  margin-left: 0;
+}
+
 /* ── feed card ───────────────────────────────────────────────────────────── */
+
+/* `auto-fill`/`minmax` rather than a fixed breakpoint: one column until the
+ * container is wide enough for a second 520px-plus one, so a wide monitor
+ * shows two columns of real cards instead of one column stretched wide with
+ * empty trailing space inside every row. */
+.cardlist {
+  display: grid;
+  /* min(520px, 100%): on a viewport narrower than 520px the column would
+     otherwise still be forced to 520px and overflow horizontally — a classic
+     auto-fill/minmax gotcha. Capping the floor at 100% lets it shrink to one
+     full-width column instead. */
+  grid-template-columns: repeat(auto-fill, minmax(min(520px, 100%), 1fr));
+  gap: 11px;
+}
 
 .card {
   position: relative;
@@ -234,11 +306,14 @@
   gap: var(--s-4);
   align-items: flex-start;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), var(--surface);
+  /* --surface-2, not the dimmer --surface: cards are the dominant, most
+     repeated element on the page, so they need to read clearly against the
+     background (doubly so now that it's an animated gradient, not flat
+     black) rather than blend into it. */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 40%), var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   padding: var(--s-4) var(--s-4) var(--s-4) var(--s-5);
-  margin-bottom: 11px;
   /* "Load more" appends 50 rows at a time and a scan can hold ~1,600, so the
      list gets long. This lets the browser skip layout and paint for off-screen
      cards. The length is a rough first guess at card height so the scrollbar
@@ -256,6 +331,28 @@
   border-color: var(--line-strong);
   transform: translateY(-1px);
   box-shadow: var(--shadow-card);
+}
+
+/* Select mode: the whole card is a click target (see FeedCard's onClick —
+   anywhere that isn't a button/link/the checkbox itself toggles it), so it
+   needs to look clickable and a selected one needs to be tellable apart from
+   the rest at a glance, not just by its tiny checkbox. */
+.card.selectable {
+  cursor: pointer;
+}
+
+.card.selected {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(94, 234, 212, 0.07), transparent 40%), var(--surface-2);
+}
+
+.card-select {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .card.skeleton:hover {
@@ -309,35 +406,14 @@
   opacity: 0.9;
 }
 
-.score {
+.card-art {
   flex: none;
   width: 60px;
   height: 60px;
   border-radius: var(--r-lg);
-  background: var(--surface-2);
   border: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-}
-
-.score b {
-  font-family: var(--mono);
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.score span {
-  font-family: var(--mono);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--faint);
+  object-fit: cover;
+  background: var(--surface-2);
 }
 
 .card-body {
@@ -348,7 +424,7 @@
 .card-title {
   margin: 0;
   font-weight: 700;
-  font-size: var(--fs-base);
+  font-size: var(--fs-md);
   line-height: 1.35;
 }
 
@@ -373,7 +449,7 @@
   padding: 0;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-base);
   margin-top: 3px;
   cursor: pointer;
   text-align: left;
@@ -432,23 +508,10 @@
   background: var(--accent-wash);
 }
 
-.chip.signal {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-wash);
-  font-weight: 600;
-  font-family: var(--mono);
-}
-
-.via {
-  margin: var(--s-2) 0 0;
-  font-size: var(--fs-tiny);
-  color: var(--faint);
-}
-
 .card-actions {
   margin-top: var(--s-3);
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s-2);
   align-items: center;
   justify-content: flex-end;
@@ -464,6 +527,15 @@
   font-size: var(--fs-sm);
   cursor: pointer;
   line-height: 1.3;
+}
+
+/* Feed-card actions specifically, not the compact rows in the Liked/Blocked
+   side panels (which keep the base `.act`/`.listen` size on purpose — a
+   denser list context). */
+.card-actions .act,
+.card-actions .listen {
+  padding: 8px 16px;
+  font-size: var(--fs-base);
 }
 
 .act:disabled {
@@ -543,11 +615,6 @@
   box-shadow: 0 0 0 1px var(--danger);
 }
 
-.more {
-  display: block;
-  margin: var(--s-4) auto 0;
-}
-
 /* ── side panels ─────────────────────────────────────────────────────────── */
 
 .sidepanel {
@@ -579,4 +646,124 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Reason input in `BlockedPanel`: same `.input` base, but a dense row has no
+   room for the full-width form input — fixed to a modest width and the
+   row's own smaller type/padding instead. */
+.row .input.reason {
+  width: 140px;
+  flex: none;
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+}
+
+/* ── cold-start diagnostics under the empty state ───────────────────────── */
+
+.coldstart {
+  text-align: center;
+  padding-bottom: var(--s-8);
+}
+
+.coldstart p {
+  margin: var(--s-1) 0;
+}
+
+/* ── narrow viewports ────────────────────────────────────────────────────
+   Nothing on this page had a mobile pass before: `.controls` filled a row of
+   fixed-ish widths (a 3-way segment, a 190px search box, three dropdown
+   triggers, four ghost buttons) that had nowhere to go below ~700px, and
+   `.card` kept its 60px score box beside the body at full size, crowding the
+   title/actions into a sliver of the remaining width. */
+@media (max-width: 640px) {
+  .wrap {
+    padding: 0 var(--s-3);
+  }
+
+  .feednav {
+    flex-wrap: wrap;
+  }
+
+  /* No mobile override for `.filterbar`'s `top` any more — it used to assume
+     the app header scrolled out of view on a narrow viewport, which relied on
+     the same sticky bug fixed in base.css (html/body/#root's height: 100% vs
+     min-height: 100%). The header is sticky everywhere now, so the filter bar
+     keeps the base rule's `top: 58px` (below it) on every viewport instead of
+     `top: 0`, which would sit the two on top of each other. */
+
+  /* One control per row. A ragged 2-per-row wrap (a search box beside half a
+     dropdown label beside a stray segmented-control button) reads as broken,
+     not compact — a plain vertical list of full-width rows reads as organized
+     even though it's taller. */
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-2);
+  }
+
+  .controls > * {
+    width: 100%;
+  }
+
+  .seg button {
+    flex: 1;
+  }
+
+  /* Everything past the search box (sort, genre, tag-contains, select,
+     export, liked, blocked — nine controls in total) collapses behind the
+     toggle by default. At full desktop width `.controls-more` is `display:
+     contents` (see the base rule above the media queries) so it's invisible
+     to layout and none of this applies there. */
+  .more-toggle {
+    display: block;
+  }
+
+  .controls-more {
+    display: none;
+  }
+
+  .controls-more.open {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-2);
+    width: 100%;
+  }
+
+  .controls-more > * {
+    width: 100%;
+  }
+
+  .controls-more > .spacer {
+    display: none;
+  }
+
+  /* `.controls` switched its main axis to vertical above (flex-direction:
+     column), so the base rule's `flex: 1 1 190px` stopped meaning "grow
+     horizontally, 190px-wide floor" and started meaning "grow to fill
+     leftover vertical space, 190px tall" — the search box was stretching to
+     fill most of the screen. `flex: none` opts back out to its natural
+     (single-line) height. */
+  .quickfilter {
+    flex: none;
+    max-width: none;
+  }
+
+  .dd .btn {
+    width: 100%;
+  }
+
+  .card {
+    gap: var(--s-3);
+    padding: var(--s-3);
+  }
+
+  .card-art {
+    width: 44px;
+    height: 44px;
+  }
+
+  .card-actions {
+    justify-content: flex-start;
+  }
 }

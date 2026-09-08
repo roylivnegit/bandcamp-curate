@@ -1,0 +1,138 @@
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { TOAST_DURATION_MS } from '../config'
+import { resetToastsForTests, showToast } from '../lib/toast'
+import { ToastStack } from './ToastStack'
+
+describe('ToastStack', () => {
+  beforeEach(() => {
+    resetToastsForTests()
+  })
+
+  afterEach(async () => {
+    // Drain whatever's left in the module-scope queue so one test's toasts
+    // never bleed into the next.
+    if (vi.isFakeTimers()) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+      })
+    }
+    vi.useRealTimers()
+  })
+
+  it('renders nothing when the queue is empty', () => {
+    render(<ToastStack />)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows a status toast, then auto-dismisses it after the configured duration', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() => showToast('Link copied'))
+    expect(screen.getByRole('status')).toHaveTextContent('Link copied')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('renders an alert-variant toast with role="alert" instead of "status"', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() => showToast('Something failed', 'alert'))
+    expect(screen.getByRole('alert')).toHaveTextContent('Something failed')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('renders an action button and runs it, dismissing the toast on click', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+    const onClick = vi.fn()
+
+    act(() => showToast('Could not save that like.', 'alert', TOAST_DURATION_MS, { label: 'Retry', onClick }))
+    const retry = screen.getByRole('button', { name: 'Retry' })
+
+    act(() => retry.click())
+
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('renders no action button when none is given', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() => showToast('Link copied'))
+
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  })
+
+  it('stacks multiple toasts, each dismissible independently', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() => showToast('First'))
+    act(() => showToast('Second'))
+    expect(screen.getAllByRole('status')).toHaveLength(2)
+
+    const [firstDismiss] = screen.getAllByRole('button', { name: 'Dismiss notification' })
+    act(() => firstDismiss.click())
+
+    const remaining = screen.getAllByRole('status')
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0]).toHaveTextContent('Second')
+  })
+
+  it('pauses the auto-dismiss timer while hovered, then resumes on mouse leave', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() => showToast('Undo?'))
+    const toast = screen.getByRole('status')
+
+    fireEvent.mouseEnter(toast)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS + 1000)
+    })
+    expect(screen.getByRole('status')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(toast)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('pauses while a control inside it holds focus, and stays paused when focus moves to another control in the same toast', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<ToastStack />)
+
+    act(() =>
+      showToast('Could not save that like.', 'alert', TOAST_DURATION_MS, { label: 'Retry', onClick: () => {} }),
+    )
+    const retry = screen.getByRole('button', { name: 'Retry' })
+    const dismiss = screen.getByRole('button', { name: 'Dismiss notification' })
+
+    fireEvent.focus(retry)
+    // Focus moves to the other button inside the same toast — still inside it.
+    fireEvent.blur(retry, { relatedTarget: dismiss })
+    fireEvent.focus(dismiss, { relatedTarget: retry })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS + 1000)
+    })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    // Focus leaves the toast entirely.
+    fireEvent.blur(dismiss, { relatedTarget: null })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOAST_DURATION_MS)
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})

@@ -21,6 +21,7 @@ from app.db.models import (
     Scan,
     Tag,
     Track,
+    TrackTag,
     User,
 )
 from app.db.session import get_session
@@ -44,7 +45,7 @@ async def _seed(s: AsyncSession) -> User:
     await s.flush()
     a1 = Album(bandcamp_id=11, title="Owned", band_id=b1.id)
     a2 = Album(bandcamp_id=12, title="Recommend Me",
-               url="https://b2.bandcamp.com/album/x", band_id=b2.id)
+               url="https://b2.bandcamp.com/album/x", band_id=b2.id, art_id=99)
     a3 = Album(bandcamp_id=13, title="Followed", band_id=b3.id)
     t2 = Track(bandcamp_id=22, title="A Track", band_id=b4.id)  # own band → survives dedup
     s.add_all([a1, a2, a3, t2])
@@ -101,7 +102,7 @@ async def test_stats(client: AsyncClient) -> None:
     from app.config import get_settings
 
     assert s["neighbours"] == 1 and s["my_owned"] == 1 and s["follows"] == 1
-    assert s["request_budget"] == get_settings().crawl_max_requests
+    assert s["request_budget"] == get_settings().crawl_max_requests_per_scan
     assert s["recommendations"] >= 1
 
     # cold_start diagnostics: f2 is the one neighbour; its candidates are
@@ -113,6 +114,7 @@ async def test_stats(client: AsyncClient) -> None:
     assert cold_start["excluded_followed"] == 1
     assert cold_start["excluded_wishlisted"] == 0
     assert cold_start["excluded_blacklisted"] == 0
+    assert cold_start["excluded_liked"] == 0
 
 
 async def test_recommendations_feed(client: AsyncClient) -> None:
@@ -124,6 +126,8 @@ async def test_recommendations_feed(client: AsyncClient) -> None:
     top = rows[0]
     assert top["rank"] == 1 and top["reasons"]["co_owners"] == 1
     assert top["url"] == "https://b2.bandcamp.com/album/x"
+    assert top["art_id"] == 99
+    assert top["art_url"] == "https://f4.bcbits.com/img/a99_10.jpg"
 
 
 async def test_recommendations_filter_and_paging(client: AsyncClient) -> None:
@@ -173,6 +177,111 @@ async def test_recompute_unknown_scan_404(client: AsyncClient) -> None:
     assert r.status_code == 404
 
 
+async def test_recompute_no_cooldown_by_default(client: AsyncClient) -> None:
+    # Settings.recompute_cooldown_seconds defaults to 0 (disabled) — two
+    # back-to-back calls both succeed, matching every other recompute test above.
+    r1 = await client.post("/api/recommendations/recompute")
+    r2 = await client.post("/api/recommendations/recompute")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+
+
+async def test_recompute_rate_limited_when_cooldown_enabled(
+    client: AsyncClient, monkeypatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    import app.api.feed as feed_module
+    from app.config import Settings, get_settings
+    from app.main import app
+
+    feed_module._reset_recompute_cooldown_for_tests()
+    app.dependency_overrides[get_settings] = lambda: Settings(recompute_cooldown_seconds=30)
+    try:
+        t0 = datetime(2026, 1, 1, tzinfo=UTC)
+        monkeypatch.setattr(feed_module, "_now", lambda: t0)
+
+        r1 = await client.post("/api/recommendations/recompute")
+        assert r1.status_code == 200
+
+        # Immediately again, same clock reading — still inside the cooldown.
+        r2 = await client.post("/api/recommendations/recompute")
+        assert r2.status_code == 429
+        assert int(r2.headers["Retry-After"]) > 0
+
+        # Advance the clock past the cooldown — the call succeeds again.
+        monkeypatch.setattr(feed_module, "_now", lambda: t0 + timedelta(seconds=31))
+        r3 = await client.post("/api/recommendations/recompute")
+        assert r3.status_code == 200
+    finally:
+        del app.dependency_overrides[get_settings]
+        feed_module._reset_recompute_cooldown_for_tests()
+
+
+async def test_recompute_failure_does_not_consume_the_cooldown(
+    client: AsyncClient, monkeypatch
+) -> None:
+    # A 404 (bad scan_id) recorded the cooldown timestamp just like a real
+    # recompute, so a legitimate follow-up call was wrongly rate-limited
+    # (429) instead of succeeding — the cooldown must only start counting
+    # from a recompute that actually ran.
+    import app.api.feed as feed_module
+    from app.config import Settings, get_settings
+    from app.main import app
+
+    feed_module._reset_recompute_cooldown_for_tests()
+    app.dependency_overrides[get_settings] = lambda: Settings(recompute_cooldown_seconds=30)
+    try:
+        t0 = datetime(2026, 1, 1, tzinfo=UTC)
+        monkeypatch.setattr(feed_module, "_now", lambda: t0)
+
+        r1 = await client.post("/api/recommendations/recompute?scan_id=999999")
+        assert r1.status_code == 404
+
+        # Immediately after — same clock reading, which would still be inside
+        # the cooldown if the failed call above had consumed it.
+        r2 = await client.post("/api/recommendations/recompute")
+        assert r2.status_code == 200
+    finally:
+        del app.dependency_overrides[get_settings]
+        feed_module._reset_recompute_cooldown_for_tests()
+
+
+async def test_recommendations_etag_conditional_get(client: AsyncClient) -> None:
+    r1 = await client.get("/api/recommendations")
+    assert r1.status_code == 200
+    etag = r1.headers["ETag"]
+    assert etag  # gen-{scan_id}-{generation}, quoted
+
+    # Same ETag sent back → 304, empty body, no re-serialized rows.
+    r2 = await client.get("/api/recommendations", headers={"If-None-Match": etag})
+    assert r2.status_code == 304
+    assert r2.content == b""
+    assert r2.headers["ETag"] == etag
+
+    # A recompute bumps the generation → a stale If-None-Match no longer
+    # matches, and the fresh response carries a new ETag.
+    await client.post("/api/recommendations/recompute")
+    r3 = await client.get("/api/recommendations", headers={"If-None-Match": etag})
+    assert r3.status_code == 200
+    assert r3.headers["ETag"] != etag
+
+
+async def test_facets_etag_conditional_get(client: AsyncClient) -> None:
+    r1 = await client.get("/api/facets")
+    assert r1.status_code == 200
+    etag = r1.headers["ETag"]
+
+    r2 = await client.get("/api/facets", headers={"If-None-Match": etag})
+    assert r2.status_code == 304
+    assert r2.content == b""
+
+    await client.post("/api/recommendations/recompute")
+    r3 = await client.get("/api/facets", headers={"If-None-Match": etag})
+    assert r3.status_code == 200
+    assert r3.headers["ETag"] != etag
+
+
 async def test_legacy_ui_route_is_not_served(client: AsyncClient) -> None:
     # The old server-rendered feed is unregistered (see app/main.py): its fetch()
     # calls carry no bearer token, so it would render and then silently 401 on
@@ -208,6 +317,28 @@ async def test_block_prunes_and_lists_then_unblock(client: AsyncClient) -> None:
     assert band_id in {x["band_id"] for x in (await client.get("/api/recommendations")).json()}
 
 
+async def test_block_and_unblock_bump_recompute_generation_immediately(
+    client: AsyncClient,
+) -> None:
+    """Block/unblock prune (or would re-surface) rows directly, without going
+    through curate() — so they must ALSO bump the scan's own
+    recompute_generation, or another already-open session's cached ETag for
+    this scan never invalidates and keeps serving pre-block results
+    indefinitely, not just until the next real recompute."""
+    rows = (await client.get("/api/recommendations")).json()
+    band_id = next(r for r in rows if r["title"] == "Recommend Me")["band_id"]
+    gen = (await client.get("/api/stats")).json()["recompute_generation"]
+
+    r = await client.post("/api/blacklist", json={"band_id": band_id})
+    assert r.status_code == 200
+    gen_after_block = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_block == gen + 1
+
+    assert (await client.post(f"/api/blacklist/{band_id}/unblock")).status_code == 200
+    gen_after_unblock = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_unblock == gen_after_block + 1
+
+
 async def test_block_unknown_band_404(client: AsyncClient) -> None:
     assert (await client.post("/api/blacklist", json={"band_id": 999999})).status_code == 404
 
@@ -237,6 +368,26 @@ async def test_block_with_expiry_round_trips(client: AsyncClient) -> None:
     assert _naive_utc(entry["expires_at"]) == _naive_utc(expires_at)
 
     assert (await client.post(f"/api/blacklist/{band_id}/unblock")).status_code == 200
+
+
+async def test_block_rejects_past_expires_at(client: AsyncClient) -> None:
+    # A past expires_at would create a row that both `list_blocked` and the
+    # curation exclusion query immediately filter out as expired — a 200 that
+    # looks like a block but excludes nothing and shows up nowhere. Rejected
+    # at the request-validation layer instead.
+    rows = (await client.get("/api/recommendations")).json()
+    band_id = rows[0]["band_id"]
+
+    r = await client.post(
+        "/api/blacklist",
+        json={"band_id": band_id, "expires_at": "2020-01-01T00:00:00+00:00"},
+    )
+    assert r.status_code == 422
+
+    # Never created: neither an active block nor a (silently-inactive-by-being-
+    # -expired) row shows up.
+    blocked = (await client.get("/api/blacklist")).json()
+    assert band_id not in {b["band_id"] for b in blocked}
 
 
 async def test_label_filter(client: AsyncClient) -> None:
@@ -367,6 +518,51 @@ async def test_facets(client: AsyncClient) -> None:
     assert rec_bands <= facet_bands
 
 
+async def test_facets_include_track_only_tags() -> None:
+    # A genre that only shows up via TrackTag (never AlbumTag) must still
+    # surface as a facet — the tag-facets query used to inner-join AlbumTag
+    # only, so a track recommendation (album_id is NULL) could never match.
+    engine = create_async_engine(
+        "sqlite+aiosqlite://", poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        b = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
+        user = User(username="me", password_hash="!")
+        s.add_all([b, user])
+        await s.flush()
+        scan = Scan(user_id=user.id, name="c", kind=str(ScanKind.COLLECTION), status="done")
+        s.add(scan)
+        await s.flush()
+        track = Track(bandcamp_id=200, title="Track Only", band_id=b.id)
+        tag = Tag(name="dnb")
+        s.add_all([track, tag])
+        await s.flush()
+        s.add_all([
+            Recommendation(scan_id=scan.id, item_type=ItemType.TRACK, track_id=track.id, score=1.0),
+            TrackTag(track_id=track.id, tag_id=tag.id),
+        ])
+        await s.commit()
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with maker() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            facets = (await c.get("/api/facets")).json()
+        assert "dnb" in {t["value"] for t in facets["tags"]}
+    finally:
+        app.dependency_overrides.clear()
+        await engine.dispose()
+
+
 async def test_recompute_accepts_seed_tag_exclusion(client: AsyncClient) -> None:
     r = await client.post("/api/recommendations/recompute?exclude_seed_tag=psytrance")
     assert r.status_code == 200
@@ -399,6 +595,36 @@ async def test_like_removes_and_excludes_then_unlike(client: AsyncClient) -> Non
     assert album_id in {x["album_id"] for x in recs}
 
 
+async def test_like_and_unlike_bump_recompute_generation_immediately(
+    client: AsyncClient,
+) -> None:
+    """Same reasoning as blacklist's equivalent test: like/unlike prune (or
+    would re-surface) rows directly, so they must bump recompute_generation
+    themselves for another session's cached ETag to ever notice."""
+    rows = (await client.get("/api/recommendations")).json()
+    album_id = next(r for r in rows if r["title"] == "Recommend Me")["album_id"]
+    gen = (await client.get("/api/stats")).json()["recompute_generation"]
+
+    r = await client.post("/api/likes", json={"album_id": album_id})
+    assert r.status_code == 200
+    gen_after_like = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_like == gen + 1
+
+    assert (await client.post("/api/likes/unlike", json={"album_id": album_id})).status_code == 200
+    gen_after_unlike = (await client.get("/api/stats")).json()["recompute_generation"]
+    assert gen_after_unlike == gen_after_like + 1
+
+
 async def test_like_requires_exactly_one_id(client: AsyncClient) -> None:
     assert (await client.post("/api/likes", json={})).status_code == 422
     assert (await client.post("/api/likes", json={"album_id": 1, "track_id": 2})).status_code == 422
+
+
+async def test_like_nonexistent_album_returns_404(client: AsyncClient) -> None:
+    r = await client.post("/api/likes", json={"album_id": 999_999})
+    assert r.status_code == 404
+
+
+async def test_like_nonexistent_track_returns_404(client: AsyncClient) -> None:
+    r = await client.post("/api/likes", json={"track_id": 999_999})
+    assert r.status_code == 404

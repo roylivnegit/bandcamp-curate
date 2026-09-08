@@ -1,7 +1,11 @@
 import { useDeferredValue, useMemo, useState } from 'react'
+import type { RefObject } from 'react'
 
-import type { Facet, SortKey } from '../../api/types'
+import type { Facet, Recommendation, SortKey } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
+import { RemoveButton } from '../../components/RemoveButton'
+import { SavedViewsDropdown } from '../../components/SavedViewsDropdown'
+import { downloadCsv, exportFilename, formatRecommendationsAsCsv } from '../../lib/export'
 import { count } from '../../lib/format'
 import type { FeedFilters } from './useFeedFilters'
 
@@ -18,20 +22,70 @@ const TYPES: Array<{ value: '' | 'album' | 'track'; label: string }> = [
 ]
 
 export function FilterBar({
+  scanId,
   filters,
   facetTags,
+  seedTagFacets,
+  excludedSeedTags,
+  onApplySeedTagExclusion,
   likedCount,
   blockedCount,
   panel,
   onTogglePanel,
+  quickQuery,
+  onQuickQueryChange,
+  quickFilterRef,
+  selectMode,
+  onToggleSelectMode,
+  selectedCount,
+  selectableCount,
+  onSelectAll,
+  exportRows,
+  scanName,
 }: {
+  /** Which scan's filters this bar controls — `SavedViewsDropdown` scopes its
+   *  saved views to it. */
+  scanId: number
   filters: FeedFilters
   facetTags: Facet[]
+  /** Genres carried by the caller's own collection (`GET /api/facets`'s
+   *  `seed_tags`) — the candidates for "exclude recs generated from my own
+   *  genres", distinct from `facetTags` (genres present in the current
+   *  recommendations). */
+  seedTagFacets: Facet[]
+  /** Currently-applied exclusion set, client-side only (the backend doesn't
+   *  persist it) — drives the dropdown trigger's active state/count and its
+   *  pre-filled selection on reopen. */
+  excludedSeedTags: Set<string>
+  onApplySeedTagExclusion: (tags: Set<string>) => void
   likedCount: number
   blockedCount: number
-  panel: 'liked' | 'blocked' | null
+  panel: 'liked' | 'blocked' | 'seeds' | null
   onTogglePanel: (p: 'liked' | 'blocked') => void
+  quickQuery: string
+  onQuickQueryChange: (q: string) => void
+  quickFilterRef: RefObject<HTMLInputElement | null>
+  selectMode: boolean
+  onToggleSelectMode: () => void
+  selectedCount: number
+  selectableCount: number
+  onSelectAll: () => void
+  /** The currently-loaded, currently-filtered rows — exactly what's on
+   *  screen (server-side filters + the quick-filter narrowing), not a
+   *  separate fetch of the whole result set. */
+  exportRows: Recommendation[]
+  /** The current scan's name, used to scope the CSV export's filename so two
+   *  scans exported the same day don't collide. `null` when there's no scan
+   *  name to work with (falls back to the plain date-only filename). */
+  scanName: string | null
 }) {
+  const allSelected = selectableCount > 0 && selectedCount >= selectableCount
+  // Mobile only (see feed.css) — everything below the search box collapses
+  // behind this by default there, since nine full-width, one-per-row
+  // controls ate most of a phone screen before any results were on it.
+  // Irrelevant at desktop widths: `.controls-more` is always visible there
+  // regardless of this state, and the toggle button itself is hidden.
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false)
   return (
     <div className="filterbar">
       <div className="controls">
@@ -49,46 +103,111 @@ export function FilterBar({
           ))}
         </div>
 
-        <Dropdown label={`Sort · ${SORTS[filters.sort]} ▾`} width={210}>
-          {(close) => (
-            <div>
-              {(Object.keys(SORTS) as SortKey[]).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={`ddrow${filters.sort === k ? ' sel' : ''}`}
-                  onClick={() => {
-                    filters.setSort(k)
-                    close()
-                  }}
-                >
-                  <span className="tick">✓</span>
-                  <span className="nm">{SORTS[k]}</span>
-                </button>
-              ))}
-            </div>
+        <input
+          ref={quickFilterRef}
+          className="input quickfilter"
+          aria-label="Search"
+          placeholder="Search"
+          value={quickQuery}
+          onChange={(e) => onQuickQueryChange(e.target.value)}
+          onKeyDown={(e) => {
+            // Escape-to-dismiss, same convention as Dropdown/CommandPalette/
+            // ShortcutsHelp — this is the one text input on the page that
+            // didn't follow it. Clears first (if there's anything to clear),
+            // then blurs so the card-list keyboard shortcuts (l/b, arrows)
+            // work again without an extra Tab or click.
+            if (e.key !== 'Escape') return
+            if (quickQuery) {
+              e.preventDefault()
+              onQuickQueryChange('')
+            } else {
+              e.currentTarget.blur()
+            }
+          }}
+        />
+
+        <button
+          type="button"
+          className={`btn ghost more-toggle${mobileMoreOpen ? ' on' : ''}`}
+          aria-expanded={mobileMoreOpen}
+          aria-controls="filterbar-more"
+          onClick={() => setMobileMoreOpen((o) => !o)}
+        >
+          {mobileMoreOpen ? '▲ Fewer filters' : '▾ More filters'}
+        </button>
+
+        <div id="filterbar-more" className={`controls-more${mobileMoreOpen ? ' open' : ''}`}>
+          <Dropdown label={`Sort · ${SORTS[filters.sort]} ▾`} width={210}>
+            {(close) => (
+              <div>
+                {(Object.keys(SORTS) as SortKey[]).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`ddrow${filters.sort === k ? ' sel' : ''}`}
+                    onClick={() => {
+                      filters.setSort(k)
+                      close()
+                    }}
+                  >
+                    <span className="tick">✓</span>
+                    <span className="nm">{SORTS[k]}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Dropdown>
+
+          <GenreDropdown filters={filters} facetTags={facetTags} />
+          <ContainsDropdown filters={filters} />
+          <MyGenresDropdown
+            facets={seedTagFacets}
+            excluded={excludedSeedTags}
+            onApply={onApplySeedTagExclusion}
+          />
+          <SavedViewsDropdown scanId={scanId} />
+
+          <div className="spacer" />
+
+          <button
+            type="button"
+            className={`btn ghost${selectMode ? ' on' : ''}`}
+            aria-pressed={selectMode}
+            onClick={onToggleSelectMode}
+          >
+            {selectMode ? '✕ Cancel select' : '☑ Select'}
+          </button>
+          {selectMode && selectableCount > 0 && (
+            <button type="button" className="btn ghost" onClick={onSelectAll}>
+              {allSelected ? '✕ Deselect all' : '☑ Select all loaded'}
+            </button>
           )}
-        </Dropdown>
-
-        <GenreDropdown filters={filters} facetTags={facetTags} />
-        <ContainsDropdown filters={filters} />
-
-        <div className="spacer" />
-
-        <button
-          type="button"
-          className={`btn ghost${panel === 'liked' ? ' on' : ''}`}
-          onClick={() => onTogglePanel('liked')}
-        >
-          ♥ Liked <span className="num">({likedCount})</span>
-        </button>
-        <button
-          type="button"
-          className={`btn ghost${panel === 'blocked' ? ' on' : ''}`}
-          onClick={() => onTogglePanel('blocked')}
-        >
-          Blocked <span className="num">({blockedCount})</span>
-        </button>
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={exportRows.length === 0}
+            onClick={() => {
+              const csv = formatRecommendationsAsCsv(exportRows)
+              downloadCsv(exportFilename(scanName, new Date()), csv)
+            }}
+          >
+            ⇩ Export CSV
+          </button>
+          <button
+            type="button"
+            className={`btn ghost${panel === 'liked' ? ' on' : ''}`}
+            onClick={() => onTogglePanel('liked')}
+          >
+            ♥ Liked <span className="num">({likedCount})</span>
+          </button>
+          <button
+            type="button"
+            className={`btn ghost${panel === 'blocked' ? ' on' : ''}`}
+            onClick={() => onTogglePanel('blocked')}
+          >
+            Blocked <span className="num">({blockedCount})</span>
+          </button>
+        </div>
       </div>
 
       <ActivePills filters={filters} />
@@ -190,6 +309,108 @@ function GenreDropdown({ filters, facetTags }: { filters: FeedFilters; facetTags
   )
 }
 
+/** "Exclude recommendations that came from my own collection's genres" — a
+ *  curation-time recompute (`POST /api/recommendations/recompute?
+ *  exclude_seed_tag=...`), not a client-side filter like `GenreDropdown`
+ *  above. Same searchable-checkbox-list shape, applied against `seedTags`
+ *  (the caller's own genres) instead of the current recs' genres. */
+function MyGenresDropdown({
+  facets,
+  excluded,
+  onApply,
+}: {
+  facets: Facet[]
+  excluded: Set<string>
+  onApply: (tags: Set<string>) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [pending, setPending] = useState<Set<string>>(new Set())
+
+  const selectedCount = excluded.size
+
+  const searchable = useMemo(() => facets.map((t) => ({ tag: t, key: t.label.toLowerCase() })), [facets])
+  const deferredQuery = useDeferredValue(query)
+  const rows = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase()
+    if (!q) return facets
+    const out: Facet[] = []
+    for (const { tag, key } of searchable) if (key.includes(q)) out.push(tag)
+    return out
+  }, [searchable, facets, deferredQuery])
+
+  return (
+    <Dropdown
+      label={selectedCount ? `My genres (${selectedCount}) ▾` : '＋ Exclude my genres'}
+      active={selectedCount > 0}
+      onOpen={() => {
+        setPending(new Set(excluded))
+        setQuery('')
+      }}
+    >
+      {(close) => (
+        <div>
+          <input
+            className="ddsearch input"
+            placeholder="Search your genres…"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <p className="ddempty">
+            Excludes recommendations that came from albums/tracks in your own collection carrying
+            these genres.
+          </p>
+          <div className="ddlist">
+            {facets.length === 0 ? (
+              <p className="ddempty">
+                No seed genres yet — they come from your own crawled collection.
+              </p>
+            ) : rows.length === 0 ? (
+              <p className="ddempty">No genres match “{deferredQuery}”.</p>
+            ) : (
+              rows.map((t) => {
+                const sel = pending.has(t.value)
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    className={`ddrow${sel ? ' sel' : ''}`}
+                    onClick={() => {
+                      const next = new Set(pending)
+                      if (sel) next.delete(t.value)
+                      else next.add(t.value)
+                      setPending(next)
+                    }}
+                  >
+                    <span className="box">✓</span>
+                    <span className="nm">{t.label}</span>
+                    <span className="cnt">{count(t.count)}</span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+          <div className="ddfoot">
+            <button type="button" className="btn ghost" onClick={() => setPending(new Set())}>
+              Clear
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                onApply(pending)
+                close()
+              }}
+            >
+              {pending.size ? `Apply (${pending.size})` : 'Apply'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Dropdown>
+  )
+}
+
 function ContainsDropdown({ filters }: { filters: FeedFilters }) {
   const [text, setText] = useState('')
   const n = Object.keys(filters.tagContains).length
@@ -263,14 +484,7 @@ function ActivePills({ filters }: { filters: FeedFilters }) {
           <span className="tog static">
             artist: <b>{filters.label.name}</b>
           </span>
-          <button
-            type="button"
-            className="rm"
-            aria-label="Clear artist filter"
-            onClick={() => filters.setLabel(null)}
-          >
-            ×
-          </button>
+          <RemoveButton label="Clear artist filter" onClick={() => filters.setLabel(null)} />
         </span>
       )}
       {facetCount >= 2 && (
@@ -304,9 +518,7 @@ function Pill({
       >
         {out ? '⊘ exclude' : '✓ include'}: <b>{body}</b>
       </button>
-      <button type="button" className="rm" aria-label={`Remove ${body}`} onClick={onRemove}>
-        ×
-      </button>
+      <RemoveButton label={`Remove ${body}`} onClick={onRemove} />
     </span>
   )
 }

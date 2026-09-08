@@ -7,11 +7,16 @@
   z-index: 40;
 }
 
+/* Not `.wrap` — that's centered to the content column's max-width, which
+   insets the menu button far from the real corner of the screen on a wide
+   monitor. The header is a top bar, not part of that column: it gets its
+   own small, fixed edge padding so the menu sits at the actual top-left. */
 .apphead-inner {
   display: flex;
   align-items: center;
   gap: var(--s-3);
   height: 58px;
+  padding: 0 var(--s-4);
 }
 
 .brand {
@@ -19,18 +24,7 @@
   align-items: center;
   gap: var(--s-3);
   text-decoration: none;
-}
-
-/* A stack of crate dividers, drawn rather than an icon font. */
-.brand-mark {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  border-radius: 4px;
-  background:
-    linear-gradient(var(--accent), var(--accent)) 0 3px / 100% 2px no-repeat,
-    linear-gradient(var(--violet), var(--violet)) 0 8px / 100% 2px no-repeat,
-    linear-gradient(var(--accent-deep), var(--accent-deep)) 0 13px / 100% 2px no-repeat;
+  min-width: 0;
 }
 
 .brand-name {
@@ -39,22 +33,39 @@
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.brand-hl {
-  color: var(--accent);
+/* The header's real, working nav menu (a Dropdown) — three clean bars, not
+   the old brand mark that looked like a menu trigger but only ever linked
+   home. */
+.menu-icon {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 18px;
+  height: 14px;
+  /* The trigger is a plain (non-flex) <button>, so this inline-flex icon
+     aligns by baseline by default — which reads as "stuck near the top" of
+     the button's full height, not centered in it. */
+  vertical-align: middle;
 }
 
-.whoami {
-  font-size: var(--fs-tiny);
-  color: var(--muted);
-  padding: 3px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: var(--surface);
+.menu-icon span {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
 }
 
-.signout {
-  padding: 7px 13px;
-  font-size: var(--fs-tiny);
+/* "bandcamp music finder" is a lot longer than the old wordmark — the
+   username and Sign out now live in the menu instead of sitting next to it,
+   but a very narrow phone can still be tight on its own. */
+@media (max-width: 380px) {
+  .brand-name {
+    font-size: var(--fs-sm);
+  }
 }

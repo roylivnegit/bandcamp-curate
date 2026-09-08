@@ -28,7 +28,7 @@ from app.crawl.service import (
     crawl_fan_collection,
     crawl_track,
 )
-from app.db.models import CrawlFrontier, ProviderUsage, Scan
+from app.db.models import CrawlFrontier, ProviderUsage
 from app.enums import CrawlKind
 
 logger = logging.getLogger("crate_digger.crawl")
@@ -54,48 +54,26 @@ def _is_retryable_db_error(exc: BaseException) -> bool:
     )
 
 
-async def requests_used(session: AsyncSession) -> int:
-    """Count successful provider (Nimble) page fetches logged so far — the budget metric."""
-    return (
-        await session.execute(
-            select(func.count()).select_from(ProviderUsage).where(ProviderUsage.ok.is_(True))
-        )
-    ).scalar_one()
-
-
-async def budget_exhausted(session: AsyncSession, max_requests: int | None) -> bool:
-    """Whether the cumulative provider-request budget has been reached."""
-    if max_requests is None:
-        return False
-    return await requests_used(session) >= max_requests
-
-
-async def user_requests_used(session: AsyncSession, user_id: int) -> int:
-    """Count this user's successful provider fetches, across all their scans.
-
-    Only fetches attributed to a scan (`ProviderUsage.scan_id`) count — a fetch
-    logged before that attribution existed, or through a path not yet threaded,
-    is invisible here (and so never counts against anyone's per-user budget).
-    """
+async def requests_used_by_scan(session: AsyncSession, scan_id: int) -> int:
+    """Count THIS scan's own successful provider (Nimble) page fetches — the
+    per-scan budget metric. Resets to zero for every new scan; never summed
+    across scans or users."""
     return (
         await session.execute(
             select(func.count())
             .select_from(ProviderUsage)
-            .join(Scan, Scan.id == ProviderUsage.scan_id)
-            .where(ProviderUsage.ok.is_(True), Scan.user_id == user_id)
+            .where(ProviderUsage.ok.is_(True), ProviderUsage.scan_id == scan_id)
         )
     ).scalar_one()
 
 
-async def user_budget_exhausted(
-    session: AsyncSession, user_id: int | None, max_requests_per_user: int | None
+async def scan_budget_exhausted(
+    session: AsyncSession, scan_id: int, max_requests: int | None
 ) -> bool:
-    """Whether this user's own cumulative provider-request budget has been
-    reached. Always False without both a user to check and a cap to check it
-    against (the legacy operator crawl has no user_id, for instance)."""
-    if max_requests_per_user is None or user_id is None:
+    """Whether this scan's own request budget has been reached."""
+    if max_requests is None:
         return False
-    return await user_requests_used(session, user_id) >= max_requests_per_user
+    return await requests_used_by_scan(session, scan_id) >= max_requests
 
 
 async def _reuse_if_already_crawled(
@@ -104,6 +82,7 @@ async def _reuse_if_already_crawled(
     *,
     max_depth: int | None,
     seed_url: str | None,
+    seed_fan_id: int | None = None,
 ) -> CrawlOutcome | None:
     """If another scan already crawled this (url, kind), complete it for free.
 
@@ -129,6 +108,7 @@ async def _reuse_if_already_crawled(
     if max_depth is None or entry.depth < max_depth:
         enqueued = await replay_fanout(
             session, entry.url, entry.kind, scan_id=entry.scan_id, depth=entry.depth + 1,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
         )
     await session.commit()
     logger.info(
@@ -152,7 +132,7 @@ async def process_entry(
 ) -> CrawlOutcome:
     """Run one already-claimed frontier entry by kind. Raises on failure."""
     reused = await _reuse_if_already_crawled(
-        session, entry, max_depth=max_depth, seed_url=seed_url
+        session, entry, max_depth=max_depth, seed_url=seed_url, seed_fan_id=seed_fan_id,
     )
     if reused is not None:
         return reused
@@ -173,11 +153,13 @@ async def process_entry(
         return await crawl_album(
             session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
             supporters_client=supporters_client, scan_id=entry.scan_id,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
         )
     if entry.kind == CrawlKind.TRACK:
         return await crawl_track(
             session, fetcher, entry.url, depth=entry.depth, max_depth=max_depth,
             supporters_client=supporters_client, scan_id=entry.scan_id,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
         )
     raise ValueError(f"unsupported crawl kind: {entry.kind}")
 
@@ -234,9 +216,17 @@ async def process_one(
             if reloaded is None:
                 return None
             note = f"timed out after {entry_seconds}s"
-            if reloaded.attempts >= MAX_ENTRY_TIMEOUTS:
+            # Counts consecutive TIMEOUTS specifically — not `attempts`, the
+            # fairness-pass counter that also bumps on an ordinary claim (a
+            # big collection's own `mark_partial` re-pages), which would
+            # otherwise fail this entry on its first real timeout once a
+            # large-but-healthy collection had simply been claimed enough
+            # times to page through.
+            timeout_count = reloaded.timeout_count + 1
+            reloaded.timeout_count = timeout_count
+            if timeout_count >= MAX_ENTRY_TIMEOUTS:
                 # Stop re-queueing something that never finishes; say why.
-                await frontier.mark_error(session, reloaded, f"{note} x{reloaded.attempts}")
+                await frontier.mark_error(session, reloaded, f"{note} x{timeout_count}")
                 logger.warning("%s (%s): %s — giving up", url, kind, note)
             else:
                 # Back to PENDING, cursor intact. Left IN_PROGRESS it would be
@@ -295,9 +285,7 @@ async def run_until_empty(
     follows_client: FollowsApiClient | None = None,
     supporters_client: SupportersApiClient | None = None,
     max_depth: int | None = None,
-    max_requests: int | None = None,
-    user_id: int | None = None,
-    max_requests_per_user: int | None = None,
+    max_requests_per_scan: int | None = None,
     max_iterations: int = 1000,
     max_seconds: float | None = None,
     entry_seconds: float | None = None,
@@ -307,11 +295,9 @@ async def run_until_empty(
     """Process this scan's frontier entries until it drains, a request budget is
     hit, `max_iterations` entries are done, or `max_seconds` elapses.
 
-    Two independent budgets can stop the drain: `max_requests` (global,
-    cumulative across every user ever) and, when both `user_id` and
-    `max_requests_per_user` are given, this scan owner's own cumulative spend
-    across all their scans — so one user maxing out their own budget can't be
-    read as "no budget left" for anyone else's.
+    `max_requests_per_scan` bounds THIS scan's own cumulative fetch count —
+    scoped to `scan_id`, reset for every new scan, never shared with any other
+    scan or user.
 
     `concurrency` workers claim and crawl in parallel. A Nimble render takes 3-35s,
     so a serial drain spends nearly all of its time waiting: at concurrency 1 this
@@ -340,14 +326,10 @@ async def run_until_empty(
                 return
             remaining -= 1  # reserve a slot before awaiting anything
             async with sessionmaker() as session:
-                if await budget_exhausted(session, max_requests):
-                    logger.info("request budget reached (%s); stopping", max_requests)
-                    stop = True
-                    return
-                if await user_budget_exhausted(session, user_id, max_requests_per_user):
+                if await scan_budget_exhausted(session, scan_id, max_requests_per_scan):
                     logger.info(
-                        "user %s's request budget reached (%s); stopping",
-                        user_id, max_requests_per_user,
+                        "scan %s's request budget reached (%s); stopping",
+                        scan_id, max_requests_per_scan,
                     )
                     stop = True
                     return

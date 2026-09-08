@@ -7,10 +7,19 @@
   box-sizing: border-box;
 }
 
+/* min-height, not height: `height: 100%` clamps html/body/#root to exactly
+ * one viewport tall no matter how long the actual page content is. That's
+ * harmless for a short page, but on a long feed it caps #root's own box at
+ * 100vh — the containing block `.apphead`'s `position: sticky` measures
+ * against — so the header runs out of "room" to stick in and detaches once
+ * you scroll past one viewport height, even though the page itself keeps
+ * scrolling normally past that point. min-height still guarantees a
+ * full-viewport-tall page when content is short, without capping it when
+ * content is taller. */
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
 }
 
 body {
@@ -20,13 +29,43 @@ body {
   font-size: var(--fs-base);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  /* Two faint accent washes at the top, as in the original — enough to keep the
-   * ground from reading as flat black without competing with content. */
+  background: var(--bg);
+  position: relative;
+}
+
+/* A slow-drifting field of soft accent washes behind everything. The old
+ * version anchored two gradients to the top corners only — fine on a short
+ * viewport, but most of a wide monitor or a long scrolled page (the scans
+ * list, a deep feed) sat past where they fade out, reading as flat black.
+ * `inset: -10%` plus `scale()` in the animation gives the transform room to
+ * move without ever revealing a hard edge. `prefers-reduced-motion` already
+ * zeroes every animation duration globally (below), so this freezes on its
+ * own without an extra override. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
   background:
-    radial-gradient(1100px 520px at 10% -10%, rgba(94, 234, 212, 0.1), transparent 60%),
-    radial-gradient(900px 520px at 100% -4%, rgba(196, 181, 253, 0.085), transparent 55%),
-    var(--bg);
-  background-attachment: fixed;
+    radial-gradient(1300px 900px at 12% 15%, rgba(94, 234, 212, 0.22), transparent 62%),
+    radial-gradient(1200px 850px at 88% 12%, rgba(196, 181, 253, 0.19), transparent 62%),
+    radial-gradient(1400px 1100px at 50% 55%, rgba(45, 212, 191, 0.1), transparent 68%),
+    radial-gradient(1200px 950px at 20% 92%, rgba(196, 181, 253, 0.14), transparent 65%),
+    radial-gradient(1200px 950px at 82% 95%, rgba(94, 234, 212, 0.15), transparent 65%);
+  animation: bg-drift 42s ease-in-out infinite alternate;
+}
+
+@keyframes bg-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(2%, -3%, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(-3%, 2%, 0) scale(1);
+  }
 }
 
 a {
@@ -56,6 +95,7 @@ a {
   .fpill .rm,
   .fpill .tog,
   .seed .rm,
+  .ddviewrow .rm,
   .act,
   .listen {
     min-width: 44px;
@@ -64,7 +104,8 @@ a {
 
   /* The ✕ glyphs are centred text in a now-taller box. */
   .fpill .rm,
-  .seed .rm {
+  .seed .rm,
+  .ddviewrow .rm {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -102,6 +143,40 @@ a {
   100% {
     background-position: 0 50%;
   }
+}
+
+/* ── accessibility utilities ─────────────────────────────────────────────── */
+
+/* Clip-based, not `display: none` — screen readers still announce content
+ * hidden this way, which is the point for a skip link that must exist in the
+ * tab order despite being invisible until focused. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sr-only:focus {
+  position: fixed;
+  top: var(--s-3);
+  left: var(--s-3);
+  z-index: 100;
+  width: auto;
+  height: auto;
+  padding: var(--s-2) var(--s-4);
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--r-sm);
 }
 
 /* ── layout ──────────────────────────────────────────────────────────────── */
@@ -174,6 +249,17 @@ a {
   background: var(--surface-2);
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.btn.ghost.danger {
+  color: var(--danger);
+  border-color: var(--danger-dim);
+}
+
+.btn.ghost.danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+  filter: none;
 }
 
 .btn.block {
@@ -321,4 +407,13 @@ a {
 
 .banner.queued {
   border-color: var(--line-strong);
+}
+
+.offlinebanner {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  border-radius: 0;
+  justify-content: center;
+  text-align: center;
 }

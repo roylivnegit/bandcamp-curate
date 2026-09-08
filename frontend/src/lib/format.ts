@@ -8,6 +8,25 @@ export function ago(iso: string | null): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 
+/* Hoisted, not constructed per call — `RelativeTime` calls `exactTimestamp`
+ * on every render. Pinned locale/timeZone (UTC, not the viewer's) so the
+ * formatted string is deterministic: same input always produces the same
+ * output, in tests and across viewers alike, unlike `ago()` above whose
+ * whole point is to move with the clock. */
+const EXACT_TIMESTAMP_FORMAT = new Intl.DateTimeFormat('en-US', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'UTC',
+})
+
+/** A human-readable exact timestamp, for `RelativeTime`'s hover title — a
+ *  raw ISO string (`2026-09-08T14:23:00Z`) reads worse than every other
+ *  piece of formatted text in this app. */
+export function exactTimestamp(iso: string | null): string {
+  if (!iso) return ''
+  return EXACT_TIMESTAMP_FORMAT.format(new Date(iso))
+}
+
 /* Hoisted: a literal in the function body is a fresh RegExp object on every
  * call, and this one runs once per rendered feed card. No `/g`, so there's no
  * shared `lastIndex` to leak between calls. */
@@ -27,6 +46,65 @@ export function bandcampHandle(url: string | null): string {
 /** Whether a pasted seed URL is a track or an album (the API decides for real). */
 export function seedKind(url: string): 'album' | 'track' {
   return url.toLowerCase().includes('/track/') ? 'track' : 'album'
+}
+
+/** Canonical form of a seed URL, for de-dup comparison only — lowercases the
+ *  host and strips a trailing slash from the path, so
+ *  `https://X.bandcamp.com/album/y/` and `https://x.bandcamp.com/album/y` are
+ *  recognized as the same seed. Never used for display or for what's
+ *  actually submitted to the API — callers keep storing/sending the original,
+ *  as typed or pasted. Falls back to the trimmed raw string if it doesn't
+ *  parse as a URL (mirrors `bandcampHandle`'s try/catch) rather than
+ *  throwing. */
+export function normalizeSeedUrl(url: string): string {
+  const trimmed = url.trim()
+  try {
+    const u = new URL(trimmed)
+    const path = u.pathname.replace(/\/+$/, '')
+    return `${u.protocol}//${u.hostname.toLowerCase()}${path}${u.search}${u.hash}`
+  } catch {
+    return trimmed
+  }
+}
+
+/** Whether `name` (trimmed, case-insensitive) matches any of `existingNames` —
+ *  drives a non-blocking "you already have a scan called this" warning in
+ *  `NewScanForm`, not a hard rejection (scan names aren't unique server-side). */
+export function isDuplicateScanName(name: string, existingNames: string[]): boolean {
+  const n = name.trim().toLowerCase()
+  if (!n) return false
+  return existingNames.some((existing) => existing.trim().toLowerCase() === n)
+}
+
+// A fan's collection page always lives at bandcamp.com/<handle> — unlike album/track
+// URLs (SEED_URL_RE in NewScanForm.tsx), which are hosted per-artist and deliberately
+// accept any host. The backend itself only checks non-empty (`api/auth.py`), so this
+// is strictly a UI-side early-feedback check, not a stricter gate than the API's.
+const FAN_URL_RE = /^https?:\/\/bandcamp\.com\/[^/?#]+\/?(?:[?#].*)?$/i
+
+/** Whether a string looks like a Bandcamp fan-collection URL (https://bandcamp.com/<handle>). */
+export function isValidFanUrl(url: string): boolean {
+  return FAN_URL_RE.test(url.trim())
+}
+
+/** "expires in Xm/Xh/Xd" for a temporary block's `expires_at`, or '' for a
+ *  permanent one (`null`) or one that's already lapsed — the backend's own
+ *  `expires_at > now()` filter keeps a lapsed row out of `GET /api/blacklist`
+ *  in the first place, so this is a display nicety, not the enforcement. */
+export function expiresLabel(iso: string | null): string {
+  if (!iso) return ''
+  const ms = new Date(iso).getTime() - Date.now()
+  if (ms <= 0) return ''
+  const s = ms / 1000
+  // Bucket on the *rounded* value, not the raw seconds — rounding 59m50s up to
+  // 60m (or 23h45m up to 24h) while still in the minutes/hours bucket produced
+  // a nonsensical "60m"/"24h" label right at the boundary; falling through to
+  // the next unit when rounding overflows the bucket keeps every label sane.
+  const minutes = Math.round(s / 60)
+  if (minutes < 60) return `expires in ${Math.max(1, minutes)}m`
+  const hours = Math.round(s / 3600)
+  if (hours < 24) return `expires in ${hours}h`
+  return `expires in ${Math.round(s / 86400)}d`
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {

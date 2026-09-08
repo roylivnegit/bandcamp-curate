@@ -10,6 +10,12 @@
   margin: var(--s-8) 0 var(--s-4);
 }
 
+.scanhead-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
 .cards {
   display: flex;
   flex-direction: column;

@@ -26,7 +26,7 @@ from app.crawl.scan_service import (
     run_scan,
 )
 from app.db.base import Base
-from app.db.models import CrawlFrontier, Fan, FanItem, Scan, ScanSeed, User
+from app.db.models import CrawlFrontier, Fan, FanItem, ProviderUsage, Scan, ScanSeed, User
 from app.db.session import get_session
 from app.enums import CrawlKind, CrawlStatus, ScanKind, ScanStatus
 from app.main import app
@@ -114,6 +114,18 @@ async def test_create_validation(client: AsyncClient) -> None:
     assert (await post("n", ["https://google.com"])).status_code == 400  # not a release URL
 
 
+async def test_create_scan_seed_cap(client: AsyncClient) -> None:
+    too_many = [f"https://x.bandcamp.com/album/a{i}" for i in range(501)]
+    r = await client.post("/api/scans", json={"name": "n", "seeds": too_many})
+    assert r.status_code == 400
+    assert "too many seed" in r.json()["detail"]
+
+    at_cap = too_many[:500]
+    r = await client.post("/api/scans", json={"name": "n", "seeds": at_cap})
+    assert r.status_code == 201
+    assert r.json()["seed_count"] == 500
+
+
 async def test_create_scan_with_track_seed(client: AsyncClient) -> None:
     r = await client.post(
         "/api/scans",
@@ -133,11 +145,88 @@ async def test_run_requeues(client: AsyncClient) -> None:
     assert (await client.post("/api/scans/999999/run")).status_code == 404
 
 
+async def test_run_rejects_an_already_running_scan(sessionmaker_) -> None:  # noqa: ANN001
+    # A genuinely running scan already has a self-perpetuating job chain; requeuing
+    # it via the API would let the poller start a second chain against the same
+    # scan_id. Only `running` is rejected — `test_run_requeues` above covers the
+    # normal queued/error/done re-run path.
+    async with sessionmaker_() as s:
+        user = User(username="me", password_hash="!")
+        s.add(user)
+        await s.flush()
+        scan = Scan(user_id=user.id, name="n", kind=str(ScanKind.CUSTOM),
+                    status=str(ScanStatus.RUNNING))
+        s.add(scan)
+        await s.commit()
+        scan_id = scan.id
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker_() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post(f"/api/scans/{scan_id}/run")
+            assert r.status_code == 409
+    finally:
+        app.dependency_overrides.clear()
+
+    async with sessionmaker_() as s:
+        assert (await s.get(Scan, scan_id)).status == str(ScanStatus.RUNNING)
+
+
 async def test_delete_scan_and_protect_collection(client: AsyncClient) -> None:
     sid = (await client.post("/api/scans", json={"name": "n", "seeds": [ALBUM_URL]})).json()["id"]
     assert (await client.delete(f"/api/scans/{sid}")).status_code == 200
     assert (await client.get(f"/api/scans/{sid}")).status_code == 404
     assert (await client.delete("/api/scans/999999")).status_code == 404
+
+
+async def test_delete_scan_drops_frontier_and_usage_rows(sessionmaker_) -> None:  # noqa: ANN001
+    # A scan that has actually run leaves CrawlFrontier/ProviderUsage rows
+    # behind (neither FK declares ondelete=CASCADE, unlike ScanSeed/
+    # Recommendation) -- delete_scan must clean those up itself or they're
+    # orphaned (silently on SQLite here; an IntegrityError on real Postgres).
+    async with sessionmaker_() as s:
+        fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+        s.add(fan)
+        await s.flush()
+        user = User(username="me", password_hash="!", fan_id=fan.id)
+        s.add(user)
+        await s.flush()
+        scan = Scan(user_id=user.id, name="n", kind=str(ScanKind.CUSTOM),
+                    status=str(ScanStatus.DONE))
+        s.add(scan)
+        await s.flush()
+        sid = scan.id
+        s.add_all([
+            CrawlFrontier(scan_id=sid, url=ALBUM_URL, kind=str(CrawlKind.ALBUM)),
+            ProviderUsage(scan_id=sid, provider="test"),
+        ])
+        await s.commit()
+
+    async def _override() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker_() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[get_current_user] = lambda: user
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.delete(f"/api/scans/{sid}")
+    app.dependency_overrides.clear()
+    assert r.status_code == 200
+
+    async with sessionmaker_() as s:
+        assert (
+            await s.execute(select(CrawlFrontier).where(CrawlFrontier.scan_id == sid))
+        ).first() is None
+        assert (
+            await s.execute(select(ProviderUsage).where(ProviderUsage.scan_id == sid))
+        ).first() is None
 
 
 # ── run_scan orchestration (over the fixture, no network) ────────────────────────
@@ -209,7 +298,7 @@ async def test_run_scan_crawls_resolves_and_curates(sessionmaker_) -> None:  # n
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML, "/album/": ALBUM_HTML})
     done = await run_scan(
         sessionmaker_, fetcher, scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
     assert done.status == str(ScanStatus.DONE)
     assert "recommendations" in done.stats
@@ -244,7 +333,7 @@ async def test_run_scan_passes_the_owners_fan_to_the_drain(
     monkeypatch.setattr(runner, "run_until_empty", spy)
     await run_scan(
         sessionmaker_, FakeFetcher({ALBUM_URL: ALBUM_HTML}), scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
     assert seen["seed_fan_id"] == fan_id
 
@@ -275,7 +364,7 @@ async def test_slices_pick_up_the_owner_fan_once_it_exists(sessionmaker_) -> Non
             await advance_scan(
                 sessionmaker_, fetcher, scan_id,
                 collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-                supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+                supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
                 slice_entries=1,  # one entry per slice, so the fan page is slice 1
             )
 
@@ -300,7 +389,7 @@ async def test_collection_scan_is_chained_not_drained_in_one_go(sessionmaker_) -
     more = await advance_scan(
         sessionmaker_, fetcher, scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
         slice_entries=1,
     )
     assert more is True  # the owned albums it just found are still queued
@@ -339,7 +428,7 @@ async def test_a_slice_offers_several_entries_per_worker(sessionmaker_) -> None:
         await advance_scan(
             sessionmaker_, fetcher, scan_id,
             collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-            supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+            supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
             slice_entries=entries, concurrency=workers,
         )
 
@@ -372,7 +461,7 @@ async def test_the_slice_chain_is_bounded(sessionmaker_) -> None:  # noqa: ANN00
         return await advance_scan(
             sessionmaker_, fetcher, scan_id,
             collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-            supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+            supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
             slice_entries=1,
         )
 
@@ -401,7 +490,7 @@ async def test_slice_count_resets_on_a_fresh_run(sessionmaker_) -> None:  # noqa
     fetcher = FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML})
     kwargs = dict(
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
         slice_entries=1,
     )
     await advance_scan(sessionmaker_, fetcher, scan_id, **kwargs)
@@ -436,7 +525,7 @@ async def test_first_slice_of_a_fresh_collection_scan_takes_one_entry(
     await advance_scan(
         sessionmaker_, fetcher, scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
         slice_entries=10,
     )
 
@@ -484,7 +573,7 @@ async def test_run_scan_with_mixed_album_and_track_seeds(sessionmaker_) -> None:
     fetcher = FakeFetcher({ALBUM_URL: ALBUM_HTML, TRACK_URL: TRACK_HTML})
     done = await run_scan(
         sessionmaker_, fetcher, scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
     assert done.status == str(ScanStatus.DONE)
 
@@ -518,7 +607,7 @@ async def _run_collection_scan(sessionmaker_, user_id: int, scan_id: int):  # no
     return await run_scan(
         sessionmaker_, fetcher, scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
 
 
@@ -638,7 +727,7 @@ async def test_a_slice_writes_a_heartbeat(sessionmaker_) -> None:  # noqa: ANN00
     await advance_scan(
         sessionmaker_, FakeFetcher({FAN_URL: FAN_HTML, "/album/": ALBUM_HTML}), scan_id,
         collection_client=FakeCollectionClient(), follows_client=FakeFollowsClient(),
-        supporters_client=FakeSupportersClient(), max_depth=1, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=1, max_requests_per_scan=50,
     )
 
     async with sessionmaker_() as s:
@@ -700,7 +789,7 @@ async def _curate_calls_for(sessionmaker_, who: str, fan_html: str, client) -> l
         await advance_scan(
             sessionmaker_, FakeFetcher({FAN_URL: fan_html}), sid,
             collection_client=client, follows_client=FakeFollowsClient(),
-            supporters_client=FakeSupportersClient(), max_depth=0, max_requests=50,
+            supporters_client=FakeSupportersClient(), max_depth=0, max_requests_per_scan=50,
             slice_entries=1, curate_each_slice=True,
         )
     return calls
@@ -740,7 +829,7 @@ async def test_interim_curation_resolves_seeds_first(sessionmaker_) -> None:  # 
 
     await advance_scan(
         sessionmaker_, FakeFetcher({ALBUM_URL: ALBUM_HTML}), scan_id,
-        supporters_client=FakeSupportersClient(), max_depth=0, max_requests=50,
+        supporters_client=FakeSupportersClient(), max_depth=0, max_requests_per_scan=50,
         curate_each_slice=True,
     )
 
@@ -774,7 +863,7 @@ async def test_a_timed_out_entry_keeps_the_scan_from_finalizing(sessionmaker_) -
 
     more = await advance_scan(
         sessionmaker_, Hangs(), scan_id, supporters_client=FakeSupportersClient(),
-        max_depth=0, max_requests=50, entry_seconds=0.2,
+        max_depth=0, max_requests_per_scan=50, entry_seconds=0.2,
     )
 
     assert more is True  # the scan must NOT finalize on unfinished work

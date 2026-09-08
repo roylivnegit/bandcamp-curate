@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
+import { PasswordInput } from '../components/PasswordInput'
 import { AuthLayout } from './AuthLayout'
 import { useAuth } from './context'
 
@@ -66,10 +67,8 @@ export function LoginPage() {
           <label className="label" htmlFor="password">
             Password
           </label>
-          <input
+          <PasswordInput
             id="password"
-            className="input"
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

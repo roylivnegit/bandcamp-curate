@@ -1,14 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useState, type ClipboardEvent as ReactClipboardEvent } from 'react'
 
 import { api } from '../../api/client'
-import { seedKind } from '../../lib/format'
+import { RemoveButton } from '../../components/RemoveButton'
+import { isDuplicateScanName, normalizeSeedUrl, seedKind } from '../../lib/format'
+
+// Mirrors the backend's own acceptance shape (`app.crawl.scan_service._SEED_RE`):
+// any host, path starting /album/<slug> or /track/<slug>. Deliberately no
+// bandcamp.com host check here — the API doesn't require one either, so this
+// must not reject anything the API would accept.
+const SEED_URL_RE = /^https?:\/\/[^/]+\/(album|track)\/[^/?#]+/i
 
 export function NewScanForm({
   onCreated,
   onCancel,
+  existingNames = [],
 }: {
   onCreated: () => void
   onCancel: () => void
+  /** Names of the caller's other scans — drives a non-blocking "already
+   *  exists" warning below the name field. Scan names aren't unique
+   *  server-side, so this never blocks submission. */
+  existingNames?: string[]
 }) {
   const [name, setName] = useState('')
   const [seedUrl, setSeedUrl] = useState('')
@@ -16,10 +28,75 @@ export function NewScanForm({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const hasDraft = seeds.length > 0
+  const duplicateName = isDuplicateScanName(name, existingNames)
+
+  // Warns before an accidental reload/close drops an unsaved seed list — a
+  // successful `create()` unmounts this component (`onCreated()` flips
+  // `ScanListPage`'s `creating` flag), so the listener's own cleanup already
+  // covers that case with no extra "just submitted" flag needed. Keyed on
+  // the derived boolean, not the `seeds` array reference, so adding/removing
+  // seeds doesn't tear down and re-add the listener on every keystroke.
+  useEffect(() => {
+    if (!hasDraft) return
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [hasDraft])
+
   function addSeed() {
     const u = seedUrl.trim()
     if (!u) return
-    setSeeds((prev) => (prev.includes(u) ? prev : [...prev, u]))
+    if (!SEED_URL_RE.test(u)) {
+      setError('That doesn’t look like a Bandcamp album or track URL (e.g. https://artist.bandcamp.com/album/name).')
+      return
+    }
+    if (seeds.some((s) => normalizeSeedUrl(s) === normalizeSeedUrl(u))) {
+      setError('Already in your seed list.')
+      return
+    }
+    setError('')
+    setSeeds((prev) => [...prev, u])
+    setSeedUrl('')
+  }
+
+  // A single pasted line falls through to the default paste behavior (lands
+  // in the input, same as typing) — only a multi-line paste (a batch of
+  // copied tabs) is handled here, since that's the case Enter-to-add can't
+  // cover at all. Invalid/duplicate lines are silently dropped, same as
+  // `addSeed`'s own dedupe; only a paste with *no* valid lines surfaces an
+  // error, mirroring the single-URL rejection message.
+  function onSeedPaste(e: ReactClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!/\r|\n/.test(text)) return
+    e.preventDefault()
+    const lines = text
+      .split(/\r\n|\r|\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+    const valid = lines.filter((l) => SEED_URL_RE.test(l))
+    if (valid.length === 0) {
+      setError('None of the pasted lines looked like a Bandcamp album or track URL.')
+      return
+    }
+    setError('')
+    setSeeds((prev) => {
+      // A `Set` of normalized keys, seeded from the existing list and grown
+      // as each pasted line is accepted — catches a duplicate against what
+      // was already there *and* a duplicate repeated within this same paste.
+      const seen = new Set(prev.map(normalizeSeedUrl))
+      const next = [...prev]
+      for (const u of valid) {
+        const key = normalizeSeedUrl(u)
+        if (seen.has(key)) continue
+        seen.add(key)
+        next.push(u)
+      }
+      return next
+    })
     setSeedUrl('')
   }
 
@@ -28,7 +105,7 @@ export function NewScanForm({
     setBusy(true)
     setError('')
     try {
-      await api.createScan({ name, seeds })
+      await api.createScan({ name: name.trim(), seeds })
       onCreated()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the scan.')
@@ -56,6 +133,9 @@ export function NewScanForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        {duplicateName && (
+          <p className="hint">A scan named &ldquo;{name.trim()}&rdquo; already exists.</p>
+        )}
       </div>
 
       <div className="field">
@@ -79,6 +159,7 @@ export function NewScanForm({
                 addSeed()
               }
             }}
+            onPaste={onSeedPaste}
           />
           <button type="button" className="btn ghost" onClick={addSeed} disabled={!seedUrl.trim()}>
             Add
@@ -92,14 +173,10 @@ export function NewScanForm({
             <li className="seed" key={u}>
               <span className="stag">{seedKind(u)}</span>
               <span className="u">{u}</span>
-              <button
-                type="button"
-                className="rm"
-                aria-label={`Remove ${u}`}
+              <RemoveButton
+                label={`Remove ${u}`}
                 onClick={() => setSeeds((prev) => prev.filter((_, j) => j !== i))}
-              >
-                ×
-              </button>
+              />
             </li>
           ))}
         </ul>

@@ -43,7 +43,9 @@
   font: inherit;
   font-size: var(--fs-sm);
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .ddrow:hover {
@@ -101,6 +103,52 @@
   font-size: var(--fs-tiny);
 }
 
+/* A `.ddrow` (the apply action) paired with a separate delete control —
+   `SavedViewsDropdown`'s saved-view rows. Two independent actions, so unlike
+   every other `.ddlist` row this can't be one `<button className="ddrow">`
+   (a nested button would be invalid HTML). */
+.ddviewrow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ddviewrow .ddrow {
+  flex: 1;
+  min-width: 0;
+}
+
+.ddviewrow .rm {
+  flex: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.ddviewrow .rm:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* The armed, second-click-confirms state of a saved view's remove control —
+   same danger color `.btn.ghost.danger` uses elsewhere for a destructive
+   action awaiting confirmation. */
+.ddviewrow .rm.confirm {
+  color: var(--danger);
+  font-weight: 600;
+  padding: 0 8px;
+}
+
+.ddviewrow .rm.confirm:hover {
+  background: var(--surface-2);
+  color: var(--danger);
+}
+
 .ddempty {
   color: var(--muted);
   font-size: var(--fs-tiny);
@@ -119,4 +167,23 @@
 
 .ddfoot .btn {
   padding: 7px 14px;
+}
+
+/* A non-interactive label row at the top of a panel (e.g. "Signed in as …"
+   in the header menu), and the divider under it. */
+.ddhead {
+  padding: 6px var(--s-2) 2px;
+  font-size: var(--fs-tiny);
+  color: var(--muted);
+}
+
+.ddhead b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ddsep {
+  height: 1px;
+  margin: var(--s-2) 0;
+  background: var(--line);
 }

@@ -1,11 +1,19 @@
-import { act, fireEvent, screen } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CARD_EXIT_MS, SCAN_POLL_MS, UNDO_WINDOW_MS } from '../../config'
+import { triggerIntersections } from '../../test/intersectionObserver'
+import { resetToastsForTests } from '../../lib/toast'
 import { currentLocation, fakeMe, fakeRec, fakeScan, mockFetch, renderApp } from '../../test/renderApp'
 
 const signedIn = () => localStorage.setItem('crate-digger.token', 'tok')
+
+// The toast queue (lib/toast.ts) is module-scope by design, so a toast raised
+// by one test (like/block/undoRetire failures now show one) would otherwise
+// leak into whichever test runs next in this file — same cross-test leakage
+// ToastStack.test.tsx already guards against.
+beforeEach(() => resetToastsForTests())
 
 describe('scan list', () => {
   beforeEach(() => {
@@ -77,6 +85,109 @@ describe('scan list', () => {
 
     expect(await screen.findByText(/still crawling/i)).toBeInTheDocument()
   })
+
+  describe('sort control', () => {
+    // All 'done' — a 'queued'/'running' scan would arm the polling effect's
+    // setTimeout, which these synchronous order assertions don't need.
+    const threeScans = [
+      { ...fakeScan, id: 1, name: 'Bravo', last_run_at: '2026-09-05T00:00:00Z', rec_count: 30 },
+      { ...fakeScan, id: 2, name: 'Alpha', last_run_at: '2026-09-07T00:00:00Z', rec_count: 10 },
+      { ...fakeScan, id: 3, name: 'Charlie', last_run_at: null, rec_count: 50 },
+    ]
+
+    function scanNamesInOrder(): string[] {
+      return screen.getAllByText(/^(Alpha|Bravo|Charlie)$/).map((el) => el.textContent ?? '')
+    }
+
+    it('has no sort control for a single scan', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', [fakeScan]]])
+      renderApp('/scans')
+      await screen.findByText('My collection')
+
+      expect(screen.queryByRole('button', { name: /Sort ·/ })).not.toBeInTheDocument()
+    })
+
+    it('defaults to most-recent-first, with a never-run scan last', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      renderApp('/scans')
+      await screen.findByText('Alpha')
+
+      expect(screen.getByRole('button', { name: 'Sort · Most recent ▾' })).toBeInTheDocument()
+      expect(scanNamesInOrder()).toEqual(['Alpha', 'Bravo', 'Charlie'])
+    })
+
+    it('sorts by name A-Z', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Alpha')
+
+      await user.click(screen.getByRole('button', { name: 'Sort · Most recent ▾' }))
+      await user.click(screen.getByRole('button', { name: /Name \(A–Z\)/ }))
+
+      expect(scanNamesInOrder()).toEqual(['Alpha', 'Bravo', 'Charlie'])
+      expect(screen.getByRole('button', { name: 'Sort · Name (A–Z) ▾' })).toBeInTheDocument()
+    })
+
+    it('sorts by most recs', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Alpha')
+
+      await user.click(screen.getByRole('button', { name: 'Sort · Most recent ▾' }))
+      await user.click(screen.getByRole('button', { name: /Most recs/ }))
+
+      expect(scanNamesInOrder()).toEqual(['Charlie', 'Bravo', 'Alpha'])
+    })
+  })
+
+  describe('search', () => {
+    const threeScans = [
+      { ...fakeScan, id: 1, name: 'Vaporwave Deep Cuts' },
+      { ...fakeScan, id: 2, name: 'My Ambient Scan' },
+      { ...fakeScan, id: 3, name: 'Scavenger Hunt' },
+    ]
+
+    it('has no search box for a single scan', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', [fakeScan]]])
+      renderApp('/scans')
+      await screen.findByText('My collection')
+
+      expect(screen.queryByLabelText('Search scans')).not.toBeInTheDocument()
+    })
+
+    it('narrows the list to scans matching the query', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Vaporwave Deep Cuts')
+
+      await user.type(screen.getByLabelText('Search scans'), 'sca')
+
+      expect(screen.getByText('Scavenger Hunt')).toBeInTheDocument()
+      expect(screen.getByText('My Ambient Scan')).toBeInTheDocument()
+      expect(screen.queryByText('Vaporwave Deep Cuts')).not.toBeInTheDocument()
+    })
+
+    it('shows a no-matches message, and clearing the query restores the list', async () => {
+      mockFetch([['/api/auth/me', fakeMe], ['/api/scans', threeScans]])
+      const user = userEvent.setup()
+      renderApp('/scans')
+      await screen.findByText('Vaporwave Deep Cuts')
+
+      const box = screen.getByLabelText('Search scans')
+      await user.type(box, 'nothing matches this')
+
+      expect(await screen.findByText('No scans match “nothing matches this”.')).toBeInTheDocument()
+      expect(screen.queryByText('Vaporwave Deep Cuts')).not.toBeInTheDocument()
+
+      await user.clear(box)
+
+      expect(await screen.findByText('Vaporwave Deep Cuts')).toBeInTheDocument()
+      expect(screen.queryByText(/No scans match/)).not.toBeInTheDocument()
+    })
+  })
 })
 
 describe('scan feed', () => {
@@ -97,14 +208,71 @@ describe('scan feed', () => {
       ['/api/blacklist', []],
     ] as Array<[string, unknown, number?]>
 
-  it('renders a recommendation with its score, artist and reasons', async () => {
+  it('renders a recommendation with its artist, but no visible score or co-owner chip', async () => {
     mockFetch(feedRoutes())
     renderApp('/scans/1')
 
     expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
     expect(screen.getByText('Minds of Infinity')).toBeInTheDocument()
-    expect(screen.getByText('3.3')).toBeInTheDocument() // score, 1dp
-    expect(screen.getByText(/2 neighbours own this/)).toBeInTheDocument()
+    // The score still drives ranking/sorting server-side — it's just not shown.
+    expect(screen.queryByText('3.3')).not.toBeInTheDocument()
+    expect(screen.queryByText(/neighbours? own this/)).not.toBeInTheDocument()
+  })
+
+  it('auto-loads the next page when the sentinel scrolls into view, with no button', async () => {
+    // A full first page (LIMIT=50 items) with more available server-side
+    // (count > page length) is what keeps `done` false and the sentinel
+    // mounted at all (`done` is `page.length < LIMIT`).
+    const firstPage = Array.from({ length: 50 }, (_, i) => fakeRec({ album_id: i + 1, title: `Album ${i + 1}` }))
+    const secondPage = [fakeRec({ album_id: 51, title: 'Album 51' })]
+    const fetchMock = mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 51 }],
+      ['/api/recommendations', firstPage],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    await screen.findByText('Album 1')
+
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('Album 51')).not.toBeInTheDocument()
+
+    // The next fetch (the second page) resolves with `secondPage` — swap the
+    // mock's routing for /api/recommendations before triggering the sentinel.
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url.includes('/api/recommendations')) return json(secondPage)
+      throw new Error(`no mock route for ${url}`)
+    })
+    triggerIntersections()
+
+    expect(await screen.findByText('Album 51')).toBeInTheDocument()
+  })
+
+  it('announces the match count to screen readers, and it updates as the count changes', async () => {
+    // The countline text visibly changes whenever `total` does (e.g. a
+    // like/block decrementing it) but was a plain <p> with no aria-live, so a
+    // screen-reader user got no confirmation anything happened.
+    mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    const countline = screen.getByRole('status')
+    expect(countline).toHaveTextContent('1 results')
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    expect(countline).toHaveTextContent('0 results')
   })
 
   it('shows skeleton recommendation cards while the first page loads', async () => {
@@ -170,6 +338,104 @@ describe('scan feed', () => {
     expect(await screen.findByText(/no bandcamp_fan_url set/)).toBeInTheDocument()
   })
 
+  it('retries a failed scan and reflects the requeued status', async () => {
+    const fetchMock = mockFetch([
+      // More specific route first — mockFetch matches by URL substring in
+      // array order, and '/api/scans/1/run'.includes('/api/scans/1') is
+      // true, so the run route would never be reached if listed second.
+      ['/api/scans/1/run', { ...fakeScan, status: 'queued', error: null, seeds: [] }],
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'error', error: 'no bandcamp_fan_url set', seeds: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+
+    const retryButton = await screen.findByRole('button', { name: 'Retry scan' })
+    await user.click(retryButton)
+
+    expect(await screen.findByText(/Queued — waiting for the crawl worker/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry scan' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([input, init]) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      return url.includes('/api/scans/1/run') && init?.method === 'POST'
+    })).toBe(true)
+  })
+
+  it('collapses the secondary filter controls behind a toggle, off by default', async () => {
+    // Actually hiding `#filterbar-more` is a mobile-only CSS media query
+    // (jsdom doesn't evaluate those, so it isn't meaningfully testable here)
+    // — what IS real component behavior, and what this covers, is the
+    // collapse/expand state itself and which controls it gates.
+    mockFetch(feedRoutes())
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+    await screen.findByText('Eyes of Infinity')
+
+    const toggle = screen.getByRole('button', { name: '▾ More filters' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Always-visible controls are direct children of `.controls`, not gated.
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Search')).toBeInTheDocument()
+    // Gated behind the toggle: present in the DOM (desktop shows them via
+    // `display: contents`, unaffected by this state) but the wrapper isn't
+    // marked open yet.
+    const more = document.getElementById('filterbar-more')
+    expect(more).not.toHaveClass('open')
+    expect(screen.getByRole('button', { name: /Sort ·/ })).toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(screen.getByRole('button', { name: '▲ Fewer filters' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(more).toHaveClass('open')
+  })
+
+  it('excludes recs from my own genres via the "My genres" recompute dropdown', async () => {
+    const fetchMock = mockFetch([
+      // Specific routes before their own prefixes — mockFetch matches by URL
+      // substring in array order, and both '/api/recommendations/recompute'
+      // and '/api/recommendations/count' start with '/api/recommendations'.
+      ['/api/recommendations/recompute', { computed: 1, excluded_seed_tags: ['ambient'] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/facets',
+        {
+          tags: [{ value: 'psybient', label: 'psybient', count: 12 }],
+          labels: [],
+          seed_tags: [{ value: 'ambient', label: 'ambient', count: 4 }],
+        },
+      ],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    const user = userEvent.setup()
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '＋ Exclude my genres' }))
+    await user.click(await screen.findByRole('button', { name: /ambient/ }))
+    await user.click(screen.getByRole('button', { name: 'Apply (1)' }))
+
+    expect(await screen.findByRole('button', { name: 'My genres (1) ▾' })).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([input, init]) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        return (
+          url.includes('/api/recommendations/recompute') &&
+          url.includes('exclude_seed_tag=ambient') &&
+          init?.method === 'POST'
+        )
+      }),
+    ).toBe(true)
+  })
+
   it('adds an include pill when a genre chip on a card is clicked', async () => {
     mockFetch(feedRoutes())
     renderApp('/scans/1')
@@ -195,6 +461,17 @@ describe('scan feed', () => {
     const albumsBtn = screen.getByRole('button', { name: 'Albums' })
     expect(albumsBtn).toHaveAttribute('aria-pressed', 'true')
     expect(await screen.findByRole('button', { name: /✓ include.*psybient/ })).toBeInTheDocument()
+  })
+
+  it('treats an empty label_id in the URL as no artist filter, not band id 0', async () => {
+    // Number('') is 0, which Number.isInteger accepts — a hand-edited or
+    // partially-stripped bookmarked URL (`?label_id=` with nothing after the
+    // `=`) must not silently turn into "filtered to band 0".
+    mockFetch(feedRoutes())
+    renderApp('/scans/1?label_id=')
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.queryByText(/artist:/)).not.toBeInTheDocument()
   })
 
   it('keeps a filter in the URL across an unrelated filter change, so back restores it', async () => {
@@ -323,6 +600,554 @@ describe('scan feed', () => {
 
     expect(screen.queryByRole('button', { name: 'Clear all filters' })).not.toBeInTheDocument()
   })
+
+  it('offers a "Clear filters" button in the zero-result empty state, even for a single facet', async () => {
+    // The "Clear all filters" pill only shows once 2+ facets stack, so a
+    // single active filter that zeroes out the feed otherwise has no
+    // clear-action anywhere on screen.
+    mockFetch(feedRoutes([]))
+    renderApp('/scans/1?tag=psybient')
+    const user = userEvent.setup()
+
+    expect(await screen.findByText('Nothing matches these filters — try clearing one.')).toBeInTheDocument()
+    expect(currentLocation().search).toContain('tag=psybient')
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+
+    expect(currentLocation().search).not.toContain('tag=psybient')
+  })
+
+  const threeRecs = [
+    fakeRec({ album_id: 1, title: 'First album' }),
+    fakeRec({ album_id: 2, title: 'Second album' }),
+    fakeRec({ album_id: 3, title: 'Third album' }),
+  ]
+
+  it('starts with only the first card as a tab stop, and ArrowDown moves it to the next', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    expect(cards).toHaveLength(3)
+    expect(cards[0]).toHaveAttribute('tabindex', '0')
+    expect(cards[1]).toHaveAttribute('tabindex', '-1')
+    expect(cards[2]).toHaveAttribute('tabindex', '-1')
+
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'ArrowDown' })
+
+    expect(cards[0]).toHaveAttribute('tabindex', '-1')
+    expect(cards[1]).toHaveAttribute('tabindex', '0')
+    expect(document.activeElement).toBe(cards[1])
+  })
+
+  it('does not move past the first card on ArrowUp, or the last on ArrowDown', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(cards[0])
+
+    fireEvent.keyDown(cards[0], { key: 'End' })
+    expect(document.activeElement).toBe(cards[2])
+
+    fireEvent.keyDown(cards[2], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(cards[2])
+
+    fireEvent.keyDown(cards[2], { key: 'Home' })
+    expect(document.activeElement).toBe(cards[0])
+  })
+
+  // Distinct band ids: `retire()` removes every row sharing the acted-on
+  // card's band, so `threeRecs`' shared band id would drop all three cards
+  // at once instead of leaving the replacement/previous card behind to
+  // assert focus on.
+  const distinctBandRecs = [
+    fakeRec({ album_id: 1, band_id: 21, title: 'First album' }),
+    fakeRec({ album_id: 2, band_id: 22, title: 'Second album' }),
+    fakeRec({ album_id: 3, band_id: 23, title: 'Third album' }),
+  ]
+
+  it('moves focus to the card that replaced a keyboard-removed one, not document.body', async () => {
+    mockFetch(feedRoutes(distinctBandRecs))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'l' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    const remaining = screen.getAllByRole('article')
+    expect(remaining).toHaveLength(2)
+    expect(document.activeElement).toBe(remaining[0])
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('moves focus to the new last card when the removed one was last', async () => {
+    mockFetch(feedRoutes(distinctBandRecs))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'End' })
+    expect(document.activeElement).toBe(cards[2])
+
+    fireEvent.keyDown(cards[2], { key: 'b' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    const remaining = screen.getAllByRole('article')
+    expect(remaining).toHaveLength(2)
+    expect(document.activeElement).toBe(remaining[1])
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('narrows the rendered cards to a title/band match, with no new fetch', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    expect(screen.getAllByRole('article')).toHaveLength(3)
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText('Search'), 'second')
+
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+    expect(screen.getByText('Second album')).toBeInTheDocument()
+  })
+
+  it('shows a distinct empty message when the quick filter matches nothing, not the real empty state', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText('Search'), 'nonexistent-xyz')
+
+    expect(await screen.findByText('No loaded cards match “nonexistent-xyz”.')).toBeInTheDocument()
+    expect(screen.queryByText('No recommendations in this scan yet.')).not.toBeInTheDocument()
+  })
+
+  it('"/" focuses the quick filter input from anywhere on the page', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    fireEvent.keyDown(document, { key: '/' })
+
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Search'))
+  })
+
+  it('Escape clears a typed quick filter, restoring every card', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const user = userEvent.setup()
+    const input = screen.getByPlaceholderText('Search')
+    await user.type(input, 'second')
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(input).toHaveValue('')
+    expect(screen.getAllByRole('article')).toHaveLength(3)
+  })
+
+  it('Escape on an already-empty quick filter blurs it instead', async () => {
+    mockFetch(feedRoutes(threeRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const input = screen.getByPlaceholderText('Search')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(document.activeElement).not.toBe(input)
+  })
+
+  const bulkRecs = [
+    fakeRec({ album_id: 1, band_id: 101, title: 'First album', band_name: 'Band One' }),
+    fakeRec({ album_id: 2, band_id: 102, title: 'Second album', band_name: 'Band Two' }),
+    fakeRec({ album_id: 3, band_id: 103, title: 'Third album', band_name: 'Band Three' }),
+  ]
+
+  it('offers no checkboxes or bulk bar until select mode is turned on', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+  })
+
+  it('selecting two cards and clicking "Block selected" blocks exactly those two bands, then clears the selection', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes).toHaveLength(3)
+
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    expect(await screen.findByText('2')).toBeInTheDocument()
+    expect(screen.getByText('selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Block selected' }))
+
+    await waitFor(() => {
+      const blockCalls = fetchMock.mock.calls.filter(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      })
+      expect(blockCalls).toHaveLength(2)
+      const blockedIds = blockCalls
+        .map(([, init]) => JSON.parse(String(init?.body)).band_id)
+        .sort((a: number, b: number) => a - b)
+      expect(blockedIds).toEqual([101, 102])
+    })
+
+    // Selection clears and select mode exits once the batch settles.
+    await waitFor(() => {
+      expect(screen.queryByText('selected')).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    })
+  })
+
+  it('selecting two cards and clicking "Like selected" likes exactly those two items, then clears the selection', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes).toHaveLength(3)
+
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[2])
+
+    expect(await screen.findByText('2')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Like selected' }))
+
+    await waitFor(() => {
+      const likeCalls = fetchMock.mock.calls.filter(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/likes') && !url.includes('unlike') && init?.method === 'POST'
+      })
+      expect(likeCalls).toHaveLength(2)
+      const likedAlbumIds = likeCalls
+        .map(([, init]) => JSON.parse(String(init?.body)).album_id)
+        .sort((a: number, b: number) => a - b)
+      expect(likedAlbumIds).toEqual([1, 3])
+    })
+
+    // Selection clears and select mode exits once the batch settles.
+    await waitFor(() => {
+      expect(screen.queryByText('selected')).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    })
+  })
+
+  it('bulk-blocking two cards offers one "Undo all" for both, not a misleading single "Undo"', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    await user.click(screen.getByRole('button', { name: 'Block selected' }))
+
+    expect(await screen.findByRole('button', { name: 'Undo all' }, { timeout: 2000 })).toBeInTheDocument()
+    expect(await screen.findByText('Blocked 2 artists.')).toBeInTheDocument()
+    // Not the single-item banner each individual retire() would otherwise
+    // have armed — that's exactly the bug this combined banner replaces.
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+  })
+
+  it('"Undo all" restores every card from a bulk block and unblocks each of them', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+    await user.click(screen.getByRole('button', { name: 'Block selected' }))
+
+    await user.click(await screen.findByRole('button', { name: 'Undo all' }, { timeout: 2000 }))
+
+    expect(await screen.findByText('First album')).toBeInTheDocument()
+    expect(await screen.findByText('Second album')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Undo all' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      const unblockCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('/unblock'))
+      expect(unblockCalls).toHaveLength(2)
+    })
+  })
+
+  it('"Cancel" in the bulk bar clears the selection without blocking anything', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    await user.click(screen.getAllByRole('checkbox')[0])
+    expect(await screen.findByText('1')).toBeInTheDocument()
+    expect(screen.getByText('selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      }),
+    ).toBe(false)
+  })
+
+  it('"Select all loaded" checks every visible card, and a second click clears them all', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    expect(screen.queryByRole('button', { name: /select all loaded/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /select all loaded/i }))
+
+    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    expect(checkboxes).toHaveLength(3)
+    expect(checkboxes.every((cb) => cb.checked)).toBe(true)
+    // The feed's own countline also reads "3" here (unfiltered total), so
+    // scope the count assertion to the bulk bar rather than a bare
+    // `findByText('3')`, which would ambiguously match both.
+    const bulkBar = await screen.findByText('selected')
+    expect(within(bulkBar.closest('.bulkbar')!).getByText('3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /deselect all/i }))
+
+    expect(screen.getAllByRole('checkbox').every((cb) => !(cb as HTMLInputElement).checked)).toBe(true)
+    expect(screen.queryByText('selected')).not.toBeInTheDocument()
+  })
+
+  it('"Select all loaded" only offers what quick-filter narrowed to', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.type(screen.getByPlaceholderText('Search'), 'Second')
+    await screen.findByText('Second album')
+    expect(screen.queryByText('First album')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    await user.click(screen.getByRole('button', { name: /select all loaded/i }))
+
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1)
+    expect(await screen.findByText('1')).toBeInTheDocument()
+  })
+})
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+describe('initial page-load failure', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('offers a Retry button when the scan list fails to load, which re-fetches on click', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans')) return jsonResponse({ detail: 'boom' }, 500)
+      throw new Error(`no mock route for ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans')
+    const retry = await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans')) return jsonResponse([fakeScan])
+      throw new Error(`no mock route for ${url}`)
+    })
+    fireEvent.click(retry)
+
+    expect(await screen.findByText('My collection')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('offers a Retry button when the scan itself fails to load, which re-fetches on click', async () => {
+    // Distinct from the scan-list case: ScanFeedPage's in-feed `error` state
+    // only renders inside `showFeed`, which requires `scan !== null` — so a
+    // failed *initial* loadScan() left the page silently stuck on "Loading…"
+    // before this fix. This pins the separate `scanError` surface instead.
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans/1')) return jsonResponse({ detail: 'boom' }, 500)
+      throw new Error(`no mock route for ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans/1')
+    const retry = await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return jsonResponse(fakeMe)
+      if (url.includes('/api/scans/1')) return jsonResponse({ ...fakeScan, seeds: [] })
+      if (url.includes('/api/recommendations/count')) return jsonResponse({ count: 0 })
+      if (url.includes('/api/recommendations')) return jsonResponse([])
+      if (url.includes('/api/facets')) return jsonResponse({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/likes')) return jsonResponse([])
+      if (url.includes('/api/blacklist')) return jsonResponse([])
+      throw new Error(`no mock route for ${url}`)
+    })
+    fireEvent.click(retry)
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.getByText('My collection')).toBeInTheDocument()
+  })
+})
+
+describe('delete scan', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  /** `deleteOk: false` fails the DELETE call (a 400, mirroring the backend's
+   *  real "the collection scan can't be deleted" response shape) so a test
+   *  can exercise the error path without touching the collection-scan guard,
+   *  which is rendered client-side instead (see the "collection scans" test
+   *  below). */
+  function mockCustomScan({ deleteOk = true } = {}) {
+    return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1') && init?.method === 'DELETE') {
+        return deleteOk ? json({ deleted: 1 }) : json({ detail: 'nope' }, 400)
+      }
+      if (url.includes('/api/scans/1')) return json({ ...fakeScan, id: 1, kind: 'custom', seeds: [] })
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('does not render for the collection scan', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }], // fakeScan defaults to kind: 'collection'
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    await screen.findByText('Eyes of Infinity')
+    expect(screen.queryByRole('button', { name: /Delete scan/ })).not.toBeInTheDocument()
+  })
+
+  it('requires a second click, and reverts if the second click never comes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal('fetch', mockCustomScan())
+
+    renderApp('/scans/1')
+    const deleteBtn = await screen.findByRole('button', { name: 'Delete scan "My collection"' })
+
+    fireEvent.click(deleteBtn)
+    expect(await screen.findByRole('button', { name: 'Confirm delete?' })).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    expect(screen.queryByRole('button', { name: 'Confirm delete?' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+  })
+
+  it('"Cancel" reverts immediately without ever calling the API', async () => {
+    const fetchMock = mockCustomScan()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
+  })
+
+  it('confirming deletes the scan and returns to the scans list', async () => {
+    vi.stubGlobal('fetch', mockCustomScan())
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete?' }))
+
+    await waitFor(() => expect(currentLocation().pathname).toBe('/scans'))
+  })
+
+  it('a failed delete shows an error and leaves the scan in place', async () => {
+    vi.stubGlobal('fetch', mockCustomScan({ deleteOk: false }))
+
+    renderApp('/scans/1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete scan "My collection"' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete?' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('nope')
+    expect(await screen.findByRole('button', { name: 'Delete scan "My collection"' })).toBeInTheDocument()
+    expect(currentLocation().pathname).toBe('/scans/1')
+  })
 })
 
 describe('focus on route change', () => {
@@ -357,6 +1182,111 @@ describe('focus on route change', () => {
 
     await user.click(screen.getByRole('link', { name: /Scans/ }))
     expect(await screen.findByRole('heading', { name: 'Your scans' })).toHaveFocus()
+  })
+})
+
+describe('document title', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  // '/api/scans/1' must be listed before '/api/scans' — mockFetch matches by
+  // substring in order, and the list route would otherwise swallow it too.
+  const combinedRoutes: Array<[string, unknown, number?]> = [
+    ['/api/auth/me', fakeMe],
+    ['/api/scans/1', { ...fakeScan, seeds: [] }],
+    ['/api/scans', [fakeScan]],
+    ['/api/recommendations/count', { count: 1 }],
+    ['/api/recommendations', [fakeRec()]],
+    ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+    ['/api/likes', []],
+    ['/api/blacklist', []],
+  ]
+
+  it('reflects the current page in the tab/history title, and updates on navigation', async () => {
+    mockFetch(combinedRoutes)
+    const user = userEvent.setup()
+    renderApp('/scans')
+
+    await screen.findByRole('heading', { name: 'Your scans' })
+    expect(document.title).toBe('Scans · bandcamp music finder')
+
+    await user.click(await screen.findByRole('link', { name: /My collection/ }))
+    await screen.findByRole('heading', { name: /My collection/ })
+    expect(document.title).toBe('My collection · bandcamp music finder')
+
+    await user.click(screen.getByRole('link', { name: /Scans/ }))
+    await screen.findByRole('heading', { name: 'Your scans' })
+    expect(document.title).toBe('Scans · bandcamp music finder')
+  })
+
+  it('marks the tab title when a scan finishes while the tab is hidden, and clears it on refocus', async () => {
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    const state = { status: 'running' as 'running' | 'done' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, status: state.status, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    expect(document.title).toBe('My collection · bandcamp music finder')
+
+    state.status = 'done'
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+    expect(document.title).toBe('✓ My collection · bandcamp music finder')
+
+    await act(async () => {
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(document.title).toBe('My collection · bandcamp music finder')
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    vi.useRealTimers()
+  })
+})
+
+describe('skip to content', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('offers a skip-to-content link ahead of the header, targeting the shared main landmark', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans', [fakeScan]],
+    ])
+    renderApp('/scans')
+
+    const skipLink = await screen.findByRole('link', { name: 'Skip to content' })
+    expect(skipLink).toHaveAttribute('href', '#main-content')
+
+    const main = document.getElementById('main-content')
+    expect(main?.tagName).toBe('MAIN')
+
+    // Must be reachable by a single Tab from page load, before the header's
+    // own content — not just present somewhere in the document.
+    const header = screen.getByRole('banner')
+    expect(skipLink.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
 
@@ -450,6 +1380,470 @@ describe('undo after like/block', () => {
   })
 })
 
+describe('optimistic like/block', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  it('starts the exit animation immediately, without waiting for the like request to resolve', async () => {
+    let releaseLike = () => {}
+    const likeHeld = new Promise<void>((resolve) => {
+      releaseLike = resolve
+    })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes') && method === 'POST') {
+          await likeHeld
+          return json({})
+        }
+        if (url.includes('/api/likes')) return json([])
+        if (url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+
+    // The exit animation is already running even though the like request is
+    // still in flight — that's the optimistic part. Previously this card
+    // wouldn't even start leaving until the request round-tripped. Asserted
+    // synchronously, not via waitFor: `retire()` sets this class before
+    // `like()`'s first `await`, in the same tick as the click.
+    expect(screen.getByRole('article')).toHaveClass('likeing')
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+
+    await act(async () => {
+      releaseLike()
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  })
+
+  it('reverts the optimistic like and shows an error if the request fails before the exit animation finishes', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', {}, 500],
+      ['/api/blacklist', []],
+    ])
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+
+    // Let the failed request's rejection reach the catch handler well before
+    // CARD_EXIT_MS would have removed the row.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.getByRole('article')).not.toHaveClass('likeing')
+    expect(await screen.findByText('Request failed (500)')).toBeInTheDocument()
+
+    // The animation timer was cancelled, not just outrun — advancing past
+    // CARD_EXIT_MS must not belatedly remove a card the failure already put
+    // back.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+  })
+
+  it('offers a Retry action on the failure toast that re-sends the like', async () => {
+    let likeCalls = 0
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes') && method === 'POST') {
+          likeCalls += 1
+          return likeCalls === 1 ? json({}, 500) : json({})
+        }
+        if (url.includes('/api/likes')) return json([])
+        if (url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '♥ like' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(likeCalls).toBe(1)
+    // The failed request restored the card; it hasn't retired yet.
+    expect(screen.getByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    expect(likeCalls).toBe(2)
+    // The retry succeeded, so this time the optimistic retire completes.
+    expect(screen.queryByText('Eyes of Infinity')).not.toBeInTheDocument()
+  })
+
+  it('reverts a failed optimistic block after the row was already removed, clearing the Undo it armed', async () => {
+    // A held gate on the POST specifically: a mocked fetch otherwise resolves
+    // fast enough that the failure would routinely beat CARD_EXIT_MS, which
+    // would only ever exercise `cancelRetire`'s "timer still pending" path.
+    // This test is for the other path — the row already gone, Undo armed.
+    let releaseBlock = () => {}
+    const blockHeld = new Promise<void>((resolve) => {
+      releaseBlock = resolve
+    })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/likes')) return json([])
+        if (url.includes('/api/blacklist') && method === 'POST') {
+          await blockHeld
+          return json({}, 500)
+        }
+        if (url.includes('/api/blacklist')) return json([])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '⊘ block' }))
+
+    // Let the exit timer fire and remove the row (and arm Undo for it) while
+    // the request is still held.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+    expect(screen.queryByText('Eyes of Infinity')).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Undo' })).toBeInTheDocument()
+
+    await act(async () => {
+      releaseBlock()
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(screen.getByText('Request failed (500)')).toBeInTheDocument()
+    // Nothing left to undo — the failure already restored the card.
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+  })
+})
+
+describe('unlike/unblock from the side panels', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const fakeLiked = { id: 1, item_type: 'album', album_id: 9, track_id: null, title: 'Liked One', band_name: 'A Band', url: null } as const
+  const fakeBlocked = {
+    id: 1,
+    band_id: 5,
+    band_name: 'Blocked Band',
+    band_url: null,
+    reason: null,
+    expires_at: null,
+  } as const
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  it('shows "Unliking…" while an unlike is in flight, then removes the row', async () => {
+    let releaseUnlike = () => {}
+    const unlikeHeld = new Promise<void>((resolve) => {
+      releaseUnlike = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.includes('/api/auth/me')) return json(fakeMe)
+        if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+        if (url.includes('/api/likes/unlike')) {
+          await unlikeHeld
+          return json({ unliked: true })
+        }
+        if (url.includes('/api/likes')) return json([fakeLiked])
+        if (url.includes('/api/blacklist')) return json([])
+        if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+        if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+        if (url.includes('/api/recommendations')) return json([fakeRec()])
+        throw new Error(`no mock route for ${url}`)
+      }),
+    )
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: /♥ Liked/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'unlike' }))
+
+    expect(await screen.findByRole('button', { name: 'Unliking…' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Unliking…' })).toBeDisabled()
+
+    await act(async () => {
+      releaseUnlike()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // The mock server doesn't actually drop the item from its liked list, so
+    // the row is still here after the refetch — the point is that it's no
+    // longer stuck on the busy label once the request settles.
+    expect(screen.queryByRole('button', { name: 'Unliking…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'unlike' })).not.toBeDisabled()
+  })
+
+  it('surfaces an error and leaves the row usable when an unblock fails', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/blacklist/5/unblock', { detail: 'nope' }, 500],
+      ['/api/blacklist', [fakeBlocked]],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'unblock' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/nope/i)
+    // Not left stuck busy after the failure — the row is clickable again.
+    expect(screen.getByRole('button', { name: 'unblock' })).not.toBeDisabled()
+  })
+
+  it('shows an expiry label on a temporary block, and none on a permanent one', async () => {
+    const soon = new Date(Date.now() + 3 * 3600 * 1000).toISOString()
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/blacklist', [{ ...fakeBlocked, expires_at: soon }, { ...fakeBlocked, id: 2, band_id: 6, band_name: 'Forever Blocked', expires_at: null }]],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+
+    const temporaryRow = (await screen.findByText('Blocked Band')).closest('li')
+    expect(temporaryRow).not.toBeNull()
+    expect(temporaryRow).toHaveTextContent(/expires in \d+h/)
+
+    const permanentRow = screen.getByText('Forever Blocked').closest('li')
+    expect(permanentRow).not.toBeNull()
+    expect(permanentRow).not.toHaveTextContent(/expires in/)
+  })
+
+  it('links a blocked band to Bandcamp when it has a URL, and shows nothing when it does not', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/blacklist',
+        [
+          { ...fakeBlocked, band_url: 'https://someartist.bandcamp.com' },
+          { ...fakeBlocked, id: 2, band_id: 6, band_name: 'No Link Band', band_url: null },
+        ],
+      ],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+
+    const link = await screen.findByRole('link', { name: 'Open Blocked Band on Bandcamp' })
+    expect(link).toHaveAttribute('href', 'https://someartist.bandcamp.com')
+
+    const noLinkRow = screen.getByText('No Link Band').closest('li')
+    expect(noLinkRow).not.toBeNull()
+    expect(within(noLinkRow as HTMLElement).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('ignores a second click on the same row while the first unlike is still in flight', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1')) return json({ ...fakeScan, seeds: [] })
+      if (url.includes('/api/likes/unlike')) return json({ unliked: true })
+      if (url.includes('/api/likes')) return json([fakeLiked])
+      if (url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: /♥ Liked/ }))
+    const unlikeBtn = await screen.findByRole('button', { name: 'unlike' })
+    fireEvent.click(unlikeBtn)
+    fireEvent.click(unlikeBtn)
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/likes/unlike')).length).toBe(
+        1,
+      ),
+    )
+  })
+
+  it('offers "renew" only on a block expiring within a day, and lists soonest-expiring first', async () => {
+    const soon = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+    const later = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString()
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/blacklist',
+        [
+          { ...fakeBlocked, id: 3, band_id: 7, band_name: 'Forever Blocked', expires_at: null },
+          { ...fakeBlocked, id: 2, band_id: 6, band_name: 'Later Band', expires_at: later },
+          { ...fakeBlocked, id: 1, band_id: 5, band_name: 'Blocked Band', expires_at: soon },
+        ],
+      ],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+    await screen.findByText('Blocked Band')
+
+    // Only the row expiring soon gets a renew action, even though "Later
+    // Band" also has a (non-imminent) expiry.
+    expect(screen.getAllByRole('button', { name: 'renew ▾' })).toHaveLength(1)
+
+    const rows = screen.getAllByRole('listitem').map((li) => li.textContent)
+    expect(rows[0]).toMatch(/Blocked Band/)
+    expect(rows[1]).toMatch(/Later Band/)
+    expect(rows[2]).toMatch(/Forever Blocked/)
+  })
+
+  it('renewing a soon-to-expire block posts a fresh expires_at for the same band', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2026-09-03T00:00:00.000Z'))
+    const soon = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+    const fetchMock = mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/blacklist', [{ ...fakeBlocked, expires_at: soon }]],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'renew ▾' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 week' }))
+
+    await waitFor(() => {
+      const renewCall = fetchMock.mock.calls.find(([u, init]) => {
+        const url = String(u)
+        return url.includes('/api/blacklist') && !url.includes('unblock') && init?.method === 'POST'
+      })
+      expect(renewCall).toBeDefined()
+      const body = JSON.parse(String(renewCall?.[1]?.body))
+      expect(body.band_id).toBe(5)
+      const expiresAtMs = new Date(body.expires_at).getTime()
+      const expectedMs = new Date('2026-09-03T00:00:00.000Z').getTime() + 7 * 24 * 3600 * 1000
+      expect(Math.abs(expiresAtMs - expectedMs)).toBeLessThan(5000)
+    })
+
+    vi.useRealTimers()
+  })
+
+  it('does not offer renew on a block expiring in several days, or a permanent one', async () => {
+    const later = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString()
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      [
+        '/api/blacklist',
+        [
+          { ...fakeBlocked, expires_at: later },
+          { ...fakeBlocked, id: 2, band_id: 6, band_name: 'Forever Blocked', expires_at: null },
+        ],
+      ],
+      ['/api/likes', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+    ])
+
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+    fireEvent.click(screen.getByRole('button', { name: /Blocked/ }))
+    await screen.findByText('Blocked Band')
+
+    expect(screen.queryByRole('button', { name: 'renew ▾' })).not.toBeInTheDocument()
+  })
+})
+
 describe('feed while the scan is still running', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -477,6 +1871,27 @@ describe('feed while the scan is still running', () => {
     expect(screen.getByText(/7 found so far/i)).toBeInTheDocument()
   })
 
+  it('also shows the crawl-budget line once results have started landing on a running scan', async () => {
+    // Before this fix, the "N of M requests used" readout only ever rendered
+    // inside ColdStartPanel, which stops being reachable the moment `total`
+    // leaves zero -- so a running scan with results already had no visible
+    // budget readout at all.
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'running', stats: { recommendations: 7 }, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+      ['/api/stats', { requests_used: 742, request_budget: 1000 }],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(await screen.findByText(/742 of 1,000 crawl requests used/)).toBeInTheDocument()
+  })
+
   it('shows nothing for a queued scan, which has curated nothing yet', async () => {
     mockFetch([
       ['/api/auth/me', fakeMe],
@@ -490,6 +1905,70 @@ describe('feed while the scan is still running', () => {
     renderApp('/scans/1')
 
     expect(await screen.findByText(/queued/i)).toBeInTheDocument()
+  })
+
+  it('explains a genuinely empty feed with the cold-start diagnostics', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 0 }],
+      ['/api/recommendations', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+      [
+        '/api/stats',
+        {
+          recommendations: 0,
+          fans: 20,
+          neighbours: 12,
+          albums: 500,
+          tracks: 900,
+          my_owned: 300,
+          my_wishlist: 10,
+          follows: 15,
+          liked: 0,
+          requests_used: 40,
+          request_budget: 100,
+          cold_start: {
+            neighbour_count: 12,
+            candidates: 340,
+            excluded_owned: 210,
+            excluded_wishlisted: 40,
+            excluded_followed: 55,
+            excluded_blacklisted: 3,
+            excluded_liked: 0,
+          },
+          recompute_generation: 1,
+        },
+      ],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByText('No recommendations in this scan yet.')).toBeInTheDocument()
+    expect(await screen.findByText('340')).toBeInTheDocument()
+    expect(screen.getByText(/candidates/)).toBeInTheDocument()
+    // requests_used (40) collides with cold_start.excluded_wishlisted (also 40) as
+    // an exact-text match, so assert on the whole budget line instead of a bare '40'.
+    expect(screen.getByText(/crawl requests used/).textContent).toBe(
+      '40 of 100 crawl requests used this scan.',
+    )
+  })
+
+  it('does not fetch stats, or show cold-start diagnostics, while the feed has rows', async () => {
+    const fetchMock = mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    expect(await screen.findByText('Eyes of Infinity')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/stats'))).toBe(false)
   })
 })
 
@@ -574,5 +2053,680 @@ describe('feed reflow notice', () => {
     })
 
     expect(screen.queryByText(/list updated/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('updated-since-last-visit notice', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+  function mockScanAtGeneration(generation: number) {
+    return vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1')) {
+        return json({ ...fakeScan, recompute_generation: generation, seeds: [] })
+      }
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) return json({ tags: [], labels: [], seed_tags: [] })
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('shows nothing on a scan’s first-ever visit, with no prior generation on record', async () => {
+    vi.stubGlobal('fetch', mockScanAtGeneration(1))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(screen.queryByText(/changed since your last visit/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the notice when the scan moved on since the recorded last visit', async () => {
+    localStorage.setItem('crate-digger.lastSeenGeneration:1', '1')
+    vi.stubGlobal('fetch', mockScanAtGeneration(2))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(/changed since your last visit/i)).toBeInTheDocument()
+    // Dismissing just hides the notice — it doesn't re-trigger a fetch.
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText(/changed since your last visit/i)).not.toBeInTheDocument()
+  })
+
+  it('shows nothing when the recorded last visit already matches the current generation', async () => {
+    localStorage.setItem('crate-digger.lastSeenGeneration:1', '2')
+    vi.stubGlobal('fetch', mockScanAtGeneration(2))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(screen.queryByText(/changed since your last visit/i)).not.toBeInTheDocument()
+  })
+
+  it('records the current generation as seen, so a same-session reload would not repeat the notice', async () => {
+    localStorage.setItem('crate-digger.lastSeenGeneration:1', '1')
+    vi.stubGlobal('fetch', mockScanAtGeneration(2))
+
+    renderApp('/scans/1')
+
+    expect(await screen.findByText(/changed since your last visit/i)).toBeInTheDocument()
+    expect(localStorage.getItem('crate-digger.lastSeenGeneration:1')).toBe('2')
+  })
+})
+
+describe('auto-prune stale tag filters', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+  // The feed's countline (`.countline`) also carries `role="status"` now (see
+  // the "announces the match count" test above), so a bare `*ByRole('status')`
+  // no longer uniquely identifies the prune toast — narrow to the toast's own
+  // class, same as `ToastStack.tsx` renders it.
+  const toastStatus = () => screen.queryAllByRole('status').find((el) => el.classList.contains('toast'))
+
+  /** A running scan whose recommendation count and facets tags are both
+   *  controlled by the two out-of-band flags, so a test can change what the
+   *  *next* poll turns up (mimicking a recompute that dropped a genre from
+   *  every current rec) before advancing the clock. */
+  function mockScanWhoseFacetsChange(state: { recCount: number; hasPsybient: boolean }) {
+    return vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/auth/me')) return json(fakeMe)
+      if (url.includes('/api/scans/1')) {
+        return json({ ...fakeScan, status: 'running', stats: { recommendations: state.recCount }, seeds: [] })
+      }
+      if (url.includes('/api/likes') || url.includes('/api/blacklist')) return json([])
+      if (url.includes('/api/facets')) {
+        return json({
+          tags: state.hasPsybient ? [{ value: 'psybient', label: 'psybient', count: 1 }] : [],
+          labels: [],
+          seed_tags: [],
+        })
+      }
+      if (url.includes('/api/recommendations/count')) return json({ count: 1 })
+      if (url.includes('/api/recommendations')) return json([fakeRec()])
+      throw new Error(`no mock route for ${url}`)
+    })
+  }
+
+  it('drops an include-mode tag filter once it is gone from facets, with a toast naming it', async () => {
+    const state = { recCount: 1, hasPsybient: true }
+    vi.stubGlobal('fetch', mockScanWhoseFacetsChange(state))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1?tag=psybient')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(currentLocation().search).toContain('tag=psybient')
+
+    // The recompute that dropped this genre from every current rec.
+    state.hasPsybient = false
+    state.recCount = 2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    await waitFor(() => expect(currentLocation().search).not.toContain('tag=psybient'))
+    await waitFor(() => expect(toastStatus()).toBeTruthy())
+    expect(toastStatus()).toHaveTextContent(/psybient/)
+  })
+
+  it('leaves an exclude-mode tag filter alone even once it is absent from facets', async () => {
+    const state = { recCount: 1, hasPsybient: false }
+    vi.stubGlobal('fetch', mockScanWhoseFacetsChange(state))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1?exclude_tag=psybient')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+    expect(currentLocation().search).toContain('exclude_tag=psybient')
+
+    state.recCount = 2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    await waitFor(() => expect(screen.getByText(fakeRec().title!)).toBeInTheDocument())
+    // An excluded value that's already absent is a no-op, not a stuck filter —
+    // nothing to auto-clear, so the param and no toast should appear.
+    expect(currentLocation().search).toContain('exclude_tag=psybient')
+    expect(toastStatus()).toBeUndefined()
+  })
+
+  it('keeps a still-valid tag filter untouched across a recompute', async () => {
+    const state = { recCount: 1, hasPsybient: true }
+    vi.stubGlobal('fetch', mockScanWhoseFacetsChange(state))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderApp('/scans/1?tag=psybient')
+    expect(await screen.findByText(fakeRec().title!)).toBeInTheDocument()
+
+    state.recCount = 2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCAN_POLL_MS)
+    })
+
+    await waitFor(() => expect(screen.getByText(fakeRec().title!)).toBeInTheDocument())
+    expect(currentLocation().search).toContain('tag=psybient')
+    expect(toastStatus()).toBeUndefined()
+  })
+})
+
+describe('resume scroll position', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const feedRoutes = (recs = [fakeRec()]) =>
+    [
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: recs.length }],
+      ['/api/recommendations', recs],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ] as Array<[string, unknown, number?]>
+
+  it('restores the saved scroll offset when returning to the same filtered view', async () => {
+    mockFetch(feedRoutes())
+    const first = renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 400, configurable: true })
+    fireEvent.scroll(window)
+    // Leaving the page (a real app would navigate away; unmounting here is
+    // the JSDOM stand-in for "the component goes away and comes back").
+    first.unmount()
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 400)
+  })
+
+  it('does not restore a scroll offset saved under a different filter', async () => {
+    mockFetch(feedRoutes())
+    const first = renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 400, configurable: true })
+    fireEvent.scroll(window)
+    first.unmount()
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+})
+
+describe('scroll-to-top button', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('scrolls to the top and refocuses the heading when clicked', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 700, configurable: true })
+    fireEvent.scroll(window)
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to top' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
+    expect(screen.getByRole('heading', { name: /My collection/ })).toHaveFocus()
+  })
+
+  it('scrolls without animation when the user prefers reduced motion', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    Object.defineProperty(window, 'scrollY', { value: 700, configurable: true })
+    fireEvent.scroll(window)
+
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to top' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
+  })
+})
+
+describe('export feed as CSV', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('is disabled with nothing loaded, then downloads the loaded rows via a Blob URL', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 0 }],
+      ['/api/recommendations', []],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    expect(await screen.findByRole('button', { name: /Export CSV/ })).toBeDisabled()
+  })
+
+  it('downloads the currently-loaded rows as a CSV via a Blob URL', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+    await screen.findByText('Eyes of Infinity')
+
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:mock')
+    const revokeObjectURL = vi.fn()
+    URL.createObjectURL = createObjectURL
+    URL.revokeObjectURL = revokeObjectURL
+    let downloadedAs = ''
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadedAs = this.download
+    })
+    try {
+      const button = await screen.findByRole('button', { name: /Export CSV/ })
+      expect(button).not.toBeDisabled()
+      fireEvent.click(button)
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1)
+      const blob = createObjectURL.mock.calls[0]?.[0]
+      if (!blob) throw new Error('createObjectURL was not called with a Blob')
+      expect(blob.type).toContain('text/csv')
+      expect(await blob.text()).toContain('Eyes of Infinity')
+      expect(click).toHaveBeenCalledTimes(1)
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
+      // fakeScan.name is "My collection" — scopes the filename so exporting
+      // a different scan the same day doesn't overwrite this one.
+      expect(downloadedAs).toMatch(/^bandcamp-feed-my-collection-\d{4}-\d{2}-\d{2}\.csv$/)
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL
+      URL.revokeObjectURL = originalRevokeObjectURL
+      click.mockRestore()
+    }
+  })
+})
+
+describe('command palette', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const twoScans = [fakeScan, { ...fakeScan, id: 2, name: 'Psy dig', kind: 'custom' as const }]
+
+  // '/api/scans/2' before '/api/scans' — mockFetch matches by substring in
+  // order, and the bare list route would otherwise swallow the scan-2 route.
+  const routes: Array<[string, unknown, number?]> = [
+    ['/api/auth/me', fakeMe],
+    ['/api/scans/2', { ...twoScans[1], seeds: [] }],
+    ['/api/scans', twoScans],
+    ['/api/recommendations/count', { count: 0 }],
+    ['/api/recommendations', []],
+    ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+    ['/api/likes', []],
+    ['/api/blacklist', []],
+  ]
+
+  it('opens on Ctrl+K and lists a jump-to-Scans action plus every scan', async () => {
+    mockFetch(routes)
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Go to Scans' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /My collection/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Psy dig' })).toBeInTheDocument()
+  })
+
+  it('filters by typed text, and Enter on the highlighted row navigates there', async () => {
+    mockFetch(routes)
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    const input = await screen.findByRole('textbox', { name: 'Jump to…' })
+    fireEvent.change(input, { target: { value: 'psy' } })
+
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await screen.findByRole('heading', { name: /Psy dig/ })
+    expect(currentLocation().pathname).toBe('/scans/2')
+  })
+
+  it('a mouse click on a scan option navigates there too', async () => {
+    mockFetch(routes)
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    fireEvent.click(await screen.findByRole('option', { name: 'Psy dig' }))
+
+    await screen.findByRole('heading', { name: /Psy dig/ })
+    expect(currentLocation().pathname).toBe('/scans/2')
+  })
+})
+
+describe('seed resolution panel', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const seeds = [
+    { url: 'https://a.bandcamp.com/album/one', seed_type: 'album', resolved_album_id: 5, resolved_track_id: null },
+    { url: 'https://b.bandcamp.com/track/two', seed_type: 'track', resolved_album_id: null, resolved_track_id: null },
+  ]
+
+  it('has no Seeds toggle at all when the scan has none', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: 1 }],
+      ['/api/recommendations', [fakeRec()]],
+      ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ])
+    renderApp('/scans/1')
+
+    await screen.findByText('Eyes of Infinity')
+    expect(screen.queryByRole('button', { name: /Seeds/ })).not.toBeInTheDocument()
+  })
+
+  it('shows each seed’s resolution status, even while the scan is still queued and the feed itself is hidden', async () => {
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, status: 'queued', rec_count: 0, seeds }],
+      ['/api/scans', [fakeScan]],
+    ])
+    const user = userEvent.setup()
+    renderApp('/scans/1')
+
+    const toggle = await screen.findByRole('button', { name: 'Seeds (2)' })
+    // The feed/filter bar (and its own Liked/Blocked toggles) aren't shown
+    // for a queued scan — the Seeds toggle has to work without them.
+    expect(screen.queryByRole('button', { name: /Liked/ })).not.toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(screen.getByText('https://a.bandcamp.com/album/one')).toBeInTheDocument()
+    expect(screen.getByText('Resolved')).toBeInTheDocument()
+    expect(screen.getByText('https://b.bandcamp.com/track/two')).toBeInTheDocument()
+    expect(screen.getByText('Pending')).toBeInTheDocument()
+
+    await user.click(toggle)
+    expect(screen.queryByText('https://a.bandcamp.com/album/one')).not.toBeInTheDocument()
+  })
+})
+
+describe('global keyboard shortcuts help', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  // '/api/scans/1' must be listed before '/api/scans' — mockFetch matches by
+  // substring in order, and the list route would otherwise swallow it too.
+  const combinedRoutes: Array<[string, unknown, number?]> = [
+    ['/api/auth/me', fakeMe],
+    ['/api/scans/1', { ...fakeScan, seeds: [] }],
+    ['/api/scans', [fakeScan]],
+    ['/api/recommendations/count', { count: 1 }],
+    ['/api/recommendations', [fakeRec()]],
+    ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
+    ['/api/likes', []],
+    ['/api/blacklist', []],
+  ]
+
+  it('works on the scans list too, scoped to what the current page actually has', async () => {
+    mockFetch(combinedRoutes)
+    const user = userEvent.setup()
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    // On the list page there are no cards, so the feed-only rows (l/b/arrow
+    // nav/quick filter) would document controls that don't exist here.
+    fireEvent.keyDown(document, { key: '?' })
+    let dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).not.toHaveTextContent('Like the focused recommendation')
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await user.click(await screen.findByRole('link', { name: /My collection/ }))
+    await screen.findByRole('heading', { name: /My collection/ })
+
+    // The feed page has all of it.
+    fireEvent.keyDown(document, { key: '?' })
+    dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).toHaveTextContent('Like the focused recommendation')
+  })
+})
+
+describe('saved filter views', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    signedIn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const feedRoutes = (recs = [fakeRec()]) =>
+    [
+      ['/api/auth/me', fakeMe],
+      ['/api/scans/1', { ...fakeScan, seeds: [] }],
+      ['/api/recommendations/count', { count: recs.length }],
+      ['/api/recommendations', recs],
+      ['/api/facets', { tags: [{ value: 'psybient', label: 'psybient', count: 12 }], labels: [], seed_tags: [] }],
+      ['/api/likes', []],
+      ['/api/blacklist', []],
+    ] as Array<[string, unknown, number?]>
+
+  it('saves the current filters under a name and lists it in the dropdown', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    const input = screen.getByPlaceholderText('Name this view — press Enter to save')
+    await user.type(input, 'House only{Enter}')
+
+    expect(await screen.findByRole('button', { name: 'House only' })).toBeInTheDocument()
+    // The trigger's own label updates to reflect the saved count.
+    expect(screen.getByRole('button', { name: 'Views (1) ▾' })).toBeInTheDocument()
+  })
+
+  it('a saved view survives closing and reopening the dropdown (persisted, not just local state)', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('button', { name: 'House only' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Views (1) ▾' }))
+    expect(await screen.findByRole('button', { name: 'House only' })).toBeInTheDocument()
+  })
+
+  it('clicking a saved view navigates to its stored filter query', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+    await user.keyboard('{Escape}')
+
+    // Clear the live filter, then use the saved view to bring it back.
+    await user.click(screen.getByRole('button', { name: 'Remove psybient' }))
+    expect(currentLocation().search).not.toContain('tag=psybient')
+
+    await user.click(screen.getByRole('button', { name: 'Views (1) ▾' }))
+    await user.click(await screen.findByRole('button', { name: 'House only' }))
+
+    expect(currentLocation().pathname).toBe('/scans/1')
+    expect(currentLocation().search).toContain('tag=psybient')
+  })
+
+  it('requires a second click to delete a saved view, and does not apply it', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+
+    await user.click(screen.getByRole('button', { name: 'Delete saved view "House only"' }))
+    // First click only arms it — the view is still there, and applying it
+    // still works (a stray click shouldn't lock the row into anything).
+    expect(screen.getByRole('button', { name: 'House only' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Confirm delete saved view "House only"' }))
+
+    expect(screen.queryByRole('button', { name: 'House only' })).not.toBeInTheDocument()
+    expect(screen.getByText('No saved views yet.')).toBeInTheDocument()
+    // Deleting didn't navigate anywhere.
+    expect(currentLocation().pathname).toBe('/scans/1')
+  })
+
+  it('reverts an armed delete confirmation if the second click never comes', async () => {
+    mockFetch(feedRoutes())
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    fireEvent.click(screen.getByRole('button', { name: '☆ Views' }))
+    fireEvent.change(screen.getByPlaceholderText('Name this view — press Enter to save'), {
+      target: { value: 'House only' },
+    })
+    fireEvent.keyDown(screen.getByPlaceholderText('Name this view — press Enter to save'), { key: 'Enter' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete saved view "House only"' }))
+    expect(screen.getByRole('button', { name: 'Confirm delete saved view "House only"' })).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    expect(screen.queryByRole('button', { name: 'Confirm delete saved view "House only"' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete saved view "House only"' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'House only' })).toBeInTheDocument()
+  })
+
+  it('warns, but does not block, saving a view under a name that already exists', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    const input = screen.getByPlaceholderText('Name this view — press Enter to save')
+    await user.type(input, 'House only{Enter}')
+    expect(await screen.findByRole('button', { name: 'House only' })).toBeInTheDocument()
+
+    // Re-typing the same (case/whitespace-insensitive) name shows a
+    // non-blocking hint, mirroring NewScanForm's duplicate-scan-name warning.
+    await user.type(input, '  HOUSE only  ')
+    expect(screen.getByText(/already exists/i)).toBeInTheDocument()
+
+    // The warning doesn't block saving — a second, distinctly-named view is fine too.
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: 'Views (2) ▾' })).toBeInTheDocument()
+  })
+
+  it('keeps different scans on separate saved-view lists', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    await user.type(screen.getByPlaceholderText('Name this view — press Enter to save'), 'House only{Enter}')
+
+    expect(localStorage.getItem('crate-digger.savedViews:2')).toBeNull()
+    const stored = JSON.parse(localStorage.getItem('crate-digger.savedViews:1') ?? '[]')
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ name: 'House only' })
   })
 })

@@ -39,47 +39,79 @@ logger = logging.getLogger("crate_digger.crawl")
 
 
 async def _enqueue_fans(
-    session: AsyncSession, fan_urls: list[str], *, scan_id: int, depth: int
+    session: AsyncSession,
+    rows: list[tuple[str, int | None]],
+    *,
+    scan_id: int,
+    depth: int,
+    seed_fan_id: int | None,
+    seed_url: str | None,
 ) -> int:
+    """`rows` are `(fan_url, bandcamp_fan_id)`. Skips the seed fan themself — see
+    `crawl_album`'s docstring; the live and replayed paths must agree on this or a
+    scan's own supporter edge would get treated differently depending on whether
+    another scan happened to have crawled that album first."""
     added = 0
-    for url in fan_urls:
-        if url and await enqueue(
-            session, url, CrawlKind.FAN_COLLECTION, scan_id=scan_id, depth=depth
+    for url, fan_id in rows:
+        if not url:
+            continue
+        if (seed_fan_id is not None and fan_id == seed_fan_id) or (
+            seed_url is not None and url == seed_url
         ):
+            continue
+        if await enqueue(session, url, CrawlKind.FAN_COLLECTION, scan_id=scan_id, depth=depth):
             added += 1
     return added
 
 
 async def replay_album_fanout(
-    session: AsyncSession, url: str, *, scan_id: int, depth: int
+    session: AsyncSession,
+    url: str,
+    *,
+    scan_id: int,
+    depth: int,
+    seed_fan_id: int | None = None,
+    seed_url: str | None = None,
 ) -> int:
     """Enqueue the fan collections of everyone who supports this album."""
-    urls = (
+    rows = (
         await session.execute(
-            select(Fan.url)
+            select(Fan.url, Fan.bandcamp_fan_id)
             .select_from(AlbumSupporter)
             .join(Album, Album.id == AlbumSupporter.album_id)
             .join(Fan, Fan.id == AlbumSupporter.fan_id)
             .where(Album.url == url)
         )
-    ).scalars().all()
-    return await _enqueue_fans(session, list(urls), scan_id=scan_id, depth=depth)
+    ).all()
+    return await _enqueue_fans(
+        session, list(rows), scan_id=scan_id, depth=depth,
+        seed_fan_id=seed_fan_id, seed_url=seed_url,
+    )
 
 
 async def replay_track_fanout(
-    session: AsyncSession, url: str, *, scan_id: int, depth: int
+    session: AsyncSession,
+    url: str,
+    *,
+    scan_id: int,
+    depth: int,
+    seed_fan_id: int | None = None,
+    seed_url: str | None = None,
 ) -> int:
     """Enqueue the fan collections of everyone who supports this track."""
-    urls = (
+    rows = (
         await session.execute(
-            select(Fan.url)
+            select(Fan.url, Fan.bandcamp_fan_id)
             .select_from(TrackSupporter)
             .join(Track, Track.id == TrackSupporter.track_id)
             .join(Fan, Fan.id == TrackSupporter.fan_id)
             .where(Track.url == url)
         )
-    ).scalars().all()
-    return await _enqueue_fans(session, list(urls), scan_id=scan_id, depth=depth)
+    ).all()
+    return await _enqueue_fans(
+        session, list(rows), scan_id=scan_id, depth=depth,
+        seed_fan_id=seed_fan_id, seed_url=seed_url,
+    )
 
 
 async def replay_fan_collection_fanout(
@@ -120,7 +152,14 @@ async def replay_fan_collection_fanout(
 
 
 async def replay_fanout(
-    session: AsyncSession, url: str, kind: str, *, scan_id: int, depth: int
+    session: AsyncSession,
+    url: str,
+    kind: str,
+    *,
+    scan_id: int,
+    depth: int,
+    seed_fan_id: int | None = None,
+    seed_url: str | None = None,
 ) -> int:
     """Enqueue whatever crawling `(url, kind)` would have revealed. → count added.
 
@@ -130,8 +169,14 @@ async def replay_fanout(
     if kind == CrawlKind.FAN_COLLECTION:
         return await replay_fan_collection_fanout(session, url, scan_id=scan_id, depth=depth)
     if kind == CrawlKind.ALBUM:
-        return await replay_album_fanout(session, url, scan_id=scan_id, depth=depth)
+        return await replay_album_fanout(
+            session, url, scan_id=scan_id, depth=depth,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
+        )
     if kind == CrawlKind.TRACK:
-        return await replay_track_fanout(session, url, scan_id=scan_id, depth=depth)
+        return await replay_track_fanout(
+            session, url, scan_id=scan_id, depth=depth,
+            seed_fan_id=seed_fan_id, seed_url=seed_url,
+        )
     logger.warning("no replay for crawl kind %s (%s)", kind, url)
     return 0

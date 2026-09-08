@@ -503,6 +503,35 @@ async def test_seed_tags_lists_my_album_genres(session: AsyncSession) -> None:
     assert genres.get("rock") == 1 and genres.get("jazz") == 1
 
 
+async def test_seed_tags_lists_my_track_genres_too(session: AsyncSession) -> None:
+    """A genre carried only by an owned standalone track (no album has it) must
+    still show up — an inner join on AlbumTag alone never matches a track,
+    the same bug class already fixed in GET /api/facets's `tags` list."""
+    from app.curation.engine import seed_tags
+
+    me = Fan(bandcamp_fan_id=50, username="me5", url="https://bandcamp.com/me5", is_me=True)
+    band = Band(bandcamp_id=501, name="B501", kind=BandKind.ARTIST)
+    session.add_all([me, band])
+    await session.flush()
+    user = User(username="me5", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    track = Track(bandcamp_id=501, title="Solo track", band_id=band.id)
+    session.add(track)
+    await session.flush()
+
+    ambient = Tag(name="ambient")
+    session.add(ambient)
+    await session.flush()
+    session.add(TrackTag(track_id=track.id, tag_id=ambient.id))
+    session.add(FanItem(fan_id=me.id, item_type=ItemType.TRACK, track_id=track.id))
+    await session.commit()
+
+    genres = dict(await seed_tags(session, user))
+    assert genres.get("ambient") == 1
+
+
 async def test_liked_item_excludes_its_band(session: AsyncSession) -> None:
     user = await _build_graph(session)
     a4 = (await session.execute(select(Album).where(Album.bandcamp_id == 4))).scalar_one()
@@ -625,6 +654,48 @@ async def test_custom_scan_mixed_album_and_track_seeds_union_neighbours(
     scored = await compute_recommendations(session, scan, user)
     assert len(scored) == 1
     assert scored[0].reasons["co_owners"] == 2  # both neighbours counted
+
+
+async def test_collection_scan_owned_track_finds_neighbours(session: AsyncSession) -> None:
+    # `_seed_ids` used to return an empty seed_track_ids for the COLLECTION
+    # scan kind even when `me` owns a standalone track — so a fan who only
+    # shares that track with me (no album in common) never became a
+    # taste-neighbour and their other albums never surfaced as recs.
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    neighbour = Fan(bandcamp_fan_id=2, username="neighbour", url="https://bandcamp.com/neighbour")
+    my_band = Band(bandcamp_id=10, name="MyBand", kind=BandKind.ARTIST)
+    rec_band = Band(bandcamp_id=20, name="RecBand", kind=BandKind.ARTIST)
+    session.add_all([me, neighbour, my_band, rec_band])
+    await session.flush()
+
+    my_track = Track(
+        bandcamp_id=100, title="My Track", band_id=my_band.id,
+        url="https://myband.bandcamp.com/track/my-track",
+    )
+    rec_album = Album(
+        bandcamp_id=200, title="Rec Album", band_id=rec_band.id,
+        url="https://recband.bandcamp.com/album/rec-album",
+    )
+    session.add_all([my_track, rec_album])
+    await session.flush()
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.TRACK, track_id=my_track.id),
+        TrackSupporter(track_id=my_track.id, fan_id=neighbour.id),
+        FanItem(fan_id=neighbour.id, item_type=ItemType.ALBUM, album_id=rec_album.id),
+    ])
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.commit()
+
+    scored = await _recs(session, user)
+    assert len(scored) == 1
+    assert scored[0].album_id == rec_album.id
+    assert scored[0].reasons["co_owners"] == 1
+
+    coll_scan = await ensure_collection_scan(session, user)
+    diagnostics = await cold_start_diagnostics(session, coll_scan, user)
+    assert diagnostics.neighbour_count == 1
 
 
 async def test_get_me_requires_seed(session: AsyncSession) -> None:
@@ -834,9 +905,9 @@ async def test_cold_start_diagnostics_counts_neighbours_candidates_and_reasons(
     assert diag.neighbour_count == 2
     # Distinct items neighbours own, before any exclusion: albums A1-A5 + track T2.
     assert diag.candidates == 6
-    # A1 is mine (owned), A2 is wishlisted, A3's band (B3) is followed, none blacklisted.
+    # A1 is mine (owned), A2 is wishlisted, A3's band (B3) is followed, none blacklisted/liked.
     assert diag.excluded_by_reason == {
-        "owned": 1, "wishlisted": 1, "followed": 1, "blacklisted": 0,
+        "owned": 1, "wishlisted": 1, "followed": 1, "blacklisted": 0, "liked": 0,
     }
 
 
@@ -879,6 +950,48 @@ async def test_cold_start_diagnostics_everything_excluded_by_follows(
     assert diag.excluded_by_reason["owned"] == 0
     assert diag.excluded_by_reason["wishlisted"] == 0
     assert diag.excluded_by_reason["blacklisted"] == 0
+    assert diag.excluded_by_reason["liked"] == 0
+
+
+async def test_cold_start_diagnostics_counts_liked_items(session: AsyncSession) -> None:
+    """A candidate the user has liked (directly, or via another release by the
+    same band — see `build_exclusions`'s identical band-wide rule) must be
+    accounted for under `excluded_by_reason["liked"]`, the one exclusion
+    reason `build_exclusions` applies that this diagnostic used to omit
+    entirely — leaving a liked candidate unexplained in every count."""
+    me = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    neighbour = Fan(bandcamp_fan_id=2, username="n", url="https://bandcamp.com/n")
+    seed_band = Band(bandcamp_id=1, name="Seed", kind=BandKind.ARTIST)
+    liked_band = Band(bandcamp_id=2, name="Liked", kind=BandKind.ARTIST)
+    session.add_all([me, neighbour, seed_band, liked_band])
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=me.id)
+    session.add(user)
+    await session.flush()
+
+    seed_album = Album(bandcamp_id=1, title="Seed", band_id=seed_band.id)
+    liked_album = Album(bandcamp_id=2, title="FromLiked", band_id=liked_band.id)
+    session.add_all([seed_album, liked_album])
+    await session.flush()
+
+    session.add_all([
+        FanItem(fan_id=me.id, item_type=ItemType.ALBUM, album_id=seed_album.id),
+        AlbumSupporter(album_id=seed_album.id, fan_id=neighbour.id),
+        FanItem(fan_id=neighbour.id, item_type=ItemType.ALBUM, album_id=liked_album.id),
+        Like(user_id=user.id, item_type=ItemType.ALBUM, album_id=liked_album.id),
+    ])
+    await session.commit()
+
+    scan = await ensure_collection_scan(session, user)
+    diag = await cold_start_diagnostics(session, scan, user)
+
+    assert diag.neighbour_count == 1
+    assert diag.candidates == 1
+    assert diag.excluded_by_reason["liked"] == 1
+    assert diag.excluded_by_reason["owned"] == 0
+    assert diag.excluded_by_reason["wishlisted"] == 0
+    assert diag.excluded_by_reason["followed"] == 0
+    assert diag.excluded_by_reason["blacklisted"] == 0
 
 
 async def test_cold_start_diagnostics_no_neighbours(session: AsyncSession) -> None:
@@ -894,7 +1007,7 @@ async def test_cold_start_diagnostics_no_neighbours(session: AsyncSession) -> No
     assert diag.neighbour_count == 0
     assert diag.candidates == 0
     assert diag.excluded_by_reason == {
-        "owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0,
+        "owned": 0, "wishlisted": 0, "followed": 0, "blacklisted": 0, "liked": 0,
     }
 
 
@@ -1153,3 +1266,53 @@ async def test_neighbour_size_report_empty_without_neighbours(session: AsyncSess
     scan = await ensure_collection_scan(session, user)
 
     assert await neighbour_size_report(session, scan, user) == []
+
+
+async def test_duplicate_like_rejected_at_the_db_level(session: AsyncSession) -> None:
+    # Same NULL-pattern gap `FanItem.uq_fan_item` had (see test_bandcamp_mapper.py's
+    # test_duplicate_fan_item_rejected_at_the_db_level) -- bypasses the API's
+    # get-or-create path entirely, exercising the DB constraint itself.
+    from sqlalchemy.exc import IntegrityError
+
+    fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(fan)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=fan.id)
+    session.add(user)
+    band = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
+    session.add(band)
+    await session.flush()
+    album = Album(bandcamp_id=1, title="A", band_id=band.id)
+    session.add(album)
+    await session.flush()
+
+    session.add(Like(user_id=user.id, item_type=ItemType.ALBUM, album_id=album.id))
+    await session.flush()
+
+    session.add(Like(user_id=user.id, item_type=ItemType.ALBUM, album_id=album.id))
+    with pytest.raises(IntegrityError):
+        await session.flush()
+
+
+async def test_duplicate_recommendation_rejected_at_the_db_level(session: AsyncSession) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    fan = Fan(bandcamp_fan_id=1, username="me", url="https://bandcamp.com/me", is_me=True)
+    session.add(fan)
+    await session.flush()
+    user = User(username="me", password_hash="!", fan_id=fan.id)
+    session.add(user)
+    band = Band(bandcamp_id=1, name="B", kind=BandKind.ARTIST)
+    session.add(band)
+    await session.flush()
+    album = Album(bandcamp_id=1, title="A", band_id=band.id)
+    session.add(album)
+    await session.flush()
+    scan = await ensure_collection_scan(session, user)
+
+    session.add(Recommendation(scan_id=scan.id, item_type=ItemType.ALBUM, album_id=album.id))
+    await session.flush()
+
+    session.add(Recommendation(scan_id=scan.id, item_type=ItemType.ALBUM, album_id=album.id))
+    with pytest.raises(IntegrityError):
+        await session.flush()

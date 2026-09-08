@@ -2,17 +2,19 @@
 recompute. Read endpoints power the UI; recompute re-runs the curation engine.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.auth.security import get_current_user
+from app.bandcamp.art import art_url
 from app.config import Settings, get_settings
-from app.crawl.runner import requests_used
+from app.crawl.runner import requests_used_by_scan
 from app.curation.engine import cold_start_diagnostics, curate
 from app.curation.engine import seed_tags as seed_tag_genres
 from app.db.models import (
@@ -34,6 +36,24 @@ from app.db.session import get_session
 from app.enums import ScanKind
 
 router = APIRouter(prefix="/api", tags=["feed"])
+
+# Per-user cooldown state for POST /recommendations/recompute (see
+# Settings.recompute_cooldown_seconds). In-memory and keyed by user id: this is
+# hardening against a scripted/retry-loop caller, not something that needs to
+# survive a restart or be shared across API processes.
+_last_recompute_at: dict[int, datetime] = {}
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _reset_recompute_cooldown_for_tests() -> None:
+    """Test-only. Module-scope state outlives one test's DB/dependency-override
+    teardown, so a test that enables the cooldown must clear it first —
+    otherwise a leftover timestamp from an earlier test reusing the same
+    (autoincrement-reset) user id would leak in."""
+    _last_recompute_at.clear()
 
 
 async def _resolve_scan_id(
@@ -76,6 +96,9 @@ class RecommendationOut(BaseModel):
     band_id: int | None
     band_name: str | None
     url: str | None
+    # Bandcamp's opaque art asset id (Album.art_id / Track.art_id) — not a URL.
+    art_id: int | None
+    art_url: str | None  # see app.bandcamp.art.art_url — None when art_id is None
     reasons: Reasons
     # The scan's `recompute_generation` at fetch time — see migration 0013.
     # Every row in one response carries the same value: `store_recommendations`
@@ -107,6 +130,7 @@ class ColdStartOut(BaseModel):
     excluded_wishlisted: int
     excluded_followed: int
     excluded_blacklisted: int
+    excluded_liked: int
 
 
 class StatsOut(BaseModel):
@@ -127,6 +151,28 @@ class StatsOut(BaseModel):
 
 async def _count(session: AsyncSession, stmt) -> int:
     return (await session.execute(stmt)).scalar_one()
+
+
+async def _scan_generation(session: AsyncSession, sid: int | None) -> int:
+    """`scans.recompute_generation` for `sid`, or 0 when there's no scan yet
+    (a brand-new user) — mirrors the `or 0` already used when building
+    `RecommendationOut` rows below."""
+    if sid is None:
+        return 0
+    return (
+        (await session.execute(select(Scan.recompute_generation).where(Scan.id == sid)))
+        .scalars().first()
+    ) or 0
+
+
+def _generation_etag(sid: int | None, generation: int) -> str:
+    """A weak identifier for "this scan's feed as of this recompute" — every
+    read endpoint scoped to one scan's recommendations (recs, facets) changes
+    only when `store_recommendations` bumps the generation (see migration
+    0013), so it doubles as a conditional-GET cache key: unchanged generation
+    ⇒ byte-identical response for the same request URL (filters and all,
+    since the URL — not the ETag alone — is what a client/cache keys on)."""
+    return f'"gen-{sid if sid is not None else "none"}-{generation}"'
 
 
 def _has_tag(names: list[str]):
@@ -260,6 +306,7 @@ async def stats(
                     excluded_wishlisted=diag.excluded_by_reason["wishlisted"],
                     excluded_followed=diag.excluded_by_reason["followed"],
                     excluded_blacklisted=diag.excluded_by_reason["blacklisted"],
+                    excluded_liked=diag.excluded_by_reason["liked"],
                 )
     return StatsOut(
         recommendations=await _count(
@@ -276,8 +323,8 @@ async def stats(
         liked=await _count(
             session, select(func.count()).select_from(Like).where(Like.user_id == current_user.id)
         ),
-        requests_used=await requests_used(session),
-        request_budget=settings.crawl_max_requests,
+        requests_used=await requests_used_by_scan(session, sid) if sid is not None else 0,
+        request_budget=settings.crawl_max_requests_per_scan,
         cold_start=cold_start,
         recompute_generation=recompute_generation,
     )
@@ -285,8 +332,10 @@ async def stats(
 
 @router.get("/recommendations", response_model=list[RecommendationOut])
 async def recommendations(
+    response: Response,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    if_none_match: str | None = Header(None, alias="If-None-Match"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     item_type: str | None = Query(None, pattern="^(album|track)$"),
@@ -300,6 +349,15 @@ async def recommendations(
     scan_id: int | None = Query(None),            # which scan's feed (default: collection)
 ) -> list[RecommendationOut]:
     sid = await _resolve_scan_id(session, current_user.id, scan_id)
+    # Cheap enough to compute before the (filtered, joined) main query: when it
+    # matches what the caller already has cached, this skips that query
+    # entirely rather than only skipping re-serialization.
+    generation = await _scan_generation(session, sid)
+    etag = _generation_etag(sid, generation)
+    if if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+
     ab = aliased(Band)
     tb = aliased(Band)
     band_id_col = func.coalesce(Album.band_id, Track.band_id)
@@ -314,6 +372,7 @@ async def recommendations(
             band_id_col.label("band_id"),
             func.coalesce(ab.name, tb.name).label("band_name"),
             func.coalesce(Album.url, Track.url).label("url"),
+            func.coalesce(Album.art_id, Track.art_id).label("art_id"),
         )
         .select_from(Recommendation)
         .outerjoin(Album, Album.id == Recommendation.album_id)
@@ -330,14 +389,10 @@ async def recommendations(
     stmt = stmt.where(Recommendation.scan_id == sid).limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
-    # One scalar lookup, reused for every row in this response — all of them
-    # necessarily belong to the same generation (store_recommendations clears +
-    # inserts inside one transaction), so there's nothing to join per-row.
-    generation = (
-        (await session.execute(select(Scan.recompute_generation).where(Scan.id == sid)))
-        .scalars().first()
-        if sid is not None else None
-    ) or 0
+    # `generation` (and its ETag) were computed above, before this query ran —
+    # all rows necessarily belong to it regardless (store_recommendations
+    # clears + inserts inside one transaction), so there's nothing to re-derive
+    # per row.
     return [
         RecommendationOut(
             rank=offset + i + 1,
@@ -349,6 +404,8 @@ async def recommendations(
             band_id=r.band_id,
             band_name=r.band_name,
             url=r.url,
+            art_id=r.art_id,
+            art_url=art_url(r.art_id),
             reasons=Reasons(**(r.reasons or {})),
             recompute_generation=generation,
         )
@@ -389,21 +446,48 @@ async def recommendations_count(
 
 @router.get("/facets", response_model=FacetsOut)
 async def facets(
+    response: Response,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    if_none_match: str | None = Header(None, alias="If-None-Match"),
     scan_id: int | None = Query(None),
 ) -> FacetsOut:
     """Tags and labels present in one scan's recommendations, with counts."""
     sid = await _resolve_scan_id(session, current_user.id, scan_id)
+    # Same ETag as /recommendations: tied to the scan's recompute_generation,
+    # which is what every facet here is actually joined against. The one gap —
+    # `seed_tags` reflects the caller's own album tags, which could in theory
+    # change without a recompute — matches this scan's other read endpoints and
+    # wasn't worth a second cache key for.
+    generation = await _scan_generation(session, sid)
+    etag = _generation_etag(sid, generation)
+    if if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+
+    # Union album-tag and track-tag matches — an inner join on AlbumTag alone
+    # (the old shape) never matches a track recommendation (album_id is NULL),
+    # so a genre that only tracks carry silently never showed up as a facet.
+    album_tag_names = (
+        select(Tag.name)
+        .select_from(Recommendation)
+        .join(AlbumTag, AlbumTag.album_id == Recommendation.album_id)
+        .join(Tag, Tag.id == AlbumTag.tag_id)
+        .where(Recommendation.scan_id == sid)
+    )
+    track_tag_names = (
+        select(Tag.name)
+        .select_from(Recommendation)
+        .join(TrackTag, TrackTag.track_id == Recommendation.track_id)
+        .join(Tag, Tag.id == TrackTag.tag_id)
+        .where(Recommendation.scan_id == sid)
+    )
+    tag_names = album_tag_names.union_all(track_tag_names).subquery()
     tag_rows = (
         await session.execute(
-            select(Tag.name, func.count().label("n"))
-            .select_from(Recommendation)
-            .join(AlbumTag, AlbumTag.album_id == Recommendation.album_id)
-            .join(Tag, Tag.id == AlbumTag.tag_id)
-            .where(Recommendation.scan_id == sid)
-            .group_by(Tag.name)
-            .order_by(func.count().desc(), Tag.name)
+            select(tag_names.c.name, func.count().label("n"))
+            .group_by(tag_names.c.name)
+            .order_by(func.count().desc(), tag_names.c.name)
         )
     ).all()
     label_rows = (
@@ -436,22 +520,53 @@ async def facets(
 @router.post("/recommendations/recompute")
 async def recompute(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
     current_user: User = Depends(get_current_user),
     exclude_seed_tag: list[str] = Query(default=[]),
     scan_id: int | None = Query(None),
 ) -> dict[str, Any]:
     """Recompute one scan's feed (defaults to the collection scan). `exclude_seed_tag`
     drops recs generated from the scan's seeds carrying those genres."""
+    # Checked before the cooldown gate: an invalid scan_id is a deterministic
+    # 404 that would otherwise still consume a caller's cooldown window,
+    # locking a legitimate follow-up call behind a 429 it doesn't deserve.
     if scan_id is not None:
         owner = (
             await session.execute(select(Scan.user_id).where(Scan.id == scan_id))
         ).scalars().first()
         if owner is None or owner != current_user.id:
             raise HTTPException(status_code=404, detail="scan not found")
+
+    previous_recompute_at = None
+    if settings.recompute_cooldown_seconds > 0:
+        now = _now()
+        previous_recompute_at = _last_recompute_at.get(current_user.id)
+        if previous_recompute_at is not None:
+            remaining = (
+                settings.recompute_cooldown_seconds
+                - (now - previous_recompute_at).total_seconds()
+            )
+            if remaining > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Recompute was called too recently — try again shortly.",
+                    headers={"Retry-After": str(int(remaining) + 1)},
+                )
+        # Recorded before the (potentially slow) curate() call, so two rapid
+        # calls can't both slip past the check while the first is still
+        # running — rolled back below if curate() itself fails, so a genuine
+        # error doesn't consume a caller's retry window.
+        _last_recompute_at[current_user.id] = now
+
     try:
         scored = await curate(
             session, scan_id=scan_id, user=current_user, exclude_seed_tags=set(exclude_seed_tag)
         )
     except ValueError as e:  # e.g. collection not yet crawled → 404, not a 500
+        if settings.recompute_cooldown_seconds > 0:
+            if previous_recompute_at is not None:
+                _last_recompute_at[current_user.id] = previous_recompute_at
+            else:
+                _last_recompute_at.pop(current_user.id, None)
         raise HTTPException(status_code=404, detail=str(e)) from e
     return {"computed": len(scored), "excluded_seed_tags": exclude_seed_tag}

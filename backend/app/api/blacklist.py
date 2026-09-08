@@ -6,11 +6,12 @@ current recommendations for that band so the feed updates immediately.
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import get_current_user
+from app.curation.generation import bump_generations
 from app.db.models import Album, Band, Blacklist, Recommendation, Scan, Track, User
 from app.db.session import get_session
 from app.enums import BandKind, TargetType
@@ -23,6 +24,24 @@ class BlockIn(BaseModel):
     reason: str | None = None
     expires_at: datetime | None = None
     """Optional "not now" — omit to block indefinitely, as before."""
+
+    @model_validator(mode="after")
+    def _expires_at_must_be_future(self) -> "BlockIn":
+        # A past (or "now") expires_at creates a row that both `list_blocked`
+        # and the curation exclusion query immediately filter out as expired
+        # (both compare `expires_at > now()`) — the caller gets a 200 that
+        # looks like a normal block, but the band was never actually excluded
+        # and never shows up as blocked either. Reject it instead of silently
+        # no-op'ing.
+        if self.expires_at is None:
+            return self
+        deadline = (
+            self.expires_at if self.expires_at.tzinfo is not None
+            else self.expires_at.replace(tzinfo=UTC)
+        )
+        if deadline <= datetime.now(UTC):
+            raise ValueError("expires_at must be in the future")
+        return self
 
 
 class BlacklistOut(BaseModel):
@@ -104,6 +123,10 @@ async def block(
             Recommendation.album_id.in_(album_ids) | Recommendation.track_id.in_(track_ids),
         )
     )
+    # Without this, another already-open session (a different device, a
+    # second tab) keeps its cached ETag for these scans indefinitely — the
+    # rows changed but nothing told its cache so.
+    await bump_generations(session, user_scan_ids)
     await session.flush()
     await session.commit()
     return BlacklistOut(
@@ -130,5 +153,11 @@ async def unblock(
     if entry is None:
         raise HTTPException(status_code=404, detail="band is not blocked")
     entry.active = False
+    # No rows change here (curation just won't exclude this band next time it
+    # actually re-curates), but bump anyway: a cached ETag from before the
+    # unblock could otherwise mask the Blocked panel/feed going stale in the
+    # other direction on some other device.
+    user_scan_ids = select(Scan.id).where(Scan.user_id == current_user.id)
+    await bump_generations(session, user_scan_ids)
     await session.commit()
     return {"unblocked": band_id}

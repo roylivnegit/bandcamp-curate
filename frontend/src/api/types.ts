@@ -24,6 +24,10 @@ export interface Recommendation {
   band_id: number | null
   band_name: string | null
   url: string | null
+  /** Bandcamp CDN cover-art URL, or null when the album/track has no stored
+   *  `art_id` yet (not every crawled item has been tag/art-enriched — see
+   *  backend migration 0014). */
+  art_url: string | null
   reasons: Reasons
   /** The scan's recompute_generation at fetch time — every row in one
    *  response shares it (see backend migration 0013). */
@@ -42,6 +46,19 @@ export interface Facets {
   seed_tags: Facet[]
 }
 
+/** Why the feed came back thin or empty for a scan — see the backend's
+ *  `curation.engine.cold_start_diagnostics`. Present only once the crawl has
+ *  identified "me" (a `me`-scoped stats request on a scan that has one). */
+export interface ColdStart {
+  neighbour_count: number
+  candidates: number
+  excluded_owned: number
+  excluded_wishlisted: number
+  excluded_followed: number
+  excluded_blacklisted: number
+  excluded_liked: number
+}
+
 export interface Stats {
   recommendations: number
   fans: number
@@ -54,6 +71,7 @@ export interface Stats {
   liked: number
   requests_used: number
   request_budget: number
+  cold_start: ColdStart | null
   recompute_generation: number | null
 }
 
@@ -90,6 +108,8 @@ export interface Blocked {
   band_name: string | null
   band_url: string | null
   reason: string | null
+  /** Set for a temporary block (see backend `Blacklist.expires_at`); `null` blocks forever. */
+  expires_at: string | null
 }
 
 export interface Liked {
