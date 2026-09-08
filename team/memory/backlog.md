@@ -298,6 +298,34 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   filter key finds nothing under it, confirming no stale cross-filter restore. 70/70 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
+- [x] **CSV export is vulnerable to formula injection.** *(proposed by the hourly routine,
+  2026-09-08, Architect+QA-approved, security fix — shipped as this run's Option C follow-through
+  rather than left queued)* `frontend/src/lib/export.ts`'s `csvField()` only quoted on embedded
+  quote/comma/CR/LF — a band or track title starting with `=`, `+`, `-`, or `@` (or a leading
+  tab/CR) opens as an executable formula instead of plain text when the exported CSV is opened in
+  Excel/Sheets, the standard CSV-injection failure mode.
+  Done: `csvField()` now prefixes any value matching a new leading `FORMULA_TRIGGER` regex
+  (`^[=+\-@\t\r]`) with a single `'` before the existing quote-wrapping logic runs — the standard
+  mitigation, applied only to the leading character so an interior `=`/`+`/etc. (e.g. "A=B live
+  set") is untouched. Covered by three new tests in `export.test.ts`: a title crafted as a formula
+  payload (`=cmd|" /C calc"!A1`) round-trips with a leading `'` and no longer starts with `=`;
+  `+`/`-`/`@`/tab leading characters across two rows are all guarded the same way; a non-leading
+  `=` is left alone. 374/374 frontend tests pass, tsc/lint/build clean (chunk split intact — this
+  is a pure-logic change in an already-imported file, no new import graph). PR: see git history.
+  **Two sibling proposals from the same Product round queued below, not built this task** (this
+  run's Option C task budget is one implementation per task; picked the security fix first per
+  Architect+QA's own priority order):
+  - **`exportFilename`'s slugify strips all non-ASCII, silently reintroducing the exact same-day
+    collision the feature exists to prevent** for a scan named entirely in a non-Latin script
+    (slugifies to `''`, falls back to the bare generic date-only filename). Fix: when `slugify(name)`
+    is empty but `name` isn't, fall back to a deterministic suffix (hash of `name`, or the scan id)
+    instead of the bare generic form. Verify: two distinct non-Latin scan names must produce two
+    different filenames in `export.test.ts`.
+  - **`savedViews.ts`'s `saveView()` has no duplicate-name check**, unlike the scan list which
+    already warns on a duplicate scan name — two views both named "faves" are indistinguishable in
+    `SavedViewsDropdown`. Fix: warn/reject a case-insensitive duplicate view name, mirroring the
+    scan-list pattern. Verify: unit test in `savedViews.test.ts`.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
