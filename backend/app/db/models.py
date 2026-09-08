@@ -269,8 +269,30 @@ class Like(Base):
     reflects the real action."""
 
     __tablename__ = "likes"
+    # NOT a plain UniqueConstraint on (user_id, item_type, album_id, track_id) --
+    # same NULL-pattern gap as `FanItem.uq_fan_item` had (see its comment): an
+    # album row always has track_id NULL and a track row always has album_id
+    # NULL, and standard SQL treats NULL as distinct from NULL even inside a
+    # unique constraint, so that shape never actually rejects a duplicate.
+    # `item_type` is redundant once split this way, since album_id is only ever
+    # set on an album row and track_id only ever on a track row.
     __table_args__ = (
-        UniqueConstraint("user_id", "item_type", "album_id", "track_id", name="uq_like_item"),
+        Index(
+            "uq_like_item_album",
+            "user_id",
+            "album_id",
+            unique=True,
+            sqlite_where=text("track_id IS NULL"),
+            postgresql_where=text("track_id IS NULL"),
+        ),
+        Index(
+            "uq_like_item_track",
+            "user_id",
+            "track_id",
+            unique=True,
+            sqlite_where=text("album_id IS NULL"),
+            postgresql_where=text("album_id IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -365,9 +387,24 @@ class Recommendation(Base):
     """A computed feed entry with an explainable score. Belongs to one scan."""
 
     __tablename__ = "recommendations"
+    # Same NULL-pattern gap as `FanItem.uq_fan_item`/`Like.uq_like_item` -- see
+    # their comments. `item_type` is redundant once split this way.
     __table_args__ = (
-        UniqueConstraint(
-            "scan_id", "item_type", "album_id", "track_id", name="uq_recommendation_item"
+        Index(
+            "uq_recommendation_item_album",
+            "scan_id",
+            "album_id",
+            unique=True,
+            sqlite_where=text("track_id IS NULL"),
+            postgresql_where=text("track_id IS NULL"),
+        ),
+        Index(
+            "uq_recommendation_item_track",
+            "scan_id",
+            "track_id",
+            unique=True,
+            sqlite_where=text("album_id IS NULL"),
+            postgresql_where=text("album_id IS NULL"),
         ),
     )
 

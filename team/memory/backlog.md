@@ -2657,6 +2657,34 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   the resulting SQLite schema was inspected directly to confirm both partial `WHERE` clauses landed
   exactly as intended. PR: see git history.
 
+- [x] **`Like.uq_like_item`/`Recommendation.uq_recommendation_item` share `uq_fan_item`'s NULL-pattern
+  bug.** *(picked up from `team/memory/tried-and-failed.md`'s 2026-09-08 "fair game for a future
+  task" note, flagged when `uq_fan_item` was fixed in #157)* Same shape as that fix: each constraint
+  was a single `UniqueConstraint` on `(<owner>, item_type, album_id, track_id)`, but one of
+  `album_id`/`track_id` is always NULL depending on `item_type`, and standard SQL treats NULL as
+  distinct from NULL even inside a unique constraint — so neither ever actually rejected a duplicate
+  row.
+  Done, following the exact pattern `0018_fan_item_partial_unique` established: replaced both flat
+  constraints with two partial unique indexes each — `uq_like_item_album`/`uq_like_item_track` on
+  `(user_id, album_id)`/`(user_id, track_id)`, `uq_recommendation_item_album`/
+  `uq_recommendation_item_track` on `(scan_id, album_id)`/`(scan_id, track_id)`, each `WHERE` the
+  other id column IS NULL. `item_type` is redundant once split this way. New guarded migration
+  `0019_like_recommendation_partial_unique`, same `_find_unique`/`_drop_unique`-style structure as
+  `0018` (no-ops on a fresh DB already built from current ORM metadata; patches an existing DB by
+  dropping whichever old unique — constraint or index — matches the old column set, then creating
+  the two partial indexes). Covered by two new tests in `test_curation.py`
+  (`test_duplicate_like_rejected_at_the_db_level`, `test_duplicate_recommendation_rejected_at_the_db_level`),
+  mirroring `test_bandcamp_mapper.py`'s existing `FanItem` version: each bypasses the
+  application-level get-or-create path and inserts two identical rows directly, asserting the
+  second raises `IntegrityError`. 268/268 backend tests pass (266 + 2 new), ruff clean. Verified the
+  migration round-trip against an ORM-built ("fresh") SQLite DB stamped at head — `downgrade -1`
+  actually drops both new partial indexes and recreates the old flat `UNIQUE` constraint (inspected
+  directly: `CONSTRAINT uq_like_item UNIQUE (user_id, item_type, album_id, track_id)` came back
+  verbatim), then `upgrade head` recreates the four partial indexes with their `WHERE` clauses
+  intact — the same style of check #157 used, since a literal from-empty `alembic upgrade head` hits
+  a pre-existing, unrelated SQLite limitation at `0008_users_and_ownership` (`op.create_unique_
+  constraint` outside batch mode) that has nothing to do with this change. PR: see git history.
+
 - [x] **A running scan's crawl-budget readout disappears the moment results start landing.**
   *(proposed by the hourly routine, 2026-09-08, self-verified against source before building)*
   `stats.requests_used`/`stats.request_budget` only ever rendered inside `ColdStartPanel`, which
