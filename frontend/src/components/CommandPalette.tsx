@@ -130,6 +130,15 @@ export function CommandPalette({
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActiveIndex((i) => Math.max(i - 1, 0))
+    } else if (e.key === 'Home') {
+      // Clamp to the first row, same as ArrowUp's own bound — not Dropdown's
+      // wrap-around menu convention, since this is a filtered result list
+      // with a definite start/end, the same shape as the feed card list's nav.
+      e.preventDefault()
+      setActiveIndex(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      setActiveIndex(filtered.length - 1)
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (activeRow) runAction(activeRow)
