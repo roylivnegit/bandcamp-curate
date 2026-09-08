@@ -2892,7 +2892,7 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   existed at all — worth remembering for future rounds: a `Grep` call needs `output_mode: "content"`
   to actually see whether a match is real, not just that a file matched.
 
-- [~] **Escape doesn't cancel an in-progress block-reason edit.** *(proposed by the hourly routine,
+- [x] **Escape doesn't cancel an in-progress block-reason edit.** *(proposed by the hourly routine,
   2026-09-08, self-verified against source, Architect+QA-approved — the smaller/better-scoped of two
   proposals from the same Product round; the other, confirm-before-delete on a saved view, is queued
   below since it needs new per-row confirm state, not a drop-in reuse)* `SidePanels.tsx`'s reason
@@ -2905,21 +2905,20 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   once `blurReason` runs against the just-reverted value, so no separate "was this an abort" flag was
   needed. Two new tests in `SidePanels.test.tsx`: Escape reverts a changed reason to its prior saved
   value and never calls `onSetReason`; Escape on a band with no reason yet reverts to blank the same
-  way. 380/380 frontend tests pass, tsc/lint/build clean (chunk split intact). PR #170, auto-merge
-  enabled — awaiting CI.
+  way. 380/380 frontend tests pass, tsc/lint/build clean (chunk split intact). Merged (#170).
 
-- [ ] **Confirm before deleting a saved view.** *(proposed by the hourly routine, 2026-09-08,
-  Architect+QA-approved, queued rather than built this run — needs new per-row confirm state, not
-  a drop-in reuse, so it's a slightly bigger task than the Escape fix built alongside it)*
-  `SavedViewsDropdown.tsx`'s remove button (`RemoveButton` at line ~69-72) deletes a saved filter
-  view on a single click, immediately, with no confirmation and no undo — a stray click permanently
-  destroys a filter combination the user may have spent real time assembling. `DeleteScanButton.tsx`
-  already implements a proven two-click arm/confirm pattern (`CONFIRM_WINDOW_MS`, `arm()`/`cancel()`/
-  `confirm()`) for the same class of destructive action elsewhere in this exact codebase. QA note:
-  not a literal copy-paste of `DeleteScanButton` — that component only ever guards one button, but
-  `SavedViewsDropdown` renders a *list* of views, so the confirm state needs to be keyed per-row
-  (e.g. a `confirmingId`, not a bare boolean) plus its own revert timer. Verify: RTL + fake timers —
-  first click on remove leaves the view in the list and flips that row's button into an armed/confirm
-  state; a second click actually removes it; letting the confirm window elapse without a second click
-  reverts it back to the plain remove button (mirroring `DeleteScanButton.test.tsx`'s existing timing
-  tests).
+- [~] **Confirm before deleting a saved view.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `SavedViewsDropdown.tsx`'s remove button deleted a saved filter view on a
+  single click, immediately, with no confirmation and no undo — a stray click permanently destroyed
+  a filter combination the user may have spent real time assembling. `DeleteScanButton.tsx`/
+  `BulkActionBar.tsx` already implement a proven two-click arm/confirm pattern for the same class of
+  destructive action elsewhere in this exact codebase.
+  Done: applied the same shape, keyed per-row (`confirmingId: string | null` — `SavedView.id` is a
+  string, not `DeleteScanButton`'s single boolean) since this component renders a *list* of views,
+  not one button. First click arms a row's remove control into a "Confirm?" danger-colored button
+  (new `.rm.confirm` style in `Dropdown.css`, reusing `--danger` the same way `.btn.ghost.danger`
+  does); a second click deletes; the armed state auto-reverts after `CONFIRM_WINDOW_MS` (4000ms, same
+  window as the two existing precedents) if untouched, and also clears on dropdown close/reopen.
+  Updated the existing "deletes a saved view" test to the new two-click behavior and added a new one
+  mirroring `DeleteScanButton`'s own revert-on-timeout test. 381/381 frontend tests pass, tsc/lint/
+  build clean (chunk split intact). PR #171, auto-merge enabled — awaiting CI.
