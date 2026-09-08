@@ -1,6 +1,6 @@
-/// <reference types="vitest/config" />
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { configDefaults } from 'vitest/config'
 
 export default defineConfig({
   plugins: [react()],
@@ -20,5 +20,11 @@ export default defineConfig({
     // tokens.css this way so it verifies the actual shipped token values,
     // not a hand-copied duplicate that could drift from them unnoticed.
     css: { include: [/\.css\?raw$/] },
+    // e2e/*.spec.ts files import '@playwright/test', which is never a real
+    // devDependency here (it's installed ad hoc, on demand, for a one-off
+    // Playwright run, then removed) — vitest's default include glob would
+    // otherwise try to run them as unit tests and fail to resolve that
+    // import. They run only under `npx playwright test`, never `npm test`.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
   },
 })
