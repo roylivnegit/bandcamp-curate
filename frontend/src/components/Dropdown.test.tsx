@@ -86,6 +86,52 @@ describe('Dropdown arrow-key navigation', () => {
   })
 })
 
+describe('Dropdown type-ahead', () => {
+  function renderOpenLetterDropdown() {
+    render(
+      <Dropdown label="Genre">
+        {() => (
+          <div>
+            <button type="button" className="ddrow">
+              Apple
+            </button>
+            <button type="button" className="ddrow">
+              Banana
+            </button>
+            <button type="button" className="ddrow">
+              Avocado
+            </button>
+          </div>
+        )}
+      </Dropdown>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Genre' }))
+    return screen.getAllByRole('button', { name: /^(Apple|Banana|Avocado)$/ })
+  }
+
+  it('jumps to the next row starting with the pressed letter, cycling on repeat presses', () => {
+    const rows = renderOpenLetterDropdown()
+    const [apple, , avocado] = rows
+    apple.focus()
+
+    fireEvent.keyDown(apple, { key: 'a' })
+    expect(avocado).toHaveFocus()
+
+    fireEvent.keyDown(avocado, { key: 'a' })
+    expect(apple).toHaveFocus()
+  })
+
+  it('ignores a letter key held with a modifier', () => {
+    const rows = renderOpenLetterDropdown()
+    const apple = rows[0]
+    apple.focus()
+
+    fireEvent.keyDown(apple, { key: 'a', ctrlKey: true })
+
+    expect(apple).toHaveFocus()
+  })
+})
+
 describe('Dropdown open/close focus management', () => {
   it('moves focus to the first row when the panel opens', () => {
     const rows = renderOpenDropdown()
