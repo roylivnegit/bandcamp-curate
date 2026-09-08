@@ -122,7 +122,7 @@ export function ScanFeedPage() {
    *  stale set can't linger for the next time it's turned on. */
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkBusyAction, setBulkBusyAction] = useState<'like' | 'block' | null>(null)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
@@ -683,15 +683,31 @@ export function ScanFeedPage() {
   const bulkBlock = useCallback(async () => {
     const targets = rows.filter((r) => selected.has(keyOf(r)))
     if (targets.length === 0) return
-    setBulkBusy(true)
+    setBulkBusyAction('block')
     try {
       await Promise.all(targets.map((r) => block(r)))
     } finally {
-      setBulkBusy(false)
+      setBulkBusyAction(null)
       setSelected(new Set())
       setSelectMode(false)
     }
   }, [rows, selected, block])
+
+  /** Same shape as `bulkBlock`, calling the existing per-card `like` handler
+   *  once per selected row. No confirm step at any count, unlike block —
+   *  liking isn't destructive. */
+  const bulkLike = useCallback(async () => {
+    const targets = rows.filter((r) => selected.has(keyOf(r)))
+    if (targets.length === 0) return
+    setBulkBusyAction('like')
+    try {
+      await Promise.all(targets.map((r) => like(r)))
+    } finally {
+      setBulkBusyAction(null)
+      setSelected(new Set())
+      setSelectMode(false)
+    }
+  }, [rows, selected, like])
 
   // Purely a view filter over what's already loaded — no re-fetch, and the
   // query never reaches the API. An empty query is the identity filter, so
@@ -974,7 +990,8 @@ export function ScanFeedPage() {
 
           <BulkActionBar
             count={selected.size}
-            busy={bulkBusy}
+            busyAction={bulkBusyAction}
+            onLike={() => void bulkLike()}
             onBlock={() => void bulkBlock()}
             onCancel={cancelSelect}
           />
