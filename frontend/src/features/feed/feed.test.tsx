@@ -662,6 +662,57 @@ describe('scan feed', () => {
     expect(document.activeElement).toBe(cards[0])
   })
 
+  // Distinct band ids: `retire()` removes every row sharing the acted-on
+  // card's band, so `threeRecs`' shared band id would drop all three cards
+  // at once instead of leaving the replacement/previous card behind to
+  // assert focus on.
+  const distinctBandRecs = [
+    fakeRec({ album_id: 1, band_id: 21, title: 'First album' }),
+    fakeRec({ album_id: 2, band_id: 22, title: 'Second album' }),
+    fakeRec({ album_id: 3, band_id: 23, title: 'Third album' }),
+  ]
+
+  it('moves focus to the card that replaced a keyboard-removed one, not document.body', async () => {
+    mockFetch(feedRoutes(distinctBandRecs))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'l' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    const remaining = screen.getAllByRole('article')
+    expect(remaining).toHaveLength(2)
+    expect(document.activeElement).toBe(remaining[0])
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('moves focus to the new last card when the removed one was last', async () => {
+    mockFetch(feedRoutes(distinctBandRecs))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+
+    const cards = screen.getAllByRole('article')
+    cards[0].focus()
+    fireEvent.keyDown(cards[0], { key: 'End' })
+    expect(document.activeElement).toBe(cards[2])
+
+    fireEvent.keyDown(cards[2], { key: 'b' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CARD_EXIT_MS)
+    })
+
+    const remaining = screen.getAllByRole('article')
+    expect(remaining).toHaveLength(2)
+    expect(document.activeElement).toBe(remaining[1])
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
   it('narrows the rendered cards to a title/band match, with no new fetch', async () => {
     mockFetch(feedRoutes(threeRecs))
     renderApp('/scans/1')
