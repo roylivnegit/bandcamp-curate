@@ -355,6 +355,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   frontend tests pass, tsc/lint/build clean (chunk split intact). PR #166.
   All three sibling proposals from this Product round (#164, #165, #166) are now done.
 
+- [x] **`POST /api/likes` 500s on a nonexistent album/track id.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved)* `likes.py`'s `like()` inserts a `Like` row with
+  zero lookup of the `Album`/`Track` it references, unlike the sibling `blacklist.py`'s `block()`
+  which already looks up the `Band` and 404s if missing. A stale client cache or a race with a
+  delete produces a raw uncaught error instead of a clean 404 (an FK violation on Postgres; QA
+  flagged that sqlite, used in this sandbox's tests, doesn't enforce FKs by default and would
+  instead silently commit an orphan row — the fix and its regression test are DB-agnostic either
+  way since they check the row exists before any insert happens).
+  Done: mirrors `blacklist.py`'s exact pattern — look up the `Album`/`Track` (whichever id is set)
+  before constructing the `Like`, `raise HTTPException(404)` if not found. Covered by
+  `test_like_nonexistent_album_returns_404` / `test_like_nonexistent_track_returns_404`.
+- [x] **Signup 500s on an over-length username.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved)* `SignupIn.username` had no `max_length`, but `User.username` is a
+  `String(256)` column — an over-256-char username passed Pydantic, then hit the DB and raised a
+  `DataError` the existing `except IntegrityError` handler doesn't catch, producing a raw 500
+  instead of a normal validation error.
+  Done: added `max_length=256` to `SignupIn.username` — rejected with `422` before the DB is ever
+  touched, on any engine. Covered by `test_signup_rejects_overlong_username`.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not
