@@ -2988,3 +2988,32 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   assertion (which had asserted the raw ISO) to assert `exactTimestamp(iso)` and explicitly check the
   raw ISO is no longer shown. 396/396 frontend tests pass, tsc/lint/build clean (chunk split intact).
   PR #175.
+
+- [~] **Bulk-block/like's Undo only covers one of the N items, silently.** *(proposed by the hourly
+  routine, 2026-09-08, Product-round proposal, self-verified against source before building — the
+  backlog is heavily mined enough now that most fresh Product proposals turn out to be duplicates or
+  resurrection traps per `tried-and-failed.md`, but this one checked out as a genuine, previously
+  unflagged bug)* Selecting several cards and clicking "Block selected"/"Like selected"
+  (`BulkActionBar`) fires the existing per-card `like()`/`block()` handlers concurrently via
+  `Promise.all`. Each independently calls `retire()` → `armUndo()`, which unconditionally overwrites
+  the single `undo` banner state — so after a bulk action, only whichever item's exit animation
+  settled last stayed undoable. The other N-1 were gone with no recoverable affordance, and the
+  banner named just one artist as if that were the whole action.
+  Done: `retire()` gained a `silent` flag (threaded through `like`/`block`) that `bulkBlock`/
+  `bulkLike` pass so their individual retires don't arm the misleading single-item banner. `like()`/
+  `block()` now return whether they actually succeeded (existing single-click callers already
+  discard the result via `void`), so the bulk actions know which of the batch to offer as one
+  combined "Undo all" via a new `armBulkUndo`/`bulkUndo` state, reusing each row's already-recorded
+  `retiredIndex` entry for the restore — same mechanism the single-item undo already uses.
+  A timing-based gate (checking `bulkBusyAction`) was tried first and rejected on inspection: it
+  clears as soon as the network calls resolve, which routinely happens *before* each `retire()`'s
+  fixed `CARD_EXIT_MS` exit-animation timer — where the per-item `armUndo` actually fires — has
+  elapsed, so a state-based gate wouldn't reliably suppress it. `bulkBlock`/`bulkLike` instead wait
+  out `CARD_EXIT_MS` alongside the API calls (`Promise.all` against both) before arming the bulk
+  banner, guaranteeing `retiredIndex` is populated for every successful row by the time it's read.
+  Covered by two new tests in `feed.test.tsx`: a bulk block shows one "Undo all" naming the count,
+  not the old single "Undo"; clicking it restores every card and calls `unblock` for each. 398/398
+  frontend tests pass, tsc/lint/build clean (chunk split intact).
+  **Left open (`[~]`), not merged yet:** PR #176 open, CI pending at the time this was recorded —
+  auto-merge (squash) is enabled, so it should land on its own once checks pass; a later task/run
+  should confirm it merged and flip this to `[x]`, or investigate if CI came back red.
