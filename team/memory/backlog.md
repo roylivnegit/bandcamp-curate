@@ -298,6 +298,25 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   filter key finds nothing under it, confirming no stale cross-filter restore. 70/70 frontend
   tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
 
+- [x] **`savedViews.ts`'s `saveView()` has no duplicate-name check.** *(proposed by the hourly
+  routine, 2026-09-08, Architect+QA-approved; third sibling proposal from the same round as PR
+  #164/#165)* Unlike the scan list, which already warns on a duplicate scan name
+  (`isDuplicateScanName`/`NewScanForm`), `SavedViewsDropdown`'s name input let a user save two
+  views both called e.g. "faves" with no warning — indistinguishable afterward when picking one
+  to apply or delete.
+  Done: reused the existing `isDuplicateScanName(name, existingNames)` from `lib/format.ts`
+  as-is (no new matcher needed — it's already generic over "a name" and "a list of existing
+  names", not scan-specific) in `SavedViewsDropdown.tsx`, checked against the currently-open
+  dropdown's own `views` list. Shows the identical non-blocking `.hint` pattern `NewScanForm`
+  uses — warns, never blocks the save, matching the QA note's "warn/reject" landing on "warn"
+  to mirror the scan-list precedent exactly rather than inventing a stricter rejection behavior.
+  Covered by a new test in `feed.test.tsx`'s "saved filter views" block: saving a view, then
+  typing a case/whitespace-different repeat of its name shows the warning, and pressing Enter
+  anyway still saves it as a second, distinct view (2 total) rather than being blocked. 372/372
+  frontend tests pass, tsc/lint/build clean (chunk split intact). PR: see git history.
+  All three sibling proposals from this Product round (CSV formula injection #164, non-Latin
+  export filenames #165, this one) are now done.
+
 - [ ] **Second source: research first.** Beatport, SoundCloud, Discogs, Resident Advisor.
   Which of these exposes, without login and without paying: an artist's related artists, a
   release's buyers or likers, or a genre chart? Writes findings to `memory/research/`. Do not

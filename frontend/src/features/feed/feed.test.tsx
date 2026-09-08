@@ -2532,6 +2532,27 @@ describe('saved filter views', () => {
     expect(currentLocation().pathname).toBe('/scans/1')
   })
 
+  it('warns, but does not block, saving a view under a name that already exists', async () => {
+    mockFetch(feedRoutes())
+    const user = userEvent.setup()
+    renderApp('/scans/1?tag=psybient')
+    await screen.findByText('Eyes of Infinity')
+
+    await user.click(screen.getByRole('button', { name: '☆ Views' }))
+    const input = screen.getByPlaceholderText('Name this view — press Enter to save')
+    await user.type(input, 'House only{Enter}')
+    expect(await screen.findByRole('button', { name: 'House only' })).toBeInTheDocument()
+
+    // Re-typing the same (case/whitespace-insensitive) name shows a
+    // non-blocking hint, mirroring NewScanForm's duplicate-scan-name warning.
+    await user.type(input, '  HOUSE only  ')
+    expect(screen.getByText(/already exists/i)).toBeInTheDocument()
+
+    // The warning doesn't block saving — a second, distinctly-named view is fine too.
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: 'Views (2) ▾' })).toBeInTheDocument()
+  })
+
   it('keeps different scans on separate saved-view lists', async () => {
     mockFetch(feedRoutes())
     const user = userEvent.setup()
