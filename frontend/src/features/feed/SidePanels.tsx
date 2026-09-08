@@ -4,6 +4,7 @@ import type { Blocked, Liked, ScanSeed, ScanStatus } from '../../api/types'
 import { Dropdown } from '../../components/Dropdown'
 import { BLOCK_DURATIONS, RENEW_WINDOW_MS, SIDEPANEL_PAGE_SIZE } from '../../config'
 import { expiresLabel } from '../../lib/format'
+import { matchesPanelQuery } from '../../lib/panelFilter'
 import { seedStatus } from '../../lib/seedStatus'
 
 const SEED_STATUS_ICON = { resolved: '✓', pending: '◴', unresolved: '⚠' } as const
@@ -34,7 +35,9 @@ export function LikedPanel({
   busy: (item: Liked) => boolean
 }) {
   const [visibleCount, setVisibleCount] = useState(SIDEPANEL_PAGE_SIZE)
-  const visible = items.slice(0, visibleCount)
+  const [query, setQuery] = useState('')
+  const filtered = items.filter((r) => matchesPanelQuery([r.title, r.band_name], query))
+  const visible = filtered.slice(0, visibleCount)
   return (
     <div className="panel sidepanel">
       {items.length === 0 ? (
@@ -48,48 +51,62 @@ export function LikedPanel({
             Liked — kept out of every scan. Your next collection crawl picks up the real
             wishlist/purchase/follow.
           </p>
-          <ul className="rows">
-            {visible.map((r) => {
-              const rowBusy = busy(r)
-              return (
-                <li className="row" key={r.id}>
-                  <span className="row-main">
-                    <b>{r.title || r.item_type}</b>
-                    {r.band_name && <span className="hint"> {r.band_name}</span>}
-                  </span>
-                  {r.url && (
-                    // Icon-only link: the glyph is decorative, so the accessible
-                    // name has to come from aria-label or it announces as "↗".
-                    <a
-                      className="listen sm"
-                      href={r.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={`Open ${r.title || r.item_type} on Bandcamp`}
-                    >
-                      <span aria-hidden="true">↗</span>
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    className="act"
-                    disabled={rowBusy}
-                    onClick={() => onUnlike(r)}
-                  >
-                    {rowBusy ? 'Unliking…' : 'unlike'}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-          {visibleCount < items.length && (
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => setVisibleCount((n) => n + SIDEPANEL_PAGE_SIZE)}
-            >
-              Show more
-            </button>
+          <input
+            type="text"
+            className="input"
+            aria-label="Search liked items"
+            placeholder="Search…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {filtered.length === 0 ? (
+            <p className="hint">No matches for &ldquo;{query}&rdquo;.</p>
+          ) : (
+            <>
+              <ul className="rows">
+                {visible.map((r) => {
+                  const rowBusy = busy(r)
+                  return (
+                    <li className="row" key={r.id}>
+                      <span className="row-main">
+                        <b>{r.title || r.item_type}</b>
+                        {r.band_name && <span className="hint"> {r.band_name}</span>}
+                      </span>
+                      {r.url && (
+                        // Icon-only link: the glyph is decorative, so the accessible
+                        // name has to come from aria-label or it announces as "↗".
+                        <a
+                          className="listen sm"
+                          href={r.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Open ${r.title || r.item_type} on Bandcamp`}
+                        >
+                          <span aria-hidden="true">↗</span>
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        className="act"
+                        disabled={rowBusy}
+                        onClick={() => onUnlike(r)}
+                      >
+                        {rowBusy ? 'Unliking…' : 'unlike'}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+              {visibleCount < filtered.length && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => setVisibleCount((n) => n + SIDEPANEL_PAGE_SIZE)}
+                >
+                  Show more
+                </button>
+              )}
+            </>
           )}
         </>
       )}
@@ -117,8 +134,11 @@ export function BlockedPanel({
   busy: (bandId: number) => boolean
 }) {
   const [visibleCount, setVisibleCount] = useState(SIDEPANEL_PAGE_SIZE)
-  const sorted = [...items].sort(byExpirySoonestFirst)
-  const visible = sorted.slice(0, visibleCount)
+  const [query, setQuery] = useState('')
+  const filtered = items
+    .filter((b) => matchesPanelQuery([b.band_name, b.reason], query))
+    .sort(byExpirySoonestFirst)
+  const visible = filtered.slice(0, visibleCount)
   return (
     <div className="panel sidepanel">
       {items.length === 0 ? (
@@ -128,105 +148,119 @@ export function BlockedPanel({
       ) : (
         <>
           <p className="hint">Blocked artists and labels — never appear in any of your scans.</p>
-          <ul className="rows">
-            {visible.map((b) => {
-              const rowBusy = busy(b.band_id)
-              const expiry = expiresLabel(b.expires_at)
-              const bandLabel = b.band_name || `band ${b.band_id}`
-              const expiresSoon =
-                b.expires_at !== null &&
-                new Date(b.expires_at).getTime() - Date.now() <= RENEW_WINDOW_MS &&
-                new Date(b.expires_at).getTime() > Date.now()
-              const commitReason = (value: string) => {
-                const trimmed = value.trim()
-                if (trimmed && trimmed !== b.reason) onSetReason(b.band_id, trimmed)
-              }
-              const saveReason = (e: KeyboardEvent<HTMLInputElement>) => {
-                if (e.key !== 'Enter') return
-                commitReason(e.currentTarget.value)
-              }
-              // Clicking away, tabbing to the next control, or closing the
-              // panel without pressing Enter used to discard a typed reason
-              // silently. `rowBusy` guards against a race: disabling the
-              // input mid-save (see the `disabled={rowBusy}` below) itself
-              // fires a blur — without this guard that would re-submit the
-              // same value a second time while the first save is still in
-              // flight.
-              const blurReason = (e: FocusEvent<HTMLInputElement>) => {
-                if (rowBusy) return
-                commitReason(e.currentTarget.value)
-              }
-              return (
-                <li className="row" key={b.id}>
-                  <span className="row-main">
-                    <b>{bandLabel}</b>
-                    {expiry && <span className="hint"> · {expiry}</span>}
-                    {b.reason && <span className="hint"> · &ldquo;{b.reason}&rdquo;</span>}
-                  </span>
-                  <input
-                    type="text"
-                    className="input reason"
-                    aria-label={`Reason for blocking ${bandLabel}`}
-                    placeholder="Reason… (Enter to save)"
-                    defaultValue={b.reason ?? ''}
-                    disabled={rowBusy}
-                    onKeyDown={saveReason}
-                    onBlur={blurReason}
-                  />
-                  {b.band_url && (
-                    // Icon-only link, same pattern as LikedPanel's — the glyph is
-                    // decorative, so the accessible name comes from aria-label.
-                    <a
-                      className="listen sm"
-                      href={b.band_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={`Open ${bandLabel} on Bandcamp`}
-                    >
-                      <span aria-hidden="true">↗</span>
-                    </a>
-                  )}
-                  {expiresSoon && !rowBusy && (
-                    <Dropdown label="renew ▾" width={140}>
-                      {(close) => (
-                        <div>
-                          {BLOCK_DURATIONS.map((d) => (
-                            <button
-                              key={d.label}
-                              type="button"
-                              className="ddrow"
-                              onClick={() => {
-                                onRenew(b.band_id, new Date(Date.now() + d.ms).toISOString())
-                                close()
-                              }}
-                            >
-                              <span className="nm">{d.label}</span>
-                            </button>
-                          ))}
-                        </div>
+          <input
+            type="text"
+            className="input"
+            aria-label="Search blocked artists"
+            placeholder="Search…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {filtered.length === 0 ? (
+            <p className="hint">No matches for &ldquo;{query}&rdquo;.</p>
+          ) : (
+            <>
+              <ul className="rows">
+                {visible.map((b) => {
+                  const rowBusy = busy(b.band_id)
+                  const expiry = expiresLabel(b.expires_at)
+                  const bandLabel = b.band_name || `band ${b.band_id}`
+                  const expiresSoon =
+                    b.expires_at !== null &&
+                    new Date(b.expires_at).getTime() - Date.now() <= RENEW_WINDOW_MS &&
+                    new Date(b.expires_at).getTime() > Date.now()
+                  const commitReason = (value: string) => {
+                    const trimmed = value.trim()
+                    if (trimmed && trimmed !== b.reason) onSetReason(b.band_id, trimmed)
+                  }
+                  const saveReason = (e: KeyboardEvent<HTMLInputElement>) => {
+                    if (e.key !== 'Enter') return
+                    commitReason(e.currentTarget.value)
+                  }
+                  // Clicking away, tabbing to the next control, or closing the
+                  // panel without pressing Enter used to discard a typed reason
+                  // silently. `rowBusy` guards against a race: disabling the
+                  // input mid-save (see the `disabled={rowBusy}` below) itself
+                  // fires a blur — without this guard that would re-submit the
+                  // same value a second time while the first save is still in
+                  // flight.
+                  const blurReason = (e: FocusEvent<HTMLInputElement>) => {
+                    if (rowBusy) return
+                    commitReason(e.currentTarget.value)
+                  }
+                  return (
+                    <li className="row" key={b.id}>
+                      <span className="row-main">
+                        <b>{bandLabel}</b>
+                        {expiry && <span className="hint"> · {expiry}</span>}
+                        {b.reason && <span className="hint"> · &ldquo;{b.reason}&rdquo;</span>}
+                      </span>
+                      <input
+                        type="text"
+                        className="input reason"
+                        aria-label={`Reason for blocking ${bandLabel}`}
+                        placeholder="Reason… (Enter to save)"
+                        defaultValue={b.reason ?? ''}
+                        disabled={rowBusy}
+                        onKeyDown={saveReason}
+                        onBlur={blurReason}
+                      />
+                      {b.band_url && (
+                        // Icon-only link, same pattern as LikedPanel's — the glyph is
+                        // decorative, so the accessible name comes from aria-label.
+                        <a
+                          className="listen sm"
+                          href={b.band_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Open ${bandLabel} on Bandcamp`}
+                        >
+                          <span aria-hidden="true">↗</span>
+                        </a>
                       )}
-                    </Dropdown>
-                  )}
-                  <button
-                    type="button"
-                    className="act"
-                    disabled={rowBusy}
-                    onClick={() => onUnblock(b.band_id)}
-                  >
-                    {rowBusy ? 'Unblocking…' : 'unblock'}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-          {visibleCount < sorted.length && (
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => setVisibleCount((n) => n + SIDEPANEL_PAGE_SIZE)}
-            >
-              Show more
-            </button>
+                      {expiresSoon && !rowBusy && (
+                        <Dropdown label="renew ▾" width={140}>
+                          {(close) => (
+                            <div>
+                              {BLOCK_DURATIONS.map((d) => (
+                                <button
+                                  key={d.label}
+                                  type="button"
+                                  className="ddrow"
+                                  onClick={() => {
+                                    onRenew(b.band_id, new Date(Date.now() + d.ms).toISOString())
+                                    close()
+                                  }}
+                                >
+                                  <span className="nm">{d.label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </Dropdown>
+                      )}
+                      <button
+                        type="button"
+                        className="act"
+                        disabled={rowBusy}
+                        onClick={() => onUnblock(b.band_id)}
+                      >
+                        {rowBusy ? 'Unblocking…' : 'unblock'}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+              {visibleCount < filtered.length && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => setVisibleCount((n) => n + SIDEPANEL_PAGE_SIZE)}
+                >
+                  Show more
+                </button>
+              )}
+            </>
           )}
         </>
       )}
