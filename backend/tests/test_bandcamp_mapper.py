@@ -1,8 +1,10 @@
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.bandcamp.mapper import (
@@ -157,9 +159,10 @@ async def test_wishlist_skipped_for_other_fans(session: AsyncSession) -> None:
 
 
 async def test_purchasing_a_wishlisted_item_flips_it_to_owned(session: AsyncSession) -> None:
-    # `uq_fan_item` is on (fan_id, item_type, album_id, track_id) only — not
-    # `is_wishlist` — so a later re-crawl observing the same album as owned
-    # must update the existing row rather than being treated as a no-op dup.
+    # `uq_fan_item_album`/`uq_fan_item_track` key on (fan_id, album_id)/(fan_id,
+    # track_id) only — not `is_wishlist` — so a later re-crawl observing the
+    # same album as owned must update the existing row rather than being
+    # treated as a no-op dup.
     fan = ParsedFan(fan_id=555, username="me", name="Me", url="https://bandcamp.com/me")
     band = ParsedBand(bandcamp_id=20, name="Band2", url="https://b2.bandcamp.com")
     item = ParsedItem(
@@ -180,6 +183,59 @@ async def test_purchasing_a_wishlisted_item_flips_it_to_owned(session: AsyncSess
     assert await _count(session, FanItem) == 1  # still one edge, not a duplicate
     owned = (await session.execute(select(FanItem))).scalar_one()
     assert owned.is_wishlist is False
+
+
+async def test_duplicate_fan_item_rejected_at_the_db_level(session: AsyncSession) -> None:
+    # Before the partial-index fix, `uq_fan_item` was a single UniqueConstraint
+    # on (fan_id, item_type, album_id, track_id) -- but an album row always has
+    # track_id NULL and standard SQL treats NULL as distinct from NULL even
+    # inside a unique constraint, so two identical album rows both inserted
+    # without error (verified empirically before this fix). Bypasses
+    # `_add_fan_item` entirely -- this exercises the DB constraint itself, not
+    # the application-level select-then-insert guard `mapper.py` builds on it.
+    fan = Fan(bandcamp_fan_id=1, username="dup", url="https://bandcamp.com/dup")
+    session.add(fan)
+    await session.flush()
+    band = Band(bandcamp_id=1, name="B", url="https://b.bandcamp.com")
+    session.add(band)
+    await session.flush()
+    album = Album(bandcamp_id=1, title="A", band_id=band.id)
+    session.add(album)
+    await session.flush()
+
+    session.add(FanItem(fan_id=fan.id, item_type="album", album_id=album.id, track_id=None))
+    await session.flush()
+
+    session.add(FanItem(fan_id=fan.id, item_type="album", album_id=album.id, track_id=None))
+    with pytest.raises(IntegrityError):
+        await session.flush()
+
+
+async def test_fan_item_album_and_track_indexes_dont_collide_on_a_shared_id(
+    session: AsyncSession,
+) -> None:
+    # uq_fan_item_album/uq_fan_item_track are two separate partial indexes, not
+    # one shared one -- a fan owning both an album and a track that happen to
+    # have the same primary-key value (album.id == track.id) must not trip
+    # either index, since each only ever matches rows of its own item type.
+    fan = Fan(bandcamp_fan_id=1, username="both", url="https://bandcamp.com/both")
+    session.add(fan)
+    await session.flush()
+    band = Band(bandcamp_id=1, name="B", url="https://b.bandcamp.com")
+    session.add(band)
+    await session.flush()
+    album = Album(bandcamp_id=1, title="A", band_id=band.id)
+    session.add(album)
+    track = Track(bandcamp_id=1, title="T", band_id=band.id)
+    session.add(track)
+    await session.flush()
+    assert album.id == track.id  # the coincidence this test is actually about
+
+    session.add(FanItem(fan_id=fan.id, item_type="album", album_id=album.id, track_id=None))
+    session.add(FanItem(fan_id=fan.id, item_type="track", album_id=None, track_id=track.id))
+    await session.flush()
+
+    assert await _count(session, FanItem) == 2
 
 
 async def test_ingest_album_populates_graph(session: AsyncSession) -> None:

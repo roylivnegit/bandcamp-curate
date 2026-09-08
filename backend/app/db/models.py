@@ -17,11 +17,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -153,8 +155,36 @@ class FanItem(Base):
     """Ownership edge: a fan owns an album or a track."""
 
     __tablename__ = "fan_items"
+    # NOT a plain UniqueConstraint on (fan_id, item_type, album_id, track_id) --
+    # an album row always has track_id NULL and a track row always has album_id
+    # NULL, and standard SQL treats NULL as distinct from NULL even inside a
+    # unique constraint, so that constraint never actually rejected a duplicate
+    # (verified: two identical album FanItem rows both insert without error).
+    # `_add_fan_item`/`_add_edge_or_false` (app/bandcamp/mapper.py) rely on this
+    # as their concurrent-worker race backstop -- two crawl workers ingesting
+    # overlapping collection pages for the same fan is the common case, not the
+    # exotic one -- so the race silently produced duplicate rows, inflating the
+    # owned/wishlist counts `GET /api/stats` and `neighbour_size_report` compute.
+    # Two partial unique indexes (one per item type) close the gap for real;
+    # `item_type` itself is redundant once split this way, since album_id is only
+    # ever set on an album row and track_id only ever on a track row.
     __table_args__ = (
-        UniqueConstraint("fan_id", "item_type", "album_id", "track_id", name="uq_fan_item"),
+        Index(
+            "uq_fan_item_album",
+            "fan_id",
+            "album_id",
+            unique=True,
+            sqlite_where=text("track_id IS NULL"),
+            postgresql_where=text("track_id IS NULL"),
+        ),
+        Index(
+            "uq_fan_item_track",
+            "fan_id",
+            "track_id",
+            unique=True,
+            sqlite_where=text("album_id IS NULL"),
+            postgresql_where=text("album_id IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
