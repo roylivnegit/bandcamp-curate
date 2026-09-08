@@ -148,6 +148,7 @@ export function ScanListPage() {
             setCreating(false)
             void load()
           }}
+          existingNames={scans?.map((s) => s.name) ?? []}
         />
       )}
 

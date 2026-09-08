@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { expiresLabel, isValidFanUrl, normalizeSeedUrl } from './format'
+import { expiresLabel, isDuplicateScanName, isValidFanUrl, normalizeSeedUrl } from './format'
 
 describe('isValidFanUrl', () => {
   it('accepts a plain bandcamp.com fan URL', () => {
@@ -68,6 +68,28 @@ describe('normalizeSeedUrl', () => {
 
   it('falls back to the trimmed raw string for something that does not parse as a URL', () => {
     expect(normalizeSeedUrl('  not a url  ')).toBe('not a url')
+  })
+})
+
+describe('isDuplicateScanName', () => {
+  it('matches case-insensitively', () => {
+    expect(isDuplicateScanName('deep HOUSE', ['Deep house'])).toBe(true)
+  })
+
+  it('matches ignoring leading/trailing whitespace on both sides', () => {
+    expect(isDuplicateScanName('  Deep house  ', ['Deep house '])).toBe(true)
+  })
+
+  it('returns false for a name not in the list', () => {
+    expect(isDuplicateScanName('Ambient dig', ['Deep house'])).toBe(false)
+  })
+
+  it('returns false for an empty list', () => {
+    expect(isDuplicateScanName('Deep house', [])).toBe(false)
+  })
+
+  it('returns false for a blank name even if the list contains a blank', () => {
+    expect(isDuplicateScanName('   ', [''])).toBe(false)
   })
 })
 

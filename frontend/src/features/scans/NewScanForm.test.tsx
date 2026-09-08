@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NewScanForm } from './NewScanForm'
 
-function renderForm() {
-  render(<NewScanForm onCreated={() => {}} onCancel={() => {}} />)
+function renderForm(existingNames: string[] = []) {
+  render(<NewScanForm onCreated={() => {}} onCancel={() => {}} existingNames={existingNames} />)
 }
 
 function addViaButton(url: string) {
@@ -221,5 +221,41 @@ describe('NewScanForm submission', () => {
     const [, init] = fetchMock.mock.calls[0]
     const body = JSON.parse(String((init as RequestInit).body))
     expect(body.name).toBe('My Scan')
+  })
+})
+
+describe('NewScanForm duplicate name warning', () => {
+  it('warns when the typed name matches an existing scan, case/whitespace-insensitively', () => {
+    renderForm(['Deep house', 'Psy dig'])
+
+    fireEvent.change(screen.getByLabelText('Scan name'), { target: { value: '  deep HOUSE  ' } })
+
+    expect(screen.getByText(/already exists/i)).toBeInTheDocument()
+  })
+
+  it('does not warn for a name that does not collide, and never blocks submission', () => {
+    renderForm(['Deep house'])
+
+    fireEvent.change(screen.getByLabelText('Scan name'), { target: { value: 'Ambient dig' } })
+
+    expect(screen.queryByText(/already exists/i)).not.toBeInTheDocument()
+  })
+
+  it('clears the warning once the name is edited away from the collision', () => {
+    renderForm(['Deep house'])
+    const input = screen.getByLabelText('Scan name')
+
+    fireEvent.change(input, { target: { value: 'Deep house' } })
+    expect(screen.getByText(/already exists/i)).toBeInTheDocument()
+
+    fireEvent.change(input, { target: { value: 'Deep house 2' } })
+    expect(screen.queryByText(/already exists/i)).not.toBeInTheDocument()
+  })
+
+  it('does not warn on an empty name, and the submit button stays gated on other fields', () => {
+    renderForm(['Deep house'])
+
+    expect(screen.queryByText(/already exists/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create & queue' })).toBeDisabled()
   })
 })
