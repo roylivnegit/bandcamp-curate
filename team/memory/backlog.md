@@ -2721,3 +2721,17 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   offline (only an actual transition counts). 352/352 frontend tests pass (348 + 1 from the budget
   item above + 3 here), tsc/lint/build clean (chunk split intact — both changes land in the eagerly
   loaded shell/`ScanFeedPage` chunks, not a lazy route).
+
+- [x] **Command palette has no Home/End keyboard nav.** *(self-verified against source, 2026-09-08)*
+  `Dropdown.tsx`'s menu panels and `ScanFeedPage`'s roving-tabindex card list both support Home/End
+  to jump to the first/last row, and `ShortcutsHelp` documents this as a standing convention ("Home
+  / End: Jump to the first / last card, or menu row") — but `CommandPalette.tsx`'s own
+  `onInputKeyDown` only handled ArrowUp/ArrowDown, missing the same convention on its own filtered
+  action list.
+  Done: added `Home`/`End` cases to `onInputKeyDown`, clamping to `0`/`filtered.length - 1` — the
+  same clamp-not-wrap bound `ArrowUp`/`ArrowDown` already use here (a filtered result list has a
+  definite start/end, not `Dropdown`'s cycling-menu wrap-around). Covered by a new test in
+  `CommandPalette.test.tsx`: `End` jumps straight to the last action, and a subsequent `Home` jumps
+  back to the first, each verified by which action `Enter` actually runs. 353/353 frontend tests
+  pass (352 + 1), tsc/lint/build clean (chunk split intact — `CommandPalette` is part of the eagerly
+  loaded app shell, mounted once in `App.tsx`).

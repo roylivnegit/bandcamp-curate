@@ -115,6 +115,23 @@ describe('CommandPalette', () => {
     expect(runBanana).toHaveBeenCalledTimes(1)
   })
 
+  it('End jumps to the last row and Home jumps back to the first', () => {
+    const { list, runAlpha, runBanana } = actions()
+    renderWithControls(list)
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+
+    const input = screen.getByRole('textbox', { name: 'Jump to…' })
+    fireEvent.keyDown(input, { key: 'End' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(runBanana).toHaveBeenCalledTimes(1)
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true }) // reopen, highlight resets to Alpha
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Jump to…' }), { key: 'End' })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Jump to…' }), { key: 'Home' })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Jump to…' }), { key: 'Enter' })
+    expect(runAlpha).toHaveBeenCalledTimes(1)
+  })
+
   it('scrolls the highlighted row into view as ArrowDown moves it', () => {
     // jsdom doesn't implement scrollIntoView at all.
     const scrollIntoView = vi.fn()
