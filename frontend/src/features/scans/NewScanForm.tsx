@@ -2,7 +2,7 @@ import { useEffect, useState, type ClipboardEvent as ReactClipboardEvent } from 
 
 import { api } from '../../api/client'
 import { RemoveButton } from '../../components/RemoveButton'
-import { normalizeSeedUrl, seedKind } from '../../lib/format'
+import { isDuplicateScanName, normalizeSeedUrl, seedKind } from '../../lib/format'
 
 // Mirrors the backend's own acceptance shape (`app.crawl.scan_service._SEED_RE`):
 // any host, path starting /album/<slug> or /track/<slug>. Deliberately no
@@ -13,9 +13,14 @@ const SEED_URL_RE = /^https?:\/\/[^/]+\/(album|track)\/[^/?#]+/i
 export function NewScanForm({
   onCreated,
   onCancel,
+  existingNames = [],
 }: {
   onCreated: () => void
   onCancel: () => void
+  /** Names of the caller's other scans — drives a non-blocking "already
+   *  exists" warning below the name field. Scan names aren't unique
+   *  server-side, so this never blocks submission. */
+  existingNames?: string[]
 }) {
   const [name, setName] = useState('')
   const [seedUrl, setSeedUrl] = useState('')
@@ -24,6 +29,7 @@ export function NewScanForm({
   const [busy, setBusy] = useState(false)
 
   const hasDraft = seeds.length > 0
+  const duplicateName = isDuplicateScanName(name, existingNames)
 
   // Warns before an accidental reload/close drops an unsaved seed list — a
   // successful `create()` unmounts this component (`onCreated()` flips
@@ -127,6 +133,9 @@ export function NewScanForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        {duplicateName && (
+          <p className="hint">A scan named &ldquo;{name.trim()}&rdquo; already exists.</p>
+        )}
       </div>
 
       <div className="field">
