@@ -2735,3 +2735,35 @@ deliberate, unresolved call for Roy, not something to resolve unilaterally.
   back to the first, each verified by which action `Enter` actually runs. 353/353 frontend tests
   pass (352 + 1), tsc/lint/build clean (chunk split intact — `CommandPalette` is part of the eagerly
   loaded app shell, mounted once in `App.tsx`).
+
+- [ ] **Rank command-palette results instead of leaving them in list order.** *(proposed by the
+  hourly routine, 2026-09-08, Architect+QA-approved)* `CommandPalette.tsx` filters actions with a
+  plain `.label.toLowerCase().includes(q)` and renders them in whatever order `api.listScans()`
+  returned, so on an account with a dozen+ scans a good partial match doesn't float to the top.
+  Idea: a pure `rankCommands(actions, query)` helper (new `lib/commandRank.ts`) scoring prefix match
+  > word-boundary match (after a space) > plain substring, stable-sorted by original order within a
+  tier; swap it in for the current `.filter()`. Verify: a unit test asserting `'sca'` against
+  `['Vaporwave Deep Cuts', 'My Ambient Scan', 'Scavenger Hunt']` ranks `'Scavenger Hunt'` (prefix)
+  before `'My Ambient Scan'` (word-boundary); `CommandPalette.test.tsx` extended to assert rendered
+  order via `getAllByRole('option')`.
+
+- [ ] **Warn on a duplicate scan name.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved — no backend change needed, `ScanListPage` already fetches all scan names
+  up front via `listScans()`)* Nothing stops two scans getting the same name, so a user who forgets
+  they already made a "Deep house" scan ends up with two indistinguishable rows. Idea: thread the
+  already-fetched scan names into `NewScanForm`, add a pure `isDuplicateScanName(name,
+  existingNames)` helper (case-insensitive, trimmed) driving a non-blocking inline warning under the
+  name field — warns, doesn't block submission. Verify: unit tests on the helper (case/whitespace
+  insensitivity, empty list); a `NewScanForm.test.tsx` case where typing an existing name shows the
+  warning (`getByText`), changing it away removes it (`queryByText` → null), and the submit button
+  stays enabled throughout.
+
+- [ ] **Quick-filter search box on the scan list.** *(proposed by the hourly routine, 2026-09-08,
+  Architect+QA-approved — "trivially derivative of the existing feed quick-filter pattern")*
+  `ScanListPage` only offers sort, not filtering — once someone has many custom scans, finding one
+  by name means scrolling and reading, even though the same substring-match pattern already exists
+  for the feed (`lib/quickFilter.ts`) and the liked/blocked side panels. Idea: a search input on
+  `ScanListPage` (shown once `scans.length` passes the same threshold the sort dropdown uses) that
+  filters `sortedScans` by case-insensitive substring match on `scan.name`. Verify: a small pure
+  matcher with a direct unit test, plus a `ScanListPage`-level test rendering several scans, typing
+  a substring, and asserting via `queryAllByRole('link')` that only the matching scan(s) remain.
