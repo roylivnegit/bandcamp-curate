@@ -7,6 +7,7 @@ import { useAuth } from '../../auth/context'
 import { RelativeTime } from '../../components/RelativeTime'
 import { Dropdown } from '../../components/Dropdown'
 import { count, plural } from '../../lib/format'
+import { matchesPanelQuery } from '../../lib/panelFilter'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { NewScanForm } from './NewScanForm'
 import './scans.css'
@@ -41,6 +42,7 @@ export function ScanListPage() {
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [sortKey, setSortKey] = useState<ScanSortKey>('recent')
+  const [query, setQuery] = useState('')
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   // Derived, not stored: `scans` is replaced wholesale on every poll tick, so
@@ -49,6 +51,10 @@ export function ScanListPage() {
   const sortedScans = useMemo(
     () => (scans ? [...scans].sort((a, b) => compareScans(a, b, sortKey)) : null),
     [scans, sortKey],
+  )
+  const visibleScans = useMemo(
+    () => sortedScans?.filter((s) => matchesPanelQuery([s.name], query)) ?? null,
+    [sortedScans, query],
   )
 
   // A keyboard/screen-reader user landing here from another route should land
@@ -151,6 +157,17 @@ export function ScanListPage() {
         />
       )}
 
+      {scans && scans.length > 1 && (
+        <input
+          type="text"
+          className="input"
+          aria-label="Search scans"
+          placeholder="Search scans…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      )}
+
       {error && (
         <p className="err" role="alert">
           {error}{' '}
@@ -168,9 +185,13 @@ export function ScanListPage() {
         </div>
       )}
 
+      {sortedScans && sortedScans.length > 0 && visibleScans?.length === 0 && (
+        <p className="empty">No scans match &ldquo;{query}&rdquo;.</p>
+      )}
+
       {sortedScans && (
         <div className="cards">
-          {sortedScans.map((s) => (
+          {visibleScans?.map((s) => (
             <ScanCard key={s.id} scan={s} />
           ))}
           {!creating && (
