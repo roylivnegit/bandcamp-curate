@@ -143,6 +143,13 @@ export function ScanFeedPage() {
   /* Timer id in a ref, not state: only `armUndo`/`clearUndo` touch it and
    * neither needs to re-render when it changes. */
   const undoTimer = useRef<number | null>(null)
+  /** The just-completed bulk like/block, restorable as one "Undo all" — the
+   *  single-item `undo` above only ever holds the last of N concurrent
+   *  retires, silently losing the rest (see `armBulkUndo`). */
+  const [bulkUndo, setBulkUndo] = useState<{ kind: 'like' | 'block'; recs: Recommendation[] } | null>(
+    null,
+  )
+  const bulkUndoTimer = useRef<number | null>(null)
 
   /* Bumped by every first-page load. A response whose ticket no longer matches is
    * stale — the filters moved on while it was in flight — so it must not land.
@@ -467,8 +474,18 @@ export function ScanFeedPage() {
     }
   }, [])
 
+  const clearBulkUndoTimer = useCallback(() => {
+    if (bulkUndoTimer.current !== null) {
+      window.clearTimeout(bulkUndoTimer.current)
+      bulkUndoTimer.current = null
+    }
+  }, [])
+
   /** Offers "Undo" on the just-retired card for `UNDO_WINDOW_MS`. Only one at
-   *  a time — a second like/block replaces whatever undo was already up. */
+   *  a time — a second like/block replaces whatever undo was already up.
+   *  `retire()`'s `silent` flag (set by `bulkBlock`/`bulkLike`) is what keeps
+   *  this from ever firing for a bulk action — see its comment for why a
+   *  timing-based gate here wouldn't actually work. */
   const armUndo = useCallback(
     (rec: Recommendation, kind: 'like' | 'block', index: number) => {
       clearUndoTimer()
@@ -481,14 +498,40 @@ export function ScanFeedPage() {
     [clearUndoTimer],
   )
 
+  /** Offers "Undo all" after a bulk like/block, for the `recs` that actually
+   *  succeeded (a bulk action's individual failures already get their own
+   *  Retry toast via `like`/`block`, and are excluded here rather than risking
+   *  an undo/unblock call against something that was never actually blocked).
+   *  Each rec's removal index comes from `retiredIndex.current`, populated
+   *  per-key by `retire()` independently of the single-item `undo` state that
+   *  `armUndo` would otherwise have clobbered. */
+  const armBulkUndo = useCallback(
+    (kind: 'like' | 'block', recs: Recommendation[]) => {
+      clearUndoTimer()
+      setUndo(null)
+      clearBulkUndoTimer()
+      setBulkUndo({ kind, recs })
+      bulkUndoTimer.current = window.setTimeout(() => {
+        bulkUndoTimer.current = null
+        setBulkUndo(null)
+      }, UNDO_WINDOW_MS)
+    },
+    [clearUndoTimer, clearBulkUndoTimer],
+  )
+
   // A stale undo banner pointing at a different scan's card would be
   // confusing (and its `index` meaningless) once the reader lands on another
   // scan via the same route element, so drop it on every scanId change —
-  // which also covers unmount, via the returned cleanup.
+  // which also covers unmount, via the returned cleanup. Same reasoning for
+  // the bulk banner.
   useEffect(() => {
     setUndo(null)
-    return clearUndoTimer
-  }, [scanId, clearUndoTimer])
+    setBulkUndo(null)
+    return () => {
+      clearUndoTimer()
+      clearBulkUndoTimer()
+    }
+  }, [scanId, clearUndoTimer, clearBulkUndoTimer])
 
   // A quick-filter query left over from a different scan's feed would be
   // confusing (and likely match nothing) once the reader lands on another
@@ -508,9 +551,21 @@ export function ScanFeedPage() {
   /** Animate the card out, then drop it and any sibling by the same band —
    *  curation excludes the whole band, so the live feed should match. Called
    *  optimistically, before the like/block request resolves — `cancelRetire`
-   *  below is what undoes this if that request then fails. */
+   *  below is what undoes this if that request then fails.
+   *
+   *  `silent` skips the single-item `armUndo` call at the end — used by
+   *  `bulkBlock`/`bulkLike`, which fire many of these concurrently and need
+   *  to offer one combined "Undo all" instead of N individually-armed offers
+   *  racing to overwrite each other's `undo` state. Gating on some "is a bulk
+   *  action in flight" state instead wouldn't actually work: that state (e.g.
+   *  `bulkBusyAction`) clears as soon as the underlying API calls resolve,
+   *  which routinely happens *before* this timeout (a fixed `CARD_EXIT_MS`
+   *  after `retire` was called, independent of how fast the network round
+   *  trip was) — so by the time this callback runs, the gate could already be
+   *  open again. `silent` is decided once, at the call site, so there's
+   *  nothing to race. */
   const retire = useCallback(
-    (rec: Recommendation, kind: 'like' | 'block') => {
+    (rec: Recommendation, kind: 'like' | 'block', silent = false) => {
       const key = keyOf(rec)
       setExiting((prev) => ({ ...prev, [key]: kind }))
       const timerId = window.setTimeout(() => {
@@ -539,7 +594,7 @@ export function ScanFeedPage() {
           return next
         })
         setTotal((t) => (t === null ? t : Math.max(0, t - 1)))
-        armUndo(rec, kind, removedAt)
+        if (!silent) armUndo(rec, kind, removedAt)
       }, CARD_EXIT_MS)
       retireTimers.current[key] = timerId
     },
@@ -590,25 +645,33 @@ export function ScanFeedPage() {
     [clearUndoTimer],
   )
 
+  /** Returns whether the like actually went through — `false` on a caught
+   *  failure (already reported via its own Retry toast below). Existing
+   *  single-click callers all discard the result (`void like(rec)`); `
+   *  bulkLike` is the one caller that reads it, to know which of a batch to
+   *  offer as "Undo all". `silent` (see `retire`'s comment) is `bulkLike`'s
+   *  other addition — everyone else leaves it `false`. */
   const like = useCallback(
-    async (rec: Recommendation) => {
+    async (rec: Recommendation, silent = false): Promise<boolean> => {
       const key = keyOf(rec)
-      if (inFlight.current.has(key)) return
+      if (inFlight.current.has(key)) return false
       inFlight.current.add(key)
       markBusy(key, 'like')
       // Optimistic: animate the card out right away rather than waiting on
       // the round trip, and only revert if the request actually fails.
-      retire(rec, 'like')
+      retire(rec, 'like', silent)
       try {
         const ref = rec.album_id !== null ? { album_id: rec.album_id } : { track_id: rec.track_id! }
         await api.like(ref)
         await Promise.all([loadLiked(), loadFacets()])
+        return true
       } catch (err) {
         cancelRetire(rec)
         showToast(err instanceof Error ? err.message : 'Could not save that like.', 'alert', TOAST_DURATION_MS, {
           label: 'Retry',
           onClick: () => void like(rec),
         })
+        return false
       } finally {
         inFlight.current.delete(key)
         markBusy(key, null)
@@ -617,16 +680,19 @@ export function ScanFeedPage() {
     [markBusy, retire, cancelRetire, loadLiked, loadFacets],
   )
 
+  /** Same success/failure return convention, and the same `silent` addition
+   *  for `bulkBlock`'s benefit, as `like` above. */
   const block = useCallback(
-    async (rec: Recommendation, expiresAt?: string | null) => {
+    async (rec: Recommendation, expiresAt?: string | null, silent = false): Promise<boolean> => {
       const key = keyOf(rec)
-      if (rec.band_id === null || inFlight.current.has(key)) return
+      if (rec.band_id === null || inFlight.current.has(key)) return false
       inFlight.current.add(key)
       markBusy(key, 'block')
-      retire(rec, 'block')
+      retire(rec, 'block', silent)
       try {
         await api.block(rec.band_id, expiresAt)
         await Promise.all([loadBlocked(), loadFacets()])
+        return true
       } catch (err) {
         cancelRetire(rec)
         showToast(
@@ -635,6 +701,7 @@ export function ScanFeedPage() {
           TOAST_DURATION_MS,
           { label: 'Retry', onClick: () => void block(rec, expiresAt) },
         )
+        return false
       } finally {
         inFlight.current.delete(key)
         markBusy(key, null)
@@ -677,21 +744,36 @@ export function ScanFeedPage() {
 
   /** Calls the existing per-card `block` handler once per selected row —
    *  same optimistic retire/undo/error handling as a single click, just
-   *  fired in a batch. Clears the selection once every call has settled,
-   *  regardless of outcome; `block` itself already reports any individual
-   *  failure via `setError`. */
+   *  fired in a batch, each `silent` so its own `retire()` doesn't arm a
+   *  misleading single-item "Undo" (see `retire`'s comment). Clears the
+   *  selection once every call has settled, regardless of outcome; `block`
+   *  itself already reports any individual failure via its own Retry toast.
+   *  Whichever of the batch actually succeeded gets one combined "Undo all"
+   *  via `armBulkUndo` — a failed one is excluded so undo never tries to
+   *  unblock a band that was never actually blocked.
+   *
+   *  Waits out `CARD_EXIT_MS` alongside the API calls (whichever is slower)
+   *  before arming that banner — the batch's `retire()` timers all started
+   *  in this same tick and fire independently of how fast the network calls
+   *  above resolve, so this guarantees `retiredIndex.current` is already
+   *  populated for every successful row by the time `armBulkUndo` runs. */
   const bulkBlock = useCallback(async () => {
     const targets = rows.filter((r) => selected.has(keyOf(r)))
     if (targets.length === 0) return
     setBulkBusyAction('block')
     try {
-      await Promise.all(targets.map((r) => block(r)))
+      const [results] = await Promise.all([
+        Promise.all(targets.map((r) => block(r, undefined, true))),
+        new Promise<void>((resolve) => window.setTimeout(resolve, CARD_EXIT_MS)),
+      ])
+      const succeeded = targets.filter((_, i) => results[i])
+      if (succeeded.length > 0) armBulkUndo('block', succeeded)
     } finally {
       setBulkBusyAction(null)
       setSelected(new Set())
       setSelectMode(false)
     }
-  }, [rows, selected, block])
+  }, [rows, selected, block, armBulkUndo])
 
   /** Same shape as `bulkBlock`, calling the existing per-card `like` handler
    *  once per selected row. No confirm step at any count, unlike block —
@@ -701,13 +783,18 @@ export function ScanFeedPage() {
     if (targets.length === 0) return
     setBulkBusyAction('like')
     try {
-      await Promise.all(targets.map((r) => like(r)))
+      const [results] = await Promise.all([
+        Promise.all(targets.map((r) => like(r, true))),
+        new Promise<void>((resolve) => window.setTimeout(resolve, CARD_EXIT_MS)),
+      ])
+      const succeeded = targets.filter((_, i) => results[i])
+      if (succeeded.length > 0) armBulkUndo('like', succeeded)
     } finally {
       setBulkBusyAction(null)
       setSelected(new Set())
       setSelectMode(false)
     }
-  }, [rows, selected, like])
+  }, [rows, selected, like, armBulkUndo])
 
   // Purely a view filter over what's already loaded — no re-fetch, and the
   // query never reaches the API. An empty query is the identity filter, so
@@ -816,6 +903,26 @@ export function ScanFeedPage() {
         onClick: () => void undoRetire(entry),
       })
     }
+  }
+
+  /** Reverses a bulk like/block: the same per-item work `undoRetire` does for
+   *  a single card, looped over every rec the batch actually retired. Each
+   *  rec's removal index comes straight from `retiredIndex.current` (set
+   *  per-key by `retire()`), not from `undo` state — `armUndo` no-ops during
+   *  a bulk action, so `undo` never held these in the first place. */
+  async function undoBulk() {
+    if (!bulkUndo) return
+    const { kind, recs } = bulkUndo
+    clearBulkUndoTimer()
+    setBulkUndo(null)
+    await Promise.all(
+      recs.map((rec) => {
+        const key = keyOf(rec)
+        const index = retiredIndex.current[key] ?? -1
+        delete retiredIndex.current[key]
+        return undoRetire({ rec, kind, index })
+      }),
+    )
   }
 
   async function unlike(item: Liked) {
@@ -1065,6 +1172,20 @@ export function ScanFeedPage() {
                 </span>
                 <button type="button" className="btn ghost" onClick={() => void undoRetire()}>
                   Undo
+                </button>
+              </p>
+            )}
+
+            {bulkUndo && (
+              <p className="banner undo" role="status">
+                <span aria-hidden="true">{bulkUndo.kind === 'like' ? '♥' : '⊘'}</span>
+                <span>
+                  {bulkUndo.kind === 'like'
+                    ? `Added ${bulkUndo.recs.length} to your likes.`
+                    : `Blocked ${bulkUndo.recs.length} artists.`}
+                </span>
+                <button type="button" className="btn ghost" onClick={() => void undoBulk()}>
+                  Undo all
                 </button>
               </p>
             )}

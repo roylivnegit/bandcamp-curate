@@ -866,6 +866,49 @@ describe('scan feed', () => {
     })
   })
 
+  it('bulk-blocking two cards offers one "Undo all" for both, not a misleading single "Undo"', async () => {
+    mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    await user.click(screen.getByRole('button', { name: 'Block selected' }))
+
+    expect(await screen.findByRole('button', { name: 'Undo all' }, { timeout: 2000 })).toBeInTheDocument()
+    expect(await screen.findByText('Blocked 2 artists.')).toBeInTheDocument()
+    // Not the single-item banner each individual retire() would otherwise
+    // have armed — that's exactly the bug this combined banner replaces.
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+  })
+
+  it('"Undo all" restores every card from a bulk block and unblocks each of them', async () => {
+    const fetchMock = mockFetch(feedRoutes(bulkRecs))
+    renderApp('/scans/1')
+    await screen.findByText('First album')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '☑ Select' }))
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+    await user.click(screen.getByRole('button', { name: 'Block selected' }))
+
+    await user.click(await screen.findByRole('button', { name: 'Undo all' }, { timeout: 2000 }))
+
+    expect(await screen.findByText('First album')).toBeInTheDocument()
+    expect(await screen.findByText('Second album')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Undo all' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      const unblockCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('/unblock'))
+      expect(unblockCalls).toHaveLength(2)
+    })
+  })
+
   it('"Cancel" in the bulk bar clears the selection without blocking anything', async () => {
     const fetchMock = mockFetch(feedRoutes(bulkRecs))
     renderApp('/scans/1')
