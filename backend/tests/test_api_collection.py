@@ -199,10 +199,18 @@ async def test_uncrawled_user_gets_empty_fan_lists_but_keeps_likes(ctx) -> None:
     assert {i["title"] for i in body["liked"]} == {"Drukqs", "Windowlicker"}
 
 
-async def test_limit_caps_each_list(ctx) -> None:
+async def test_limit_caps_each_list_and_reports_the_cut(ctx) -> None:
     c, _, _ = ctx
     body = (await c.get("/api/collection?limit=1")).json()
     assert len(body["owned"]) == 1 and len(body["liked"]) == 1
+    # Silently returning a short list would make the tab counts read as totals
+    # and a search miss items that exist.
+    assert body["truncated"] is True
+
+
+async def test_a_collection_under_the_cap_is_not_flagged_truncated(ctx) -> None:
+    c, _, _ = ctx
+    assert (await c.get("/api/collection")).json()["truncated"] is False
 
 
 async def test_limit_above_the_ceiling_is_rejected(ctx) -> None:

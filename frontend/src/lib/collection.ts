@@ -12,11 +12,8 @@ export const SECTION_LABELS: Record<CollectionSection, string> = {
 
 /** One item, however many of the three lists it appeared in.
  *
- *  `haystack` is precomputed rather than derived per keystroke: the search runs
- *  over every entry four times on each keypress (the visible list plus a match
- *  count for each of the three tab badges), so normalizing titles inside the
- *  filter would redo the same `normalize()` work thousands of times per
- *  character typed. */
+ *  `haystack` is normalized once here rather than inside the filter, which runs
+ *  over every entry on each keystroke. */
 export interface CollectionEntry extends CollectionItem {
   key: string
   sections: CollectionSection[]
@@ -29,13 +26,10 @@ export function entryKey(item: Pick<CollectionItem, 'item_type' | 'album_id' | '
   return item.item_type === 'track' ? `track:${item.track_id}` : `album:${item.album_id}`
 }
 
-/* Combining marks, stripped after NFD splits "ó" into "o" + an accent. A
- * Bandcamp collection is full of Sigur Rós, Björk and Múm, and nobody types the
- * accents into a search box.
- *
- * Module scope per the hoisting rule in frontend/CLAUDE.md. The `g` flag is safe
- * here — that rule's warning is about `lastIndex` on a shared regex, which only
- * `.exec`/`.test` advance; `String.replace` resets it. */
+/* Combining marks, stripped after NFD splits "ó" into "o" + an accent: nobody
+ * types the accents in Sigur Rós or Björk into a search box. Module scope per
+ * the hoisting rule; `g` is safe because only `.exec`/`.test` advance
+ * `lastIndex`, not `String.replace`. */
 const COMBINING_MARKS = /[\u0300-\u036f]/g
 
 /** Lowercase and accent-free, so "bjork" finds "Björk". */

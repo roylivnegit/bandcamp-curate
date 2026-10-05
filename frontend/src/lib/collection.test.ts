@@ -17,7 +17,7 @@ function item(over: Partial<CollectionItem> = {}): CollectionItem {
   }
 }
 
-const empty = { owned: [], wishlist: [], liked: [] }
+const empty = { owned: [], wishlist: [], liked: [], truncated: false }
 
 describe('entryKey', () => {
   it('keys albums and tracks in separate namespaces', () => {
@@ -60,7 +60,7 @@ describe('matchesTerms', () => {
 describe('mergeCollection', () => {
   it('collapses an item present in several lists and records every section', () => {
     const drukqs = item({ album_id: 10, title: 'Drukqs' })
-    const merged = mergeCollection({ owned: [drukqs], wishlist: [], liked: [drukqs] })
+    const merged = mergeCollection({ ...empty, owned: [drukqs], liked: [drukqs] })
 
     expect(merged).toHaveLength(1)
     // Fixed order, so the label always reads "owned · liked".

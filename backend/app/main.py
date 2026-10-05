@@ -33,17 +33,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Added FIRST so it ends up INNERMOST: `add_middleware` inserts at index 0, so
-# the last one added wraps the rest. CORS has to stay outermost — a preflight
-# should short-circuit before anything else runs, and an error raised deeper
-# still needs its CORS headers to be readable by the browser.
-#
-# `/api/collection` returns a whole collection in one response (hundreds of KB
-# of highly repetitive JSON: the same keys and the same `…bandcamp.com/` prefix
-# on every row), the API runs behind no proxy of its own (`uvicorn` directly,
-# see backend/Dockerfile), and it gets read from a phone. Compression takes that
-# roughly 10:1. Nothing here streams, so there is no response this can buffer
-# harmfully.
+# There is no proxy in front of uvicorn to do this (see backend/Dockerfile), and
+# `/api/collection` returns a whole collection as very repetitive JSON — 49 KB
+# measured down to 2.6 KB. Added before the CORS block so CORS stays outermost:
+# `add_middleware` inserts at index 0, so the last one added wraps the rest.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # The deployed React app's origin (defaults to the Vite dev server locally).

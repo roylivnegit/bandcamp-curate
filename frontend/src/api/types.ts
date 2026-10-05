@@ -163,6 +163,10 @@ export interface CollectionResponse {
   owned: CollectionItem[]
   wishlist: CollectionItem[]
   liked: CollectionItem[]
+  /** A list hit the server's cap, so the counts below it are not totals and a
+   *  search can miss something the user really owns. Say so rather than look
+   *  confidently wrong. */
+  truncated: boolean
 }
 
 /** Item identity for like/unlike — exactly one of the two ids, as the API requires. */

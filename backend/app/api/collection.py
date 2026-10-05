@@ -1,21 +1,10 @@
-"""Collection API: what the signed-in user ALREADY has.
+"""The signed-in user's own items: owned, wishlisted and liked.
 
-The rest of the app answers "what should I buy next?" — `/api/recommendations`
-deliberately excludes everything you own. This endpoint is the inverse, and it
-reads rows that until now nothing read back: a collection scan writes a
-`fan_items` row per owned/wishlisted item, and `/api/stats` only ever reported
-them as two bare counts.
+All three lists come back in one response because the client searches across
+them at once and shows a per-section match count.
 
-One request returns all three lists because the client searches them *together*:
-one search box above the sub-tabs, with per-section match counts. Paginating
-would mean a round trip per keystroke for a list that belongs to a single user
-and fits comfortably in memory. The backend has no text search anyway (no
-pg_trgm, no tsvector, and it must keep running on SQLite for the tests), so
-filtering client-side is both simpler and faster here.
-
-Two scoping keys, both correct and easy to confuse:
-  * owned/wishlist are per **Bandcamp fan** (`users.fan_id`),
-  * likes are per **app user** (`users.id`).
+Two scoping keys, easy to confuse: owned/wishlist are per Bandcamp fan
+(`users.fan_id`); likes are per app user (`users.id`).
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -62,9 +51,14 @@ class CollectionOut(BaseModel):
     owned: list[CollectionItemOut]
     wishlist: list[CollectionItemOut]
     liked: list[CollectionItemOut]
+    # True when a list hit the cap and rows were left behind. Without it the cap
+    # would be silently wrong rather than merely limiting: the tab counts would
+    # read as totals, and a search would report "nothing matches" for a record
+    # the user definitely owns.
+    truncated: bool = False
 
 
-def _items_query(model: type[FanItem] | type[Like], *where: ColumnElement[bool]) -> Select:
+def _items_query(model: type[FanItem] | type[Like], limit: int, *where: ColumnElement[bool]) -> Select:
     """Flatten album-or-track edges into one display row each.
 
     `FanItem` and `Like` are the same shape for this purpose — both carry
@@ -104,14 +98,20 @@ def _items_query(model: type[FanItem] | type[Like], *where: ColumnElement[bool])
             func.lower(func.coalesce(title, "")),
             model.id,
         )
-        .limit(MAX_ITEMS)
+        .limit(limit)
     )
 
 
 async def _items(
-    session: AsyncSession, model: type[FanItem] | type[Like], *where: ColumnElement[bool]
-) -> list[CollectionItemOut]:
-    rows = (await session.execute(_items_query(model, *where))).all()
+    session: AsyncSession, model: type[FanItem] | type[Like], limit: int,
+    *where: ColumnElement[bool],
+) -> tuple[list[CollectionItemOut], bool]:
+    """The section's rows, and whether the cap cut any off.
+
+    Asks for one row past the limit purely to answer that second question.
+    """
+    rows = (await session.execute(_items_query(model, limit + 1, *where))).all()
+    truncated = len(rows) > limit
     return [
         CollectionItemOut(
             item_type=r.item_type,
@@ -123,8 +123,8 @@ async def _items(
             art_id=r.art_id,
             art_url=art_url(r.art_id),
         )
-        for r in rows
-    ]
+        for r in rows[:limit]
+    ], truncated
 
 
 @router.get("", response_model=CollectionOut)
@@ -136,11 +136,19 @@ async def collection(
     me = current_user.fan_id
     owned: list[CollectionItemOut] = []
     wishlist: list[CollectionItemOut] = []
+    cut = False
     if me is not None:
-        owned = await _items(session, FanItem, FanItem.fan_id == me, FanItem.is_wishlist.is_(False))
-        wishlist = await _items(session, FanItem, FanItem.fan_id == me, FanItem.is_wishlist.is_(True))
+        owned, owned_cut = await _items(
+            session, FanItem, limit, FanItem.fan_id == me, FanItem.is_wishlist.is_(False)
+        )
+        wishlist, wish_cut = await _items(
+            session, FanItem, limit, FanItem.fan_id == me, FanItem.is_wishlist.is_(True)
+        )
+        cut = owned_cut or wish_cut
     # Likes are NOT gated on fan_id: they hang off the app user, so someone who
     # signed up minutes ago, whose collection scan is still running, has no
     # owned/wishlist rows yet but can already have liked things in the feed.
-    liked = await _items(session, Like, Like.user_id == current_user.id)
-    return CollectionOut(owned=owned[:limit], wishlist=wishlist[:limit], liked=liked[:limit])
+    liked, liked_cut = await _items(session, Like, limit, Like.user_id == current_user.id)
+    return CollectionOut(
+        owned=owned, wishlist=wishlist, liked=liked, truncated=cut or liked_cut
+    )

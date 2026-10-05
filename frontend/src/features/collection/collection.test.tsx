@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { resetToastsForTests } from '../../lib/toast'
 import {
   currentLocation,
   fakeCollection,
@@ -46,6 +47,10 @@ function rowFor(title: string): HTMLElement {
 beforeEach(() => {
   localStorage.clear()
   signedIn()
+  // The toast queue is module-scope by design, so an "Unliked …" toast raised
+  // by one test is still mounted in the next one — and it carries
+  // role="status", same as this page's count line.
+  resetToastsForTests()
 })
 
 afterEach(() => {
@@ -223,6 +228,43 @@ describe('CollectionPage', () => {
     expect(await screen.findByText(/collection scan hasn't finished yet/i)).toBeInTheDocument()
   })
 
+  it('renders a bounded window of a large collection and grows on demand', async () => {
+    // 250 rows: mounting every one of a real collection at once locks the main
+    // thread, so the list pages even though the search covers everything.
+    const many = Array.from({ length: 250 }, (_, i) =>
+      fakeCollectionItem({ album_id: 1000 + i, title: `Record ${String(i).padStart(3, '0')}` }),
+    )
+    mockFetch(routes(fakeCollection({ owned: many })))
+    renderApp('/collection')
+    await screen.findByRole('heading', { name: 'Record 000', level: 2 })
+
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(100)
+    // The count line still describes every match, not just what is rendered.
+    expect(screen.getByRole('status')).toHaveTextContent('250')
+
+    await userEvent.click(screen.getByRole('button', { name: /Show 100 more/ }))
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(200)
+  })
+
+  it('resets the window when the search changes', async () => {
+    const many = Array.from({ length: 250 }, (_, i) =>
+      fakeCollectionItem({ album_id: 1000 + i, title: `Record ${String(i).padStart(3, '0')}` }),
+    )
+    mockFetch(routes(fakeCollection({ owned: many })))
+    renderApp('/collection')
+    await screen.findByRole('heading', { name: 'Record 000', level: 2 })
+
+    await userEvent.click(screen.getByRole('button', { name: /Show 100 more/ }))
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(200)
+
+    // A narrower search must not keep showing a window sized for the old one.
+    // "01" matches 010-019, plus 001, 101 and 201 — 13 in all.
+    await userEvent.type(screen.getByLabelText('Search your collection'), 'Record 01')
+    expect(await screen.findByRole('status')).toHaveTextContent('13 items match your search')
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(13)
+    expect(screen.queryByRole('button', { name: /Show .* more/ })).not.toBeInTheDocument()
+  })
+
   it('is reachable from the header menu', async () => {
     mockFetch([
       ['/api/auth/me', fakeMe],
@@ -237,6 +279,24 @@ describe('CollectionPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Collection', level: 1 })).toBeInTheDocument()
     expect(currentLocation().pathname).toBe('/collection')
+  })
+
+  it('says so when the collection was too large to load in full', async () => {
+    // Otherwise the tab counts read as totals and a search quietly reports
+    // "nothing matches" for a record the user definitely owns.
+    mockFetch(routes(fakeCollection({ owned: [DRUKQS], truncated: true })))
+    renderApp('/collection')
+    await screen.findByRole('heading', { name: 'Drukqs', level: 2 })
+
+    expect(screen.getByText(/counts below are not totals/i)).toBeInTheDocument()
+  })
+
+  it('shows no truncation warning for a normal collection', async () => {
+    mockFetch(routes(fakeCollection({ owned: [DRUKQS] })))
+    renderApp('/collection')
+    await screen.findByRole('heading', { name: 'Drukqs', level: 2 })
+
+    expect(screen.queryByText(/counts below are not totals/i)).not.toBeInTheDocument()
   })
 
   it('announces a load failure', async () => {

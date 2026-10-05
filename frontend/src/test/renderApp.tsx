@@ -93,7 +93,7 @@ export function fakeCollectionItem(over: Partial<CollectionItem> = {}): Collecti
 /** The three lists `GET /api/collection` returns, defaulting to empty so a test
  *  only has to name the section it cares about. */
 export function fakeCollection(over: Partial<CollectionResponse> = {}): CollectionResponse {
-  return { owned: [], wishlist: [], liked: [], ...over }
+  return { owned: [], wishlist: [], liked: [], truncated: false, ...over }
 }
 
 /** Routes fetch by URL substring. Unmatched paths fail loudly rather than
