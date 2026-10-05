@@ -1,0 +1,239 @@
+.collection {
+  padding-block: var(--s-5);
+}
+
+.ctitle {
+  font-size: var(--fs-lg);
+  margin: 0 0 var(--s-2);
+}
+
+/* The heading is a focus target on route change (see CollectionPage), so it
+   must not draw a ring when focused programmatically — only for keyboards. */
+.ctitle:focus {
+  outline: none;
+}
+
+.ctitle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.csearch-label {
+  display: block;
+  margin-top: var(--s-4);
+}
+
+.csearch {
+  width: 100%;
+  max-width: var(--measure);
+}
+
+/* ── section tabs ─────────────────────────────────────────────────────────── */
+
+.ctabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: var(--s-4) 0 var(--s-3);
+}
+
+.ctab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--fs-tiny);
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.ctab:hover {
+  color: var(--text);
+}
+
+.ctab.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.ctab-count {
+  color: var(--faint);
+}
+
+.ctab.active .ctab-count {
+  color: var(--accent);
+}
+
+/* ── rows ─────────────────────────────────────────────────────────────────── */
+
+.crow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  margin-bottom: var(--s-2);
+  /* Cheaper than virtualizing a few thousand rows, and it composes with the
+     memoized row. The `auto` length self-corrects after the first render. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
+.crow-art {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--surface-2);
+}
+
+.crow-art.empty {
+  border: 1px solid var(--line);
+}
+
+.crow-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.crow-title {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.crow-band {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-tiny);
+  cursor: pointer;
+  text-align: left;
+}
+
+.crow-band:hover {
+  color: var(--accent);
+}
+
+.crow-band.static {
+  cursor: default;
+}
+
+.crow-band .handle {
+  color: var(--faint);
+  font-family: var(--mono);
+}
+
+.crow-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s-2);
+  flex: none;
+}
+
+.crow-tags,
+.crow-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.chip.sect {
+  font-size: var(--fs-tiny);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.chip.sect.owned {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.chip.sect.wishlist {
+  border-color: var(--violet);
+  color: var(--violet);
+}
+
+.chip.sect.liked {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.crow .act,
+.crow .listen {
+  font-size: var(--fs-tiny);
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.crow .act:hover:not(:disabled),
+.crow .listen:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.crow .act:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.crow.skeleton {
+  border-color: transparent;
+}
+
+/* Narrow screens: the chips/actions column would squeeze the title to nothing,
+   so stack it under the text instead. */
+@media (max-width: 560px) {
+  .crow {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .crow-side {
+    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+}
+
+/* Dense desktop tool, so the minimums only apply to real touch input — see the
+   same reasoning in base.css. */
+@media (pointer: coarse) {
+  .ctab,
+  .crow .act,
+  .crow .listen {
+    min-height: 44px;
+  }
+
+  .crow .act,
+  .crow .listen {
+    display: inline-flex;
+    align-items: center;
+  }
+}
