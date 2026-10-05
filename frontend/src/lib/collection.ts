@@ -62,11 +62,9 @@ function compareEntries(a: CollectionEntry, b: CollectionEntry): number {
 
 /** Fold the three lists into one deduplicated, sorted list.
  *
- *  The API deliberately does not deduplicate: an item you liked in the feed and
- *  later bought is a real row in both `likes` and `fan_items`, and showing it
- *  twice would read as a bug. Merging here instead means the combined
- *  "owned · liked" label comes for free, and every view (All or a single
- *  section) filters the same array. */
+ *  An item you liked and later bought is a real row in both `likes` and
+ *  `fan_items`; merging here is what turns that into one row labelled
+ *  "owned · liked". */
 export function mergeCollection(data: CollectionResponse): CollectionEntry[] {
   const byKey = new Map<string, CollectionEntry>()
   for (const section of SECTIONS) {
