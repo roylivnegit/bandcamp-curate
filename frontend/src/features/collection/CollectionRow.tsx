@@ -16,8 +16,11 @@ export const CollectionRow = memo(function CollectionRow({
 }: {
   entry: CollectionEntry
   busy: boolean
-  /** Filters the list down to this artist by putting their name in the search
-   *  box — no separate filter state, the search already does exactly this. */
+  /** Puts the artist's name in the search box. Note this is a text search, not
+   *  an exact artist filter: a short name ("Air", "Low") also matches titles
+   *  that merely contain those letters. It only ever over-includes your own
+   *  items, never hides one. A real `?band=` filter is the fix, and it is a
+   *  feature rather than a repair. */
   onArtistClick: (entry: CollectionEntry) => void
   onUnlike: (entry: CollectionEntry) => void
 }) {

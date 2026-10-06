@@ -317,13 +317,16 @@ export function CollectionPage() {
         <p className="empty">
           {searching ? (
             'Nothing matches that search — the tab counts above show whether another section has it.'
+          ) : /* Liked is checked BEFORE the crawl state: likes hang off the app user, not
+                the Bandcamp fan, so an uncrawled user's Liked tab is already complete and
+                the scan message would send them somewhere that cannot help. */
+          tab === 'liked' ? (
+            "You haven't liked anything in a feed yet."
           ) : me?.has_crawled === false ? (
             <>
               Your collection scan hasn&apos;t finished yet, so there&apos;s nothing to show.{' '}
               <Link to="/scans">Check its progress</Link>.
             </>
-          ) : tab === 'liked' ? (
-            "You haven't liked anything in a feed yet."
           ) : (
             'Nothing here yet.'
           )}

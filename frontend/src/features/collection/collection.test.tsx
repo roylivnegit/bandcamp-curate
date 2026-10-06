@@ -218,6 +218,20 @@ describe('CollectionPage', () => {
     expect(within(row).queryByRole('button', { name: 'Unlike' })).not.toBeInTheDocument()
   })
 
+  it('tells an uncrawled user to check their likes, not their scan, on the Liked tab', async () => {
+    // Likes hang off the app user rather than the Bandcamp fan, so the Liked
+    // tab is already complete before any crawl — pointing at the scan would
+    // send them somewhere that cannot help.
+    mockFetch([
+      ['/api/auth/me', { ...fakeMe, has_crawled: false }],
+      ['/api/collection', fakeCollection()],
+    ])
+    renderApp('/collection?tab=liked')
+
+    expect(await screen.findByText(/haven't liked anything in a feed yet/i)).toBeInTheDocument()
+    expect(screen.queryByText(/collection scan hasn't finished/i)).not.toBeInTheDocument()
+  })
+
   it('tells an uncrawled user their scan is still running instead of showing nothing', async () => {
     mockFetch([
       ['/api/auth/me', { ...fakeMe, has_crawled: false }],

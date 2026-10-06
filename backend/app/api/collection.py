@@ -58,7 +58,9 @@ class CollectionOut(BaseModel):
     truncated: bool = False
 
 
-def _items_query(model: type[FanItem] | type[Like], limit: int, *where: ColumnElement[bool]) -> Select:
+def _items_query(
+    model: type[FanItem] | type[Like], limit: int, *where: ColumnElement[bool]
+) -> Select:
     """Flatten album-or-track edges into one display row each.
 
     `FanItem` and `Like` are the same shape for this purpose — both carry
