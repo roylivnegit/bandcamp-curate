@@ -115,9 +115,41 @@ guessed at. Worth tracking: how many rounds were actually needed, which findings
 dismissed and whether that held up, and what CI or the PR review caught that the local rounds
 missed.
 
+### Never write off a failure as "flaky" without diagnosing it
+
+This cost a CI failure on the first run. Two tests in `feed.test.tsx` were failing before the
+change, so a third failure got waved through under the same label — and that one was caused by the
+change: a new command-palette action tipped a latent race, where the test read options
+synchronously that only appear after a fetch.
+
+"It also fails on main" means *this* failure is not yours. It does not mean the next one isn't. Get
+the actual error text per failure and compare, rather than comparing counts.
+
+Useful triage: a test that **passes in isolation but fails in a full run** is cross-test pollution,
+not slowness. Confirm by raising the async budget — if it still fails at the higher limit, time was
+never the problem.
+
+### Revert a speculative fix that does not deliver
+
+While chasing the above, two plausible shared-config fixes (a bigger async timeout, then restoring
+real timers after every test) each failed to help. Both were reverted rather than left in. An
+unproven change to shared test setup is worse than the bug it was aimed at, because the next person
+reads it as load-bearing.
+
 Known gaps today:
-- The judge is a prompt, not a measured thing. No calibration on how often it is right.
-- `qodo review` has been flaky — `repo_not_connected` before the repo was installed, and a
-  session-recovery error that blocked three attempts. Treat an outage as a blocked step to report,
-  not a reason to skip the gate.
+- The judge is a prompt, not a measured thing. No calibration on how often it is right. On the runs
+  so far it has been worth it: it overruled the reviewer twice and overruled the author twice,
+  including catching a regression the author had shipped the day before.
+- **Qodo is a single point of failure.** It has been down for a whole round (`503 Auth upstream
+  unreachable` on the review, the findings API and `whoami` alike), and flaky before that. An
+  outage is a blocked step to report, never a reason to skip the gate. **Open question: should a
+  round with no machine findings count toward the three?** Right now it does not, by default.
+- The PR-side findings listing reports `status: open` even for findings that were dismissed or
+  marked implemented, while the PR itself renders them correctly. Do not gate anything on that
+  field.
+- Browser verification can be blocked by the environment (Chrome showed an error page while `curl`
+  got 200; the dev server was listening on IPv6-only `localhost`). Bind to `127.0.0.1` if that
+  happens, and if it still fails, say the check did not run rather than implying it passed.
+- `gh` reverts to the wrong account between pushes here, so each push needs `gh auth switch`. Worth
+  fixing properly before any of this runs unattended.
 - Nothing yet writes the run record automatically.
