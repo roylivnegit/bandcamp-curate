@@ -67,6 +67,42 @@
   color: var(--accent);
 }
 
+.cfilter {
+  margin: 0 0 var(--s-3);
+}
+
+.chip.band {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-tiny);
+  padding: 4px 6px 4px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip-x:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
 .crow {
   display: flex;
   align-items: center;

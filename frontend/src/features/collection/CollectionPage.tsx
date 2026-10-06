@@ -12,6 +12,7 @@ import {
   SECTION_LABELS,
   matchesTerms,
   mergeCollection,
+  normalize,
   searchTerms,
   type CollectionEntry,
 } from '../../lib/collection'
@@ -27,6 +28,10 @@ const SKELETON_KEYS = ['sk-0', 'sk-1', 'sk-2', 'sk-3', 'sk-4']
 
 const TAB = 'tab'
 const QUERY = 'q'
+/** Exact artist, set by clicking an artist name. Separate from the free-text
+ *  box because a short name ("Air", "Low") is a substring of plenty of
+ *  unrelated titles, so searching for it is not the same as filtering by it. */
+const BAND = 'band'
 
 /** How long to wait after the last keystroke before writing the search to the
  *  URL. Filtering does not wait for this — it runs off local state — so this
@@ -56,6 +61,7 @@ export function CollectionPage() {
   const tabParam = searchParams.get(TAB)
   const tab: Tab = isTab(tabParam) ? tabParam : 'all'
   const urlQuery = searchParams.get(QUERY) ?? ''
+  const bandFilter = searchParams.get(BAND)
 
   /* Local state owns the text, and the URL is caught up just behind it.
    * Binding `value` straight to `searchParams.get('q')` drops characters:
@@ -63,17 +69,20 @@ export function CollectionPage() {
    * a trailing value mid-word. Typing "bjork vespertine 10" left "0". */
   const [query, setQuery] = useState(urlQuery)
 
-  /* Adopt the URL's query only on a POP — an actual back/forward. That is the
-   * only case where the URL knows something the box does not: our own writes
-   * are REPLACE, and a tab link is a PUSH that already carries the current
-   * query.
+  /* Take the query from the URL on every navigation EXCEPT a REPLACE, which is
+   * only ever our own debounced write catching up to what is already in the box.
    *
-   * The earlier version used a boolean ref set around our own write, which had
-   * to guess which navigation it was looking at and could consume the wrong one
-   * when two debounced writes landed close together. Asking the router what
-   * kind of navigation this was removes the guess, and the race with it. */
+   * It has to be "not REPLACE" rather than "only POP": the header's Collection
+   * link and the command palette both PUSH to `/collection` with no query, and
+   * ignoring those left the old search in the box and then wrote it back into
+   * the URL, silently undoing the navigation. A tab link also PUSHes, but it
+   * carries the current query, so adopting there is a no-op.
+   *
+   * Asking the router what kind of navigation this was replaces an earlier
+   * boolean ref that had to guess, and could consume the wrong navigation when
+   * two debounced writes landed close together. */
   useEffect(() => {
-    if (navigationType !== 'POP') return
+    if (navigationType === 'REPLACE') return
     setQuery(new URLSearchParams(location.search).get(QUERY) ?? '')
   }, [navigationType, location.key, location.search])
 
@@ -129,9 +138,22 @@ export function CollectionPage() {
   const deferredQuery = useDeferredValue(query)
   const terms = useMemo(() => searchTerms(deferredQuery), [deferredQuery])
 
+  // Exact artist match, not a substring: clicking "Air" must not pull in
+  // "Airbag" or a record titled "Air". Normalized so the accents match the way
+  // the search box does.
+  const normalizedBand = useMemo(
+    () => (bandFilter === null ? null : normalize(bandFilter)),
+    [bandFilter],
+  )
+
   const matching = useMemo(
-    () => entries?.filter((e) => matchesTerms(e, terms)) ?? null,
-    [entries, terms],
+    () =>
+      entries?.filter(
+        (e) =>
+          matchesTerms(e, terms) &&
+          (normalizedBand === null || normalize(e.band_name ?? '') === normalizedBand),
+      ) ?? null,
+    [entries, terms, normalizedBand],
   )
 
   /** Badge numbers. With an empty query these are the section totals; with a
@@ -164,7 +186,7 @@ export function CollectionPage() {
   // Reset the window when the filter changes, adjusted during render rather
   // than in an effect (the pattern React documents for "state derived from a
   // prop change") — an effect would paint one frame of the old window first.
-  const listKey = `${tab}|${deferredQuery}`
+  const listKey = `${tab}|${deferredQuery}|${bandFilter ?? ''}`
   const [prevListKey, setPrevListKey] = useState(listKey)
   if (prevListKey !== listKey) {
     setPrevListKey(listKey)
@@ -189,10 +211,34 @@ export function CollectionPage() {
     })
   }, [])
 
+  /** Sets an exact artist filter rather than typing the name into the search
+   *  box. Clears the free-text query so the two cannot silently fight. */
   const onArtistClick = useCallback(
-    (entry: CollectionEntry) => setQuery(entry.band_name ?? ''),
-    [setQuery],
+    (entry: CollectionEntry) => {
+      setQuery('')
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev)
+          p.set(BAND, entry.band_name ?? '')
+          p.delete(QUERY)
+          return p
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
   )
+
+  const clearBandFilter = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(BAND)
+        return p
+      },
+      { replace: true },
+    )
+  }, [setSearchParams])
 
   /** Unliking drops the `liked` label. If that was the item's only label it
    *  leaves the collection entirely; if you also own it, the row stays and
@@ -233,6 +279,7 @@ export function CollectionPage() {
 
   const loading = entries === null && !error
   const searching = terms.length > 0
+  const filtering = searching || bandFilter !== null
   const kindWord = tab === 'all' ? 'item' : SECTION_LABELS[tab].toLowerCase() + ' item'
 
   return (
@@ -268,10 +315,14 @@ export function CollectionPage() {
             // tablist owes the user arrow-key navigation and a single tab stop,
             // and a half-built one is worse than none. Links also give
             // browser-back between tabs for free.
+            // Carries the query AND the artist filter, or switching tab would
+            // silently drop whichever one is active.
             to={{
-              search: new URLSearchParams(
-                query ? { [TAB]: t, [QUERY]: query } : { [TAB]: t },
-              ).toString(),
+              search: new URLSearchParams({
+                [TAB]: t,
+                ...(query ? { [QUERY]: query } : {}),
+                ...(bandFilter !== null ? { [BAND]: bandFilter } : {}),
+              }).toString(),
             }}
           >
             {t === 'all' ? 'All' : SECTION_LABELS[t]}{' '}
@@ -279,6 +330,20 @@ export function CollectionPage() {
           </Link>
         ))}
       </nav>
+
+      {/* Without this the artist filter would be unescapable: it is not in the
+          search box, so there would be nothing on screen to clear. */}
+      {bandFilter !== null && (
+        <p className="cfilter">
+          <span className="chip band">
+            Artist: <b>{bandFilter || 'unknown'}</b>
+            <button type="button" className="chip-x" onClick={clearBandFilter}>
+              <span aria-hidden="true">×</span>
+              <span className="sr-only">Clear artist filter</span>
+            </button>
+          </span>
+        </p>
+      )}
 
       {error && (
         <p className="err" role="alert">
@@ -314,8 +379,8 @@ export function CollectionPage() {
 
       {rows !== null && rows.length === 0 && !error && (
         <p className="empty">
-          {searching ? (
-            'Nothing matches that search — the tab counts above show whether another section has it.'
+          {filtering ? (
+            'Nothing matches these filters — the tab counts above show whether another section has it.'
           ) : /* Liked is checked BEFORE the crawl state: likes hang off the app user, not
                 the Bandcamp fan, so an uncrawled user's Liked tab is already complete and
                 the scan message would send them somewhere that cannot help. */

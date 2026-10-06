@@ -16,11 +16,9 @@ export const CollectionRow = memo(function CollectionRow({
 }: {
   entry: CollectionEntry
   busy: boolean
-  /** Puts the artist's name in the search box. Note this is a text search, not
-   *  an exact artist filter: a short name ("Air", "Low") also matches titles
-   *  that merely contain those letters. It only ever over-includes your own
-   *  items, never hides one. A real `?band=` filter is the fix, and it is a
-   *  feature rather than a repair. */
+  /** Filters the list to exactly this artist via `?band=`, shown as a removable
+   *  chip. Deliberately not a text search: "Air" as a search term also matches
+   *  "Airbag" and anything titled "Air". */
   onArtistClick: (entry: CollectionEntry) => void
   onUnlike: (entry: CollectionEntry) => void
 }) {
@@ -54,7 +52,10 @@ export const CollectionRow = memo(function CollectionRow({
 
         {entry.band_name ? (
           <button type="button" className="crow-band" onClick={() => onArtistClick(entry)}>
-            {entry.band_name}
+            {/* A real space, not just the flex `gap`: without it a screen
+                reader announces the artist and handle run together, as
+                "Airaphextwin". */}
+            {entry.band_name}{' '}
             {handle && <span className="handle">{handle}</span>}
           </button>
         ) : (

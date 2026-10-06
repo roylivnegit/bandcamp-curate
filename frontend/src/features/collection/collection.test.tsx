@@ -179,6 +179,62 @@ describe('CollectionPage', () => {
     expect(box).toHaveValue('bjork vespertine 10')
   })
 
+  it('filters by artist exactly, not as a substring', async () => {
+    // The whole reason the artist click is a `?band=` filter and not a search
+    // term: "Air" is a substring of "Airbag" and of a record titled "Air".
+    const air = fakeCollectionItem({ album_id: 40, title: 'Moon Safari', band_name: 'Air' })
+    const airbag = fakeCollectionItem({ album_id: 41, title: 'Identikit', band_name: 'Airbag' })
+    const titledAir = fakeCollectionItem({ album_id: 42, title: 'Air', band_name: 'Talk Talk' })
+    mockFetch(routes(fakeCollection({ owned: [air, airbag, titledAir] })))
+    renderApp('/collection')
+    await screen.findByRole('heading', { name: 'Moon Safari', level: 2 })
+
+    await userEvent.click(screen.getByRole('button', { name: /^Air / }))
+
+    expect(await screen.findByRole('heading', { name: 'Moon Safari', level: 2 })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Identikit', level: 2 })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Air', level: 2 })).not.toBeInTheDocument()
+    expect(currentLocation().search).toContain('band=Air')
+  })
+
+  it('the artist chip clears the filter', async () => {
+    const air = fakeCollectionItem({ album_id: 40, title: 'Moon Safari', band_name: 'Air' })
+    const airbag = fakeCollectionItem({ album_id: 41, title: 'Identikit', band_name: 'Airbag' })
+    mockFetch(routes(fakeCollection({ owned: [air, airbag] })))
+    renderApp('/collection?band=Air')
+    await screen.findByRole('heading', { name: 'Moon Safari', level: 2 })
+    // Without the chip the filter would be unescapable: it is not in the box.
+    expect(screen.queryByRole('heading', { name: 'Identikit', level: 2 })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear artist filter' }))
+
+    expect(await screen.findByRole('heading', { name: 'Identikit', level: 2 })).toBeInTheDocument()
+    expect(currentLocation().search).not.toContain('band=')
+  })
+
+  it('a push into /collection with no query clears a search left from before', async () => {
+    // The header link and the command palette both PUSH to /collection with no
+    // query. Ignoring those left the old search in the box and then wrote it
+    // back into the URL, undoing the navigation.
+    mockFetch([
+      ['/api/auth/me', fakeMe],
+      ['/api/scans', []],
+      ['/api/collection', fakeCollection({ owned: [DRUKQS, GEOGADDI] })],
+    ])
+    renderApp('/collection?q=drukqs')
+    await screen.findByRole('heading', { name: 'Drukqs', level: 2 })
+    expect(screen.queryByRole('heading', { name: 'Geogaddi', level: 2 })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Menu' }))
+    await userEvent.click(screen.getByRole('link', { name: 'Collection' }))
+
+    expect(await screen.findByRole('heading', { name: 'Geogaddi', level: 2 })).toBeInTheDocument()
+    expect(screen.getByLabelText('Search your collection')).toHaveValue('')
+    // And the debounce must not write the stale query back afterwards.
+    await new Promise((r) => setTimeout(r, 400))
+    expect(currentLocation().search).not.toContain('q=drukqs')
+  })
+
   it('clicking the artist narrows the list to that artist', async () => {
     mockFetch(routes(fakeCollection({ owned: [DRUKQS, GEOGADDI] })))
     renderApp('/collection')
