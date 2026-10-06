@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigationType, useSearchParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
 import type { CollectionResponse, CollectionSection } from '../../api/types'
@@ -45,6 +45,7 @@ export function CollectionPage() {
   const { me } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
+  const navigationType = useNavigationType()
   const [data, setData] = useState<CollectionResponse | null>(null)
   const [error, setError] = useState('')
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -61,21 +62,20 @@ export function CollectionPage() {
    * `setSearchParams` is an ordinary async update, so React resets the field to
    * a trailing value mid-word. Typing "bjork vespertine 10" left "0". */
   const [query, setQuery] = useState(urlQuery)
-  // Set around our own debounced write, so the effect below can tell it apart
-  // from the user actually navigating.
-  const writingUrl = useRef(false)
 
-  // A real navigation (back/forward, or a tab link carrying a query): adopt
-  // what the URL says. Keyed on `location.key` rather than the query value,
-  // because going back to an entry whose query happens to match the pending
-  // one still has to take effect.
+  /* Adopt the URL's query only on a POP — an actual back/forward. That is the
+   * only case where the URL knows something the box does not: our own writes
+   * are REPLACE, and a tab link is a PUSH that already carries the current
+   * query.
+   *
+   * The earlier version used a boolean ref set around our own write, which had
+   * to guess which navigation it was looking at and could consume the wrong one
+   * when two debounced writes landed close together. Asking the router what
+   * kind of navigation this was removes the guess, and the race with it. */
   useEffect(() => {
-    if (writingUrl.current) {
-      writingUrl.current = false
-      return
-    }
+    if (navigationType !== 'POP') return
     setQuery(new URLSearchParams(location.search).get(QUERY) ?? '')
-  }, [location.key, location.search])
+  }, [navigationType, location.key, location.search])
 
   // Catch the URL up, debounced. `replace`, so Back steps between tabs rather
   // than walking the search backwards one letter at a time.
@@ -84,7 +84,6 @@ export function CollectionPage() {
     // Timer id in the effect closure, not a ref: StrictMode double-invokes
     // this, and a shared ref would hold only the second id.
     const id = window.setTimeout(() => {
-      writingUrl.current = true
       setSearchParams(
         (prev) => {
           const p = new URLSearchParams(prev)
