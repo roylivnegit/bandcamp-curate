@@ -83,9 +83,10 @@
   --shadow-card: 0 16px 34px -22px rgba(0, 0, 0, 0.7);
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
 
-  /* The scans-list and feed pages' content column. Wider than a prose reading
-     measure on purpose: both are dense data views (a toolbar plus a card
-     list), not paragraphs of text, and 800px left most of a desktop screen
-     empty with the toolbar wrapping awkwardly into a second, ragged row. */
-  --measure: 1200px;
+  /* The content column. Deliberately not a prose reading measure: every page
+     here is a dense data view (a toolbar plus a card list), not paragraphs, so
+     the old 1200px left roughly a third of a desktop screen empty on each
+     side. The cap only exists so an ultrawide monitor does not stretch a row
+     to arm's length. */
+  --measure: 1600px;
 }

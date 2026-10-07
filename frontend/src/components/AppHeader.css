@@ -1,6 +1,13 @@
+/* Lifted off `--bg`. At the page's own near-black the bar read as nothing at
+   all — there was no edge between the app's chrome and its content. This is
+   `--surface-2` with a faint accent wash over it and the stronger line below,
+   so the bar reads as a distinct surface without turning into a block of
+   colour above every page. */
 .apphead {
-  border-bottom: 1px solid var(--line);
-  background: rgba(10, 12, 17, 0.72);
+  border-bottom: 1px solid var(--line-strong);
+  background:
+    linear-gradient(rgba(94, 234, 212, 0.1), rgba(94, 234, 212, 0.04)),
+    rgba(31, 38, 55, 0.92);
   backdrop-filter: blur(10px);
   position: sticky;
   top: 0;
