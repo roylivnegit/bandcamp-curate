@@ -141,5 +141,33 @@ export interface TokenResponse {
   token_type: string
 }
 
+/** Which of the three lists an item came from. An item can be in more than
+ *  one (liked in the feed, then bought), which is why `CollectionEntry` below
+ *  carries a set rather than a single value. */
+export type CollectionSection = 'owned' | 'wishlist' | 'liked'
+
+/** One row as the API returns it. No row id on purpose: the same item shows up
+ *  in several lists, and the client merges those by item identity. */
+export interface CollectionItem {
+  item_type: ItemType
+  album_id: number | null
+  track_id: number | null
+  title: string | null
+  band_name: string | null
+  url: string | null
+  art_id: number | null
+  art_url: string | null
+}
+
+export interface CollectionResponse {
+  owned: CollectionItem[]
+  wishlist: CollectionItem[]
+  liked: CollectionItem[]
+  /** A list hit the server's cap, so the counts below it are not totals and a
+   *  search can miss something the user really owns. Say so rather than look
+   *  confidently wrong. */
+  truncated: boolean
+}
+
 /** Item identity for like/unlike — exactly one of the two ids, as the API requires. */
 export type ItemRef = { album_id: number } | { track_id: number }

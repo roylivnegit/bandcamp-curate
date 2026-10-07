@@ -23,6 +23,9 @@ const ScanListPage = lazy(() =>
 const ScanFeedPage = lazy(() =>
   import('./features/feed/ScanFeedPage').then((m) => ({ default: m.ScanFeedPage })),
 )
+const CollectionPage = lazy(() =>
+  import('./features/collection/CollectionPage').then((m) => ({ default: m.CollectionPage })),
+)
 
 const Loading = <p className="empty">Loading…</p>
 
@@ -48,6 +51,12 @@ export default function App() {
   // against here the way there is for the per-row feed-card callbacks.
   const paletteActions: CommandAction[] = [
     { id: 'nav-scans', label: 'Go to Scans', run: () => navigate('/scans') },
+    {
+      id: 'nav-collection',
+      label: 'Go to Collection',
+      hint: 'what you already own',
+      run: () => navigate('/collection'),
+    },
     ...scans.map((s) => ({
       id: `nav-scan-${s.id}`,
       label: s.name,
@@ -100,6 +109,7 @@ export default function App() {
             <Routes>
               <Route path="/scans" element={<ScanListPage />} />
               <Route path="/scans/:scanId" element={<ScanFeedPage />} />
+              <Route path="/collection" element={<CollectionPage />} />
               {/* Signed in: /login and /signup have nothing left to offer. */}
               <Route path="*" element={<Navigate to="/scans" replace />} />
             </Routes>

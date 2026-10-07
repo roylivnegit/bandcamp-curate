@@ -4,7 +4,7 @@ import { vi } from 'vitest'
 
 import App from '../App'
 import { AuthProvider } from '../auth/AuthContext'
-import type { Me, Recommendation, Scan } from '../api/types'
+import type { CollectionItem, CollectionResponse, Me, Recommendation, Scan } from '../api/types'
 
 /** Written by `LocationWatcher` on every render, so a test can assert on the
  *  URL a filter/navigation change actually produced — MemoryRouter's history
@@ -74,6 +74,26 @@ export function fakeRec(over: Partial<Recommendation> = {}): Recommendation {
     recompute_generation: 1,
     ...over,
   }
+}
+
+export function fakeCollectionItem(over: Partial<CollectionItem> = {}): CollectionItem {
+  return {
+    item_type: 'album',
+    album_id: 10,
+    track_id: null,
+    title: 'Drukqs',
+    band_name: 'Aphex Twin',
+    url: 'https://aphextwin.bandcamp.com/album/drukqs',
+    art_id: null,
+    art_url: null,
+    ...over,
+  }
+}
+
+/** The three lists `GET /api/collection` returns, defaulting to empty so a test
+ *  only has to name the section it cares about. */
+export function fakeCollection(over: Partial<CollectionResponse> = {}): CollectionResponse {
+  return { owned: [], wishlist: [], liked: [], truncated: false, ...over }
 }
 
 /** Routes fetch by URL substring. Unmatched paths fail loudly rather than

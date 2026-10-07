@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright writes these per run; they are per-machine state, not source.
+test-results/
+playwright-report/
