@@ -21,12 +21,13 @@ Normal work. Nothing special.
 
 Run all of these before any review round. A review on red gates burns a round.
 
-```bash
-# backend
-cd backend && . .venv/bin/activate && ruff check . && pytest -q
+Run from the repo root. Each line returns you there, so the whole block can be pasted at once —
+the earlier version left the shell in `backend/` and the next `cd frontend` then failed, silently
+skipping every frontend gate.
 
-# frontend
-cd frontend && npm test && npx tsc -b && npm run lint && npm run build
+```bash
+(cd backend && . .venv/bin/activate && ruff check . && pytest -q)
+(cd frontend && npm test && npx tsc -b && npm run lint && npm run build)
 ```
 
 `ruff` is easy to forget and CI will not forget it. CI (`.github/workflows/ci.yml`) runs `pytest` +
