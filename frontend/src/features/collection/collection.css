@@ -56,7 +56,7 @@
 .ctab.active {
   color: var(--text);
   border-color: var(--accent);
-  background: var(--surface-2);
+  background-color: var(--surface-2);
 }
 
 .ctab-count {
