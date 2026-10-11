@@ -4,11 +4,10 @@
 
 /* `.wrap.feedpage` (not `.feedpage` alone) to out-specificity `.wrap`'s own
    max-width: var(--measure) regardless of source order. Wider than the
-   shared measure on purpose — this page's cardlist is a grid that can use a
-   second (or, on a very large monitor, third) column of real cards, unlike
-   the scans list, which only ever holds a handful of rows. */
+   shared measure on purpose — this page's cardlist is a grid, so extra width
+   buys another column of real cards rather than longer rows. */
 .wrap.feedpage {
-  max-width: 1800px;
+  max-width: 2400px;
 }
 
 /* ── nav + title ─────────────────────────────────────────────────────────── */
