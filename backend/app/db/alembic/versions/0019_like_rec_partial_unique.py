@@ -27,17 +27,25 @@ stay as separate rows; this only stops new ones.
 Guarded like 0002-0018: a fresh DB builds this from the current ORM metadata,
 so this only patches an EXISTING DB.
 
-Revision ID: 0019_like_recommendation_partial_unique
+Revision ID: 0019_like_rec_partial_unique
 Revises: 0018_fan_item_partial_unique
 Create Date: 2026-09-08
 
+Renamed 2026-10-08 from `0019_like_recommendation_partial_unique` (39 chars).
+Alembic's `alembic_version.version_num` is `varchar(32)`, so writing that id
+raised StringDataRightTruncationError and the whole upgrade rolled back. The
+container runs `alembic upgrade head && exec uvicorn` (backend/Dockerfile), so
+every API release since this landed died before serving and Render kept the
+previous image. SQLite ignores varchar limits, which is why the test suite
+never caught it. Safe to rename precisely because no Postgres database can
+ever have recorded the old id.
 """
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0019_like_recommendation_partial_unique"
+revision: str = "0019_like_rec_partial_unique"
 down_revision: str | None = "0018_fan_item_partial_unique"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
