@@ -83,6 +83,11 @@
   --shadow-card: 0 16px 34px -22px rgba(0, 0, 0, 0.7);
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
 
+  /* Hover lift: a translucent white layered OVER an element's own
+     background, so one value brightens every surface tier equally. */
+  --lift: rgba(255, 255, 255, 0.055);
+  --lift-strong: rgba(255, 255, 255, 0.095);
+
   /* The content column. Deliberately not a prose reading measure: every page
      here is a dense data view (a toolbar plus a card list), not paragraphs, so
      the old 1200px left roughly a third of a desktop screen empty on each

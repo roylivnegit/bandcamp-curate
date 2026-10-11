@@ -113,7 +113,7 @@
 }
 
 .seg button.on {
-  background: var(--surface-2);
+  background-color: var(--surface-2);
   color: var(--accent);
 }
 
@@ -330,6 +330,18 @@
   border-color: var(--line-strong);
   transform: translateY(-1px);
   box-shadow: var(--shadow-card);
+  /* Stacked over the card's own top-sheen rather than replacing it — the
+     shared lift in base.css sets `background-image` alone, which would drop
+     the sheen this card paints for itself. Same shape as `.scan:hover`. */
+  background-image:
+    linear-gradient(var(--lift), var(--lift)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 40%);
+}
+
+.card.selected:hover {
+  background-image:
+    linear-gradient(var(--lift), var(--lift)),
+    linear-gradient(180deg, rgba(94, 234, 212, 0.07), transparent 40%);
 }
 
 /* Select mode: the whole card is a click target (see FeedCard's onClick —

@@ -417,3 +417,64 @@ a {
   justify-content: center;
   text-align: center;
 }
+
+/* ── hover lift ──────────────────────────────────────────────────────────── */
+
+/* One rule instead of a hover variant per surface: `background-image` layers a
+   translucent white over whatever `background-color` an element already has,
+   so a chip on --surface and a card on --surface-2 brighten equally. */
+.card:hover,
+.crow:hover,
+.newcard:hover,
+.chip:hover,
+.act:hover:not(:disabled),
+.listen:hover,
+.back:hover,
+.ctab:hover,
+.fpill:hover,
+.seg button:hover,
+.btn.ghost:hover:not(:disabled) {
+  background-image: linear-gradient(var(--lift), var(--lift));
+}
+
+/* Elements that paint their own gradient stack the lift as a second layer —
+   setting `background-image` alone would drop the gradient. The primary
+   `.btn` is the dangerous one: it has no background-*color*, only the accent
+   gradient, so replacing the image left dark accent-ink text on the bare page. */
+.btn:hover:not(:disabled) {
+  background-image:
+    linear-gradient(var(--lift), var(--lift)),
+    linear-gradient(180deg, var(--accent), var(--accent-deep));
+}
+
+.scan:hover {
+  background-image:
+    linear-gradient(var(--lift), var(--lift)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%);
+}
+
+/* A pressed state one step brighter, so a click reads as a click. */
+.btn:active:not(:disabled) {
+  background-image:
+    linear-gradient(var(--lift-strong), var(--lift-strong)),
+    linear-gradient(180deg, var(--accent), var(--accent-deep));
+}
+
+.act:active:not(:disabled),
+.newcard:active,
+.ctab:active,
+.btn.ghost:active:not(:disabled) {
+  background-image: linear-gradient(var(--lift-strong), var(--lift-strong));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card,
+  .crow,
+  .chip,
+  .act,
+  .listen,
+  .ctab,
+  .fpill {
+    transition: background-color 0.15s ease, background-image 0.15s ease;
+  }
+}

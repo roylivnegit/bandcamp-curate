@@ -1,0 +1,185 @@
+.snav-root {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* ── the hamburger ───────────────────────────────────────────────────────── */
+
+.snav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.snav-toggle:hover,
+.snav-toggle.on {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.snav-bars {
+  display: grid;
+  gap: 3.5px;
+  width: 16px;
+}
+
+.snav-bars span {
+  display: block;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+  transition: transform 0.18s ease;
+}
+
+/* Nudge the bars apart when open, so the control itself shows state rather
+   than relying only on the panel appearing. */
+.snav-toggle.on .snav-bars span:first-child {
+  transform: translateY(-1px);
+}
+
+.snav-toggle.on .snav-bars span:last-child {
+  transform: translateY(1px);
+}
+
+/* ── the panel ───────────────────────────────────────────────────────────── */
+
+.snav-panel {
+  position: fixed;
+  top: 58px; /* below the app header */
+  left: 0;
+  bottom: 0;
+  /* Under the command palette and shortcuts backdrops (40), above the page. */
+  z-index: 35;
+  width: 248px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s-4) var(--s-3);
+  background: var(--surface);
+  border-right: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+  animation: snav-in 0.16s ease-out;
+}
+
+@keyframes snav-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+
+.snav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.snav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: 10px var(--s-3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.snav-row:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* The route you are on. `.on`, not `.active` — feed.css owns a global
+   `.active` for its filter-pill bar. */
+.snav-row.on {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+
+.snav-ico {
+  width: 18px;
+  flex: none;
+  text-align: center;
+  font-size: var(--fs-md);
+  line-height: 1;
+}
+
+.snav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── footer: who you are, and the way out ────────────────────────────────── */
+
+.snav-foot {
+  margin-top: auto;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.snav-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 var(--s-3) var(--s-3);
+}
+
+.snav-who-k {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.snav-who-v {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snav-foot .snav-row:hover {
+  color: var(--danger);
+}
+
+@media (max-width: 560px) {
+  .snav-panel {
+    width: min(82vw, 248px);
+  }
+}
+
+/* Dense desktop tool, so touch minimums apply only to real touch input —
+   same reasoning as base.css. */
+@media (pointer: coarse) {
+  .snav-row {
+    min-height: 44px;
+  }
+}
