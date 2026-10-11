@@ -2442,8 +2442,11 @@ describe('command palette', () => {
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
 
     expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument()
+    // The static actions are there as soon as the dialog is, but the scan rows
+    // arrive from the listScans() call the palette fires on open — so they have
+    // to be awaited, not read synchronously off the first paint.
     expect(screen.getByRole('option', { name: 'Go to Scans' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: /My collection/ })).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: /My collection/ })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Psy dig' })).toBeInTheDocument()
   })
 
@@ -2454,6 +2457,9 @@ describe('command palette', () => {
 
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
     const input = await screen.findByRole('textbox', { name: 'Jump to…' })
+    // Wait for the scans to land before filtering, or 'psy' matches nothing and
+    // the count below is 0 for a reason that has nothing to do with ranking.
+    await screen.findByRole('option', { name: 'Psy dig' })
     fireEvent.change(input, { target: { value: 'psy' } })
 
     expect(screen.getAllByRole('option')).toHaveLength(1)

@@ -24,6 +24,7 @@
 import { REQUEST_TIMEOUT_MS } from '../config'
 import type {
   Blocked,
+  CollectionResponse,
   Facets,
   ItemRef,
   Liked,
@@ -224,6 +225,12 @@ export const api = {
       { method: 'POST' },
     )
   },
+
+  /** The user's own collection: owned + wishlisted + liked, all three in one
+   *  response. One request rather than one per section because the Collection
+   *  page searches across all three at once and shows per-section match
+   *  counts, so it needs them all in memory anyway. */
+  collection: () => request<CollectionResponse>('/api/collection'),
 
   // likes / blocks (both global across a user's scans)
   listLikes: () => request<Liked[]>('/api/likes'),

@@ -36,6 +36,9 @@ export function AppHeader() {
               <Link to="/scans" className="ddrow" onClick={close}>
                 <span className="nm">Scans</span>
               </Link>
+              <Link to="/collection" className="ddrow" onClick={close}>
+                <span className="nm">Collection</span>
+              </Link>
               {me && (
                 <button
                   type="button"
