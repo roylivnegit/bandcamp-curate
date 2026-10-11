@@ -347,7 +347,13 @@ export function CollectionPage() {
 
       {error && (
         <p className="err" role="alert">
-          {error}
+          {error}{' '}
+          {/* The fetch runs once on mount, so without this a timeout or a
+              momentary outage leaves the page empty until you navigate away
+              and back. Same affordance the scans list already has. */}
+          <button type="button" className="btn ghost" onClick={() => void load()}>
+            Retry
+          </button>
         </p>
       )}
 

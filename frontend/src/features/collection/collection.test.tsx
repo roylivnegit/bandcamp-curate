@@ -369,6 +369,42 @@ describe('CollectionPage', () => {
     expect(screen.queryByText(/counts below are not totals/i)).not.toBeInTheDocument()
   })
 
+  it('recovers from a failed load when Retry is clicked', async () => {
+    // The collection is fetched once on mount, so without a retry a momentary
+    // outage leaves the page empty until the user navigates away and back.
+    let fail = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.includes('/api/auth/me')) {
+          return new Response(JSON.stringify(fakeMe), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (fail) {
+          fail = false
+          return new Response(JSON.stringify({ detail: 'upstream is down' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response(JSON.stringify(fakeCollection({ owned: [DRUKQS] })), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }),
+    )
+    renderApp('/collection')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/upstream is down/i)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(await screen.findByRole('heading', { name: 'Drukqs', level: 2 })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('announces a load failure', async () => {
     mockFetch([
       ['/api/auth/me', fakeMe],

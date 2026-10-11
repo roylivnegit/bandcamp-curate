@@ -21,12 +21,13 @@ Normal work. Nothing special.
 
 Run all of these before any review round. A review on red gates burns a round.
 
-```bash
-# backend
-cd backend && . .venv/bin/activate && ruff check . && pytest -q
+Run from the repo root. Each line returns you there, so the whole block can be pasted at once —
+the earlier version left the shell in `backend/` and the next `cd frontend` then failed, silently
+skipping every frontend gate.
 
-# frontend
-cd frontend && npm test && npx tsc -b && npm run lint && npm run build
+```bash
+(cd backend && . .venv/bin/activate && ruff check . && pytest -q)
+(cd frontend && npm test && npx tsc -b && npm run lint && npm run build)
 ```
 
 `ruff` is easy to forget and CI will not forget it. CI (`.github/workflows/ci.yml`) runs `pytest` +
@@ -97,6 +98,47 @@ process could not complete — a service outage, a blocked check — rather than
 
 Pre-existing problems found along the way go in a "not in this change" section. Do not fold
 unrelated fixes into the diff.
+
+## 4b. The judge decides when to merge
+
+Opening the PR is not the end. **The judge rules on merge readiness too**, and on
+order when more than one PR is open. Give it the real state — CI, review status,
+mergeability, what each PR touches — and let it return `MERGE NOW`, `MERGE AFTER <x>`,
+or `HOLD` with a reason, then act on it.
+
+A PR is not mergeable until all of these hold. The judge checks them rather than assuming:
+
+- CI green on the **head** commit, not an older one.
+- The review round came back clean, or every remaining finding is recorded as
+  dismissed or deferred with a reason.
+- `mergeable=MERGEABLE` and the branch is not `BEHIND` (if it is, update it first —
+  a stale branch's green CI is about code that is not what will land).
+- Nothing is stranded (see the squash trap below).
+- For anything that changes a migration, a deploy command, or production config: say
+  plainly what should be true after the deploy, so there is something to check against.
+
+Order matters when PRs interact. Prefer merging whatever unblocks a broken deploy
+first, and say which PR changes shared tokens or config that another PR's review was
+never run against.
+
+**After merging, verify the deploy actually landed.** A merge is not a deploy. Probe a
+marker that only exists in the new code — a new route, a token value, a chunk name —
+rather than trusting that it worked.
+
+### The squash trap
+
+A squash merge takes the branch **as it was at merge time**. Anything pushed to that
+branch afterwards is stranded: the PR is closed, so the commits are in no open PR and
+nothing points at them. This has already happened once here — a Retry button and a
+doc fix sat invisible on `feat/collection-tab` for days after #178 merged.
+
+Before considering a branch finished:
+
+```bash
+git diff origin/main origin/<branch> --stat    # empty = fully merged
+```
+
+If it is not empty, those changes need their own PR.
 
 ## 5. After the PR
 
