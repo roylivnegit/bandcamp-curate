@@ -1,0 +1,49 @@
+# Keeps the Render free-tier API from cold-starting.
+#
+# Render sleeps a free service after ~15 min idle (render.yaml) and the first
+# request then takes 30-60s. Replaces a launchd job on a laptop, which could
+# only fire while the Mac was awake: 1,000 of 5,735 expected pings over 40 days.
+#
+# Two things to know when this looks broken:
+#   - `*/10` is best-effort. GitHub drops scheduled runs when runners are busy.
+#   - GitHub DISABLES scheduled workflows after 60 days with no repo activity,
+#     and emails the owner first. If pings simply stopped, check that before
+#     anything else.
+name: keepalive
+
+on:
+  schedule:
+    # :07 past, not :00 — the top of the hour is the busiest slot on shared
+    # runners and the most likely to be dropped.
+    - cron: '7-57/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  # A cold start can outlast the gap; let it finish rather than stacking pings.
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the API
+        env:
+          # /health/db, not /health: /health is liveness only and returns 200
+          # from a stale image, so it stayed green through a month of failed
+          # deploys. /health/db does a real SELECT 1, which also keeps Neon
+          # awake and takes its ~1s wake off the first page load.
+          URL: https://crate-digger-api-ojvi.onrender.com/health/db
+        run: |
+          # --max-time 90: a genuine cold start takes 30-60s, so a short
+          # timeout would fail for the exact case this exists to prevent.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+                   --max-time 90 --retry 2 --retry-delay 5 \
+                   --retry-all-errors "$URL")
+          echo "GET /health/db -> $code"
+          # A red run means the API or its database is unreachable. It does NOT
+          # mean the deploy is current — a stale image answers this happily.
+          [ "$code" = "200" ]
