@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from app.api import auth, blacklist, collection, feed, health, likes, scans
+from app.api import auth, blacklist, collection, feed, health, likes, scans, search
 from app.config import get_settings
 
 settings = get_settings()
@@ -54,6 +54,7 @@ app.include_router(blacklist.router)  # /api/blacklist (list/block/unblock)
 app.include_router(likes.router)  # /api/likes (like/list/unlike)
 app.include_router(scans.router)  # /api/scans (list/create/get/run/delete)
 app.include_router(collection.router)  # /api/collection (owned/wishlist/liked)
+app.include_router(search.router)  # /api/search (scans + collection + feed, one box)
 # No route serves HTML: the frontend is a separate React app (see frontend/),
 # deployed on its own origin and talking to this service as a JSON API. GET /
 # is intentionally a 404 here.

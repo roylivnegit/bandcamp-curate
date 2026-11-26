@@ -171,3 +171,39 @@ export interface CollectionResponse {
 
 /** Item identity for like/unlike — exactly one of the two ids, as the API requires. */
 export type ItemRef = { album_id: number } | { track_id: number }
+
+/** Which part of the app a search hit came from: `collection` is something
+ *  the user owns/wishlisted/liked, `feed` a recommendation inside one of their
+ *  scans. Scans themselves are not searched server-side — the palette holds
+ *  the whole list already and filters it locally. */
+export type SearchKind = 'collection' | 'feed'
+
+/** One row from GET /api/search. Raw fields, not a rendered label — the
+ *  palette composes "title — artist" the same way the feed cards and
+ *  collection rows do. */
+export interface SearchHit {
+  kind: SearchKind
+  title: string | null
+  band_name: string | null
+  item_type: ItemType | null
+  album_id: number | null
+  track_id: number | null
+  url: string | null
+  art_url: string | null
+  /** The scan whose feed this appeared in — `feed` hits only, null for a
+   *  collection hit. */
+  scan_id: number | null
+  scan_name: string | null
+  /** `collection` hits only — an item can be in more than one list. */
+  sections: CollectionSection[]
+}
+
+export interface SearchResponse {
+  /** The query the server actually ran, trimmed. */
+  query: string
+  collection: SearchHit[]
+  feed: SearchHit[]
+  /** A section hit the server's per-section cap, so the list shown is the top
+   *  few and not everything that matched. */
+  truncated: boolean
+}

@@ -13,6 +13,14 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    /* Tests talk to `mockFetch`, never to a server — but `api/client.ts` builds
+     * every URL from `VITE_API_BASE_URL`, which Vite loads from a developer's
+     * own gitignored `.env.local` here too. With a real API running at that
+     * address, any request the mock doesn't match escapes to it, 401s on the
+     * fake token, and signs the app out mid-test — a failure that looks like a
+     * bug in whatever test happened to be slowest. Pinning it empty keeps the
+     * suite the same for everyone. */
+    env: { VITE_API_BASE_URL: '' },
     setupFiles: ['./src/test/setup.ts'],
     // Styling is mocked out everywhere (jsdom doesn't render it, and applying
     // real CSS to every test is pure overhead) — except `?raw` imports, which

@@ -26,6 +26,55 @@
   padding: 0 var(--s-4);
 }
 
+/* Pushed to the right-hand end of the bar, away from the menu and the
+   wordmark — the two things on the left are navigation, this is a tool. */
+.apphead-search {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 6px var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: rgba(10, 14, 22, 0.45);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.apphead-search:hover,
+.apphead-search:focus-visible {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.apphead-search-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.apphead-search-key {
+  font-family: var(--mono);
+  font-size: var(--fs-tiny);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* A phone has no Ctrl/Cmd to press and not much bar to spend, so the keycap
+   and the word both go; the magnifier alone still reads as search. The 44px
+   touch target for what's left is in base.css's `pointer: coarse` block, with
+   the app's other dense controls. */
+@media (max-width: 560px) {
+  .apphead-search-text,
+  .apphead-search-key {
+    display: none;
+  }
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
