@@ -2432,6 +2432,10 @@ describe('command palette', () => {
     ['/api/facets', { tags: [], labels: [], seed_tags: [] }],
     ['/api/likes', []],
     ['/api/blacklist', []],
+    // Typing in the palette now also searches the API. These tests are about
+    // the local scan rows, so the server side answers with nothing — but it has
+    // to answer, or the debounced request lands after the test as an error.
+    ['/api/search', { query: '', collection: [], feed: [], truncated: false }],
   ]
 
   it('opens on Ctrl+K and lists a jump-to-Scans action plus every scan', async () => {
@@ -2456,7 +2460,7 @@ describe('command palette', () => {
     await screen.findByRole('heading', { name: 'Your scans' })
 
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
-    const input = await screen.findByRole('textbox', { name: 'Jump to…' })
+    const input = await screen.findByRole('textbox', { name: 'Search' })
     // Wait for the scans to land before filtering, or 'psy' matches nothing and
     // the count below is 0 for a reason that has nothing to do with ranking.
     await screen.findByRole('option', { name: 'Psy dig' })
@@ -2480,6 +2484,50 @@ describe('command palette', () => {
 
     await screen.findByRole('heading', { name: /Psy dig/ })
     expect(currentLocation().pathname).toBe('/scans/2')
+  })
+
+  it('searches the API and sends a collection hit to the Collection page, filtered to it', async () => {
+    mockFetch([
+      ...routes.filter(([needle]) => needle !== '/api/search'),
+      ['/api/collection', { owned: [], wishlist: [], liked: [], truncated: false }],
+      [
+        '/api/search',
+        {
+          query: 'drukqs',
+          collection: [
+            {
+              kind: 'collection',
+              title: 'Drukqs',
+              band_name: 'Aphex Twin',
+              item_type: 'album',
+              album_id: 9,
+              track_id: null,
+              url: 'https://aphex.bandcamp.com/album/drukqs',
+              art_url: null,
+              scan_id: null,
+              scan_name: null,
+              sections: ['owned'],
+            },
+          ],
+          feed: [],
+          truncated: false,
+        },
+      ],
+    ])
+    renderApp('/scans')
+    await screen.findByRole('heading', { name: 'Your scans' })
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Search' }), {
+      target: { value: 'drukqs' },
+    })
+
+    const hit = await screen.findByRole('option', { name: 'Drukqs — Aphex Twin' })
+    fireEvent.click(hit)
+
+    await screen.findByRole('heading', { name: 'Collection' })
+    expect(currentLocation().pathname).toBe('/collection')
+    expect(currentLocation().search).toBe('?q=Drukqs')
   })
 })
 
@@ -2567,7 +2615,7 @@ describe('global keyboard shortcuts help', () => {
     // nav/quick filter) would document controls that don't exist here.
     fireEvent.keyDown(document, { key: '?' })
     let dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
-    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).toHaveTextContent('Search scans, records and artists')
     expect(dialog).not.toHaveTextContent('Like the focused recommendation')
     fireEvent.keyDown(document, { key: 'Escape' })
 
@@ -2577,7 +2625,7 @@ describe('global keyboard shortcuts help', () => {
     // The feed page has all of it.
     fireEvent.keyDown(document, { key: '?' })
     dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
-    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).toHaveTextContent('Search scans, records and artists')
     expect(dialog).toHaveTextContent('Like the focused recommendation')
   })
 })

@@ -22,7 +22,7 @@ describe('ShortcutsHelp', () => {
     expect(dialog).toBeInTheDocument()
     expect(dialog).toHaveTextContent('Like the focused recommendation')
     expect(dialog).toHaveTextContent("Block the focused recommendation's artist")
-    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).toHaveTextContent('Search scans, records and artists')
   })
 
   it('omits the feed-only rows when feedShortcuts is false, keeping the global ones', () => {
@@ -30,7 +30,7 @@ describe('ShortcutsHelp', () => {
     fireEvent.keyDown(document, { key: '?' })
 
     const dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
-    expect(dialog).toHaveTextContent('Open the jump-to command palette')
+    expect(dialog).toHaveTextContent('Search scans, records and artists')
     expect(dialog).toHaveTextContent('Toggle this panel')
     expect(dialog).not.toHaveTextContent('Like the focused recommendation')
     expect(dialog).not.toHaveTextContent("Block the focused recommendation's artist")

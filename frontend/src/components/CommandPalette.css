@@ -72,10 +72,35 @@
   flex: none;
 }
 
+/* A section label, not a row: "Pages" over the navigation commands, "Your
+   library" over what the server matched. Uppercase and small so it reads as
+   furniture and never competes with a result for the eye. */
+.cmdk-group {
+  color: var(--muted);
+  font-size: var(--fs-tiny);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: var(--s-2) var(--s-3) 4px;
+  margin: 0;
+}
+
+/* The group after the first needs air above it; the first sits right under
+   the input and would look pushed away from it. */
+.cmdk-list [role='group'] + [role='group'] .cmdk-group {
+  padding-top: var(--s-3);
+}
+
 .cmdk-empty {
   color: var(--muted);
   font-size: var(--fs-tiny);
   padding: 10px var(--s-2);
+  margin: 0;
+}
+
+/* `.err` carries the colour; its own `margin-top` is meant for sitting under a
+   form field, which would push it off the list's rhythm here. */
+.cmdk-empty.err {
+  font-size: var(--fs-tiny);
   margin: 0;
 }
 

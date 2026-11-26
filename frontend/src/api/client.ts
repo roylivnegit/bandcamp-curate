@@ -32,6 +32,7 @@ import type {
   Recommendation,
   Scan,
   ScanDetail,
+  SearchResponse,
   Stats,
   TokenResponse,
 } from './types'
@@ -231,6 +232,19 @@ export const api = {
    *  page searches across all three at once and shows per-section match
    *  counts, so it needs them all in memory anyway. */
   collection: () => request<CollectionResponse>('/api/collection'),
+
+  /** One box over everything the user can reach: their scans by name, and
+   *  their collection and every scan's feed by title or artist. Server-side
+   *  because a feed runs to tens of thousands of rows across scans — far too
+   *  much for the palette to download and filter locally the way the
+   *  Collection page filters the one collection it already has.
+   *
+   *  `limit` is per section, so a large collection can't crowd out the scans. */
+  search: (q: string, limit?: number) => {
+    const params = new URLSearchParams({ q })
+    if (limit != null) params.set('limit', String(limit))
+    return request<SearchResponse>(`/api/search?${params}`)
+  },
 
   // likes / blocks (both global across a user's scans)
   listLikes: () => request<Liked[]>('/api/likes'),

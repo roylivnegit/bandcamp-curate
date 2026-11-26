@@ -10,6 +10,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { OfflineBanner } from './components/OfflineBanner'
 import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { ToastStack } from './components/ToastStack'
+import { searchRows } from './lib/searchHits'
 
 /* Split on the auth boundary. The two branches below never render together, so
  * neither should ship in the other's chunk: a signed-out visitor downloading the
@@ -44,6 +45,33 @@ export default function App() {
   const loadScansForPalette = useCallback(() => {
     void api.listScans().then(setScans).catch(() => {})
   }, [])
+
+  /* The palette's other half: everything the server can match — the user's
+   * scans by name, and their collection and every scan's feed by title or
+   * artist. The palette owns the debounce and the stale-response ticket; this
+   * only maps hits to rows and says what each one does.
+   *
+   * `[navigate]` is react-router's own stable callback, so this identity holds
+   * across renders — the palette depends on it, and a fresh function each
+   * render would reset its search (see its `onSearch` note). */
+  const searchEverything = useCallback(
+    async (query: string): Promise<CommandAction[]> => {
+      const data = await api.search(query)
+      return searchRows(data).map((row) => ({
+        id: row.id,
+        label: row.label,
+        hint: row.hint,
+        srHint: row.srHint,
+        run: () => {
+          // `noopener` is not optional on a user-supplied URL: without it the
+          // opened page gets a handle on this one via `window.opener`.
+          if (row.openUrl) window.open(row.openUrl, '_blank', 'noopener,noreferrer')
+          else if (row.to) navigate(row.to)
+        },
+      }))
+    },
+    [navigate],
+  )
 
   // Built fresh each render (cheap: at most a handful of scans), not memoized
   // — `run` closures capture `navigate`, which react-router already keeps
@@ -101,7 +129,11 @@ export default function App() {
       <AppHeader />
       <ToastStack />
       <OfflineBanner />
-      <CommandPalette actions={paletteActions} onOpen={loadScansForPalette} />
+      <CommandPalette
+        actions={paletteActions}
+        onOpen={loadScansForPalette}
+        onSearch={searchEverything}
+      />
       <ShortcutsHelp feedShortcuts={onFeedPage} />
       <main id="main-content">
         <ErrorBoundary>

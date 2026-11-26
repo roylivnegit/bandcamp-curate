@@ -97,7 +97,11 @@ a {
   .seed .rm,
   .ddviewrow .rm,
   .act,
-  .listen {
+  .listen,
+  /* The header's search button drops to the bare magnifier at this width (see
+     AppHeader.css), which is the narrowest it ever gets and exactly where a
+     finger needs it widest. */
+  .apphead-search {
     min-width: 44px;
     min-height: 44px;
   }

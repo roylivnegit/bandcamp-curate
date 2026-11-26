@@ -21,7 +21,7 @@ const SHORTCUTS: Array<{ keys: string; description: string; feed: boolean }> = [
     description: 'Focus the quick filter (narrows the loaded cards by title/artist)',
     feed: true,
   },
-  { keys: 'Ctrl / ⌘ K', description: 'Open the jump-to command palette', feed: false },
+  { keys: 'Ctrl / ⌘ K', description: 'Search scans, records and artists', feed: false },
   { keys: '?', description: 'Toggle this panel', feed: false },
 ]
 
@@ -36,7 +36,7 @@ const FOCUSABLE_SELECTOR =
   'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 /** A "?"-triggered overlay documenting the app's keyboard shortcuts (the
- *  jump-to palette everywhere, plus the feed's l/b and Dropdown arrow-key nav
+ *  search palette everywhere, plus the feed's l/b and Dropdown arrow-key nav
  *  on a scan's feed page), which otherwise ship invisible — nothing else in
  *  the UI tells a reader they exist. Mounted once, globally, in `App.tsx`;
  *  `feedShortcuts` scopes the list to what's actually usable on the current
